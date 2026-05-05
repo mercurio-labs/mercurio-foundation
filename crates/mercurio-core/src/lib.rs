@@ -1,5 +1,4 @@
 pub mod ai;
-pub mod api;
 pub mod authoring;
 pub mod derived;
 pub mod diagrams;
@@ -7,17 +6,16 @@ pub mod frontend;
 pub mod graph;
 pub mod ir;
 pub mod library;
-pub(crate) mod logging;
+pub mod logging;
 pub mod metamodel;
 pub mod paths;
 pub mod project;
 pub mod proposal;
 pub mod runtime;
 pub mod semantic_compare;
-pub(crate) mod source_set;
+pub mod source_set;
 pub mod syntax_compare;
 pub mod views;
-pub mod workspace;
 
 pub use ai::{
     AskMercurioArtifact, AskMercurioCitation, AskMercurioProjectContext, AskMercurioRequest,
@@ -32,22 +30,6 @@ pub use ai::{
     summarize_semantic_changes_with_secret_overrides,
     test_configured_reasoning_provider_connection, test_default_reasoning_provider_connection,
     test_default_reasoning_provider_connection_with_secret_overrides,
-};
-pub use api::{
-    ApiError, AppState, EditorDiagnosticDto, EditorFileContentDto, EditorFileListDto,
-    EditorFileSummaryDto, EditorFormatResponseDto, EditorLintResponseDto, EditorOutlineNodeDto,
-    EditorParseResponseDto, EditorRefreshResponseDto, EditorSemanticCompileResponseDto,
-    ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto,
-    EvaluateExpressionRequestDto, EvaluateExpressionResponseDto, ExplorerAttributeDto, GraphDto,
-    GraphEdgeDto, GraphNodeDto, InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto,
-    L2ExplorerNodeDto, L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto,
-    MetatypeExplorerGraphDto, MetatypeExplorerNodeDto, MetatypeExplorerRequestDto,
-    ModelMetadataDto, MountedLibraryTreeDto, ProjectLintFileResultDto, ProjectLintResponseDto,
-    SearchResultDto, SemanticCompileFileResultDto, SemanticProjectCompileRequestDto,
-    SemanticProjectCompileResponseDto, SemanticWorkspaceFileDto, SemanticWorkspaceSessionDto,
-    ServerLoginRequestDto, ServerLoginResponseDto, ServerProjectCompileResponseDto, ServerUserDto,
-    StagedEditorFileDto, WorkspaceProjectInfoDto, WorkspaceProjectLibraryDto, build_router,
-    load_app_state, load_server_state,
 };
 pub use authoring::{
     Alias, AttributeWritePolicy, AuthoringError, AuthoringModule, AuthoringProject,
@@ -115,4 +97,3 @@ pub use views::{
     RequirementSourceDto, RequirementTableColumnDto, RequirementTableRowDto,
     RequirementTableViewDto, requirements_table_view,
 };
-pub use workspace::{CompileProjectScopeOutcome, WorkspaceService, load_workspace_service};

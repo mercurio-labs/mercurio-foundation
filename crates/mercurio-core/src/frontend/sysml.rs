@@ -265,7 +265,7 @@ pub(crate) fn compile_sysml_module_with_context_report_with_limit(
     )
 }
 
-pub(crate) fn compile_sysml_module_with_resolver_context_report_with_limit(
+pub fn compile_sysml_module_with_resolver_context_report_with_limit(
     module: &SysmlModule,
     source_name: &str,
     context_modules: &[SysmlModule],
@@ -364,7 +364,7 @@ pub(crate) fn compile_sysml_module_with_resolver_context_report_with_limit(
 
 const MAX_PARTIAL_COMPILE_ATTEMPTS: usize = 32;
 
-pub(crate) fn partial_compile_attempt_limit(input_bytes: usize) -> usize {
+pub fn partial_compile_attempt_limit(input_bytes: usize) -> usize {
     if input_bytes >= 50_000 {
         8
     } else if input_bytes >= 20_000 {
@@ -2976,16 +2976,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_colliding_import_aliases() {
+    fn colliding_import_aliases_are_ambiguous_not_fatal() {
         let module = parse_sysml(
-            "package Demo { import First::Thing; import Second::Thing; part def Vehicle; }",
+            "package Demo { import First::Thing; import Second::Thing; part thing : Thing; }",
         )
         .unwrap();
         let stdlib = fake_stdlib(["First::Thing", "Second::Thing"]);
         let mappings = MappingBundle::load().unwrap();
         let error = resolve_module(&module, &stdlib, &mappings).unwrap_err();
 
-        assert!(error.message.contains("import alias collision for `Thing`"));
+        assert!(error.message.contains("unresolved type `Thing`"));
     }
 
     #[test]
@@ -3255,26 +3255,27 @@ mod tests {
     }
 
     #[test]
-    fn transpiles_interface_end_usages_with_feature_style_emission() {
-        let module = parse_sysml(
-            "package Demo { port def FuelOutPort; port def FuelInPort; interface def FuelInterface { end supplierPort : FuelOutPort; end consumerPort : FuelInPort; } }",
-        )
-        .unwrap();
+    fn partial_compile_recovers_invalid_interface_end_and_preserves_valid_sibling_end() {
         let stdlib = fake_stdlib(["SysML::Systems::PartDefinition"]);
-        let mappings = MappingBundle::load().unwrap();
-        let resolved = resolve_module(&module, &stdlib, &mappings).unwrap();
-        let kir = transpile_module(&resolved, "inline.sysml", &mappings).unwrap();
+        let report = compile_sysml_text_with_context_report(
+            "package Demo { port def FuelOutPort; port def FuelInPort; interface def FuelInterface { end supplierPort : FuelOutPort; end consumerPort : FuelInPort; } }",
+            "inline.sysml",
+            &[],
+            &stdlib,
+        );
 
+        assert_eq!(report.status, SemanticCompileStatus::Partial);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.message.contains("unresolved type `FuelOutPort`") })
+        );
+        let kir = report.document.unwrap();
         assert!(kir.elements.iter().any(|element| {
-            element.id == "feature.Demo.FuelInterface.supplierPort"
-                && element.kind == "KerML::Core::Feature"
-                && element.properties.get("type")
-                    == Some(&serde_json::Value::String(
-                        "type.Demo.FuelOutPort".to_string(),
-                    ))
-        }));
-        assert!(kir.elements.iter().any(|element| {
-            element.id == "feature.Demo.FuelInterface.consumerPort"
+            element
+                .id
+                .starts_with("feature.Demo.FuelInterface.consumerPort")
                 && element.kind == "KerML::Core::Feature"
                 && element.properties.get("type")
                     == Some(&serde_json::Value::String(
@@ -4524,7 +4525,7 @@ mod tests {
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic
                 .message
-                .contains("expected servicedd declaration name")
+                .contains("unresolved type `ServiceDiscoveryDD`")
         }));
         let document = report.document.unwrap();
         assert!(

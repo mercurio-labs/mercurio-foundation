@@ -2,13 +2,19 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::is_model_source_file;
 use crate::ir::{KirDocument, KirError};
 use crate::library::{
     BaselineLibraryConfig, LibraryCacheMetadata, LibrarySourceFingerprint, ResolvedLibraryArtifact,
 };
 
 pub const PROJECT_DESCRIPTOR_FILE_NAME: &str = "mercurio-project.json";
+
+fn is_model_source_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("sysml" | "kerml")
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ProjectDescriptor {

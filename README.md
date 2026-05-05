@@ -1,6 +1,6 @@
-# Mercurio Core
+# Mercurio
 
-Mercurio Core is the open source Rust library and CLI workspace for working with SysML v2, KerML, and Mercurio's KIR JSON model representation.
+Mercurio is the open source Rust library and CLI workspace for working with SysML v2, KerML, and Mercurio's KIR JSON model representation.
 
 The goal of this repository is to make the modeling kernel useful on its own: parse source models, compile them into semantic KIR, lint them, package them, and expose reusable library APIs that private products and external tools can build on.
 
@@ -14,13 +14,14 @@ The goal of this repository is to make the modeling kernel useful on its own: pa
 
 ## What Lives Here
 
-- `mercurio-core` parses, compiles, lints, loads libraries, builds runtime graphs, computes derived values, and exposes shared domain DTOs.
+- `mercurio-core` parses, compiles, lints, loads libraries, builds runtime graphs, and computes derived values.
+- `mercurio-server` contains the product/server workspace service, shared application DTOs, and Axum router helpers.
 - `mercurio-cli` provides the public `mercurio` command for parse, compile, lint, and package workflows.
 - `mercurio-tools` contains maintainer tools for diagnostics, benchmarks, demos, and Pilot comparison/export workflows.
 - `resources/` contains bundled runtime and standard library artifacts.
 - `examples/` and `fixtures/` provide SysML, KerML, and KIR models for tests and demonstrations.
 
-The HTTP server and UI live in the private `mercurio-product` repository. They depend on this repository for domain behavior; this repository remains the open source library and command-line surface.
+The hosted product and UI live in the private `mercurio-product` repository. They depend on `mercurio-core` for domain behavior and can depend on `mercurio-server` for the server/workspace API surface.
 
 ## Core Concepts
 
@@ -64,37 +65,125 @@ cargo test
 Show the public CLI:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- --help
+mercurio --help
 ```
 
 Parse an inline SysML model:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- parse --text "package Demo { part def Vehicle; }"
+mercurio parse --text "package Demo { part def Vehicle; }"
 ```
 
 ## CLI Examples
 
-The public CLI is one cohesive `mercurio` binary with `parse`, `compile`, `lint`, and `package` subcommands. `parse`, `compile`, and `lint` accept `--file PATH` or `--text TEXT`; inline text defaults to SysML, and file input defaults from `.sysml` or `.kerml`.
+The public CLI is one cohesive `mercurio` binary with `project`, `parse`, `compile`, `evaluate`, `lint`, and `package` subcommands. `parse`, `compile`, `evaluate`, and `lint` accept source input from `--file PATH` or `--text TEXT`; inline text defaults to SysML, and file input defaults from `.sysml` or `.kerml`.
+
+### Create a Project
+
+Create a new project directory with a project descriptor and sample SysML file:
+
+```powershell
+mercurio project new my-model --name "My Model"
+```
+
+This writes:
+
+- `my-model/mercurio-project.json`
+- `my-model/src/main.sysml`
+
+Use `--force` to write the scaffold files into an existing non-empty directory, and `--quiet` to suppress the creation summary.
+
+The project descriptor is the root-level `mercurio-project.json` file. The generated descriptor is intentionally small:
+
+```json
+{
+  "version": 1,
+  "name": "My Model",
+  "baseline_libraries": [],
+  "libraries": []
+}
+```
+
+Descriptor fields:
+
+- `version`: descriptor schema version. The current version is `1`; omitted values default to `1`.
+- `name`: optional display name for the project.
+- `baseline_libraries`: foundational libraries used as the baseline semantic context. If this array is empty or omitted, Mercurio uses the bundled standard library.
+- `libraries`: ordinary read-only dependency libraries added after the baseline context.
+
+Each entry in `baseline_libraries` or `libraries` has this shape:
+
+```json
+{
+  "id": "domain-lib",
+  "provider": {
+    "kind": "kpar_file",
+    "path": "libs/domain.kpar"
+  }
+}
+```
+
+Supported provider `kind` values:
+
+- `bundled_stdlib`: use Mercurio's bundled standard library; no extra fields.
+- `precompiled_kir_artifact`: load a KIR JSON file with `path`.
+- `sysml_directory`: load all SysML/KerML sources under `path`.
+- `kpar_file`: load one `.kpar` package file from `path`.
+- `package_set_directory`: load a package from a local package-set directory using `path` and `entry`.
+
+Relative provider paths are resolved from the directory containing `mercurio-project.json`.
+
+Semantic CLI commands discover this descriptor automatically:
+
+- `compile --file PATH` looks for `mercurio-project.json` from `PATH` upward.
+- `lint --file PATH` uses the first input path as the project anchor.
+- `package build --file PATH` validates the package against the descriptor discovered from the first input path.
+- Inline `--text` commands use the current working directory as the project anchor.
+
+Passing `--stdlib PATH` skips descriptor discovery for that command and uses the provided KIR document as the semantic library context.
+
+### Shell Completions
+
+Generate completion scripts for your shell:
+
+```powershell
+mercurio completions powershell
+```
+
+Supported shells are `bash`, `elvish`, `fish`, `powershell`, and `zsh`.
+
+For PowerShell, add the generated script to your profile or dot-source it from a file:
+
+```powershell
+mercurio completions powershell > mercurio-completions.ps1
+. .\mercurio-completions.ps1
+```
+
+For Bash or Zsh, write the generated script to a directory loaded by your shell's completion system:
+
+```bash
+mercurio completions bash > ~/.local/share/bash-completion/completions/mercurio
+mercurio completions zsh > ~/.zfunc/_mercurio
+```
 
 ### Parse SysML or KerML
 
 Parse one file and print a syntax summary:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- parse --file "examples/src/examples/Simple Tests/PartTest.sysml"
+mercurio parse --file "examples/src/examples/Simple Tests/PartTest.sysml"
 ```
 
 Parse inline SysML:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- parse --text "package Demo { part def Vehicle; }"
+mercurio parse --text "package Demo { part def Vehicle; }"
 ```
 
 Emit the syntax AST as JSON:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- parse --file "examples/src/examples/Simple Tests/PartTest.sysml" --format json
+mercurio parse --file "examples/src/examples/Simple Tests/PartTest.sysml" --format json
 ```
 
 ### Compile to KIR
@@ -102,51 +191,85 @@ cargo run -p mercurio-cli --bin mercurio -- parse --file "examples/src/examples/
 Compile a file to KIR using the default stdlib:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- compile --file "examples/src/examples/Simple Tests/PartTest.sysml"
+mercurio compile --file "examples/src/examples/Simple Tests/PartTest.sysml"
 ```
 
 Compile inline KerML with an explicit language:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- compile --text "package Demo { classifier Vehicle; }" --language kerml
+mercurio compile --text "package Demo { classifier Vehicle; }" --language kerml
 ```
 
 Emit the KIR document as JSON:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- compile --text "package Demo { part def Vehicle; }" --format json
+mercurio compile --text "package Demo { part def Vehicle; }" --format json
 ```
 
 Override the stdlib:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- compile --file model.sysml --stdlib resources/stdlib.full.kir.json
+mercurio compile --file model.sysml --stdlib resources/stdlib.full.kir.json
 ```
+
+### Evaluate Runtime Expressions
+
+Evaluate a derived feature from source by compiling the model first:
+
+```powershell
+mercurio evaluate --file model.sysml --feature totalMass --owner Demo.Vehicle
+```
+
+Evaluate directly from a precompiled KIR document:
+
+```powershell
+mercurio evaluate --kir model.kir.json --feature Demo.Vehicle.totalMass --owner Demo.Vehicle
+```
+
+Evaluate an inline expression model:
+
+```powershell
+mercurio evaluate --text "package Demo { part def Vehicle { attribute mass = 40+(2); } }" --feature mass --owner Demo.Vehicle
+```
+
+Provide overlay values for runtime context:
+
+```powershell
+mercurio evaluate --kir model.kir.json --feature totalMass --owner Demo.Vehicle --value assembly.Vehicle.mass=42
+```
+
+For larger overlays, use nested JSON where the first key is owner name and the second key is feature name:
+
+```powershell
+mercurio evaluate --kir model.kir.json --feature totalMass --owner Demo.Vehicle --context-json '{ "assembly.Vehicle": { "mass": 42 } }'
+```
+
+User-facing evaluation arguments use model qualified names. Existing KIR ids such as `type.Demo.Vehicle` and `feature.Demo.Vehicle.totalMass` are still accepted for diagnostics and low-level workflows. Add `--explain` to include runtime explanation steps in text output, or `--format json` for structured output.
 
 ### Lint SysML or KerML
 
 Lint one file:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- lint --file "examples/src/examples/Simple Tests/PartTest.sysml"
+mercurio lint --file "examples/src/examples/Simple Tests/PartTest.sysml"
 ```
 
 Lint every `.sysml` and `.kerml` file under a directory:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- lint --file "examples/src/examples/Simple Tests"
+mercurio lint --file "examples/src/examples/Simple Tests"
 ```
 
 Emit JSON diagnostics:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- lint --file "examples/src/examples/Simple Tests" --format json
+mercurio lint --file "examples/src/examples/Simple Tests" --format json
 ```
 
 Fail when warnings are present, useful for CI:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- lint --file "examples/src/examples/Simple Tests" --warnings-as-errors
+mercurio lint --file "examples/src/examples/Simple Tests" --warnings-as-errors
 ```
 
 ### Build KPAR Packages
@@ -154,19 +277,19 @@ cargo run -p mercurio-cli --bin mercurio -- lint --file "examples/src/examples/S
 Build a source-backed `.kpar` package from a model file:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- package build --file model.sysml --out model.kpar
+mercurio package build --file model.sysml --out model.kpar
 ```
 
 Build a package from every `.sysml` and `.kerml` file under a directory:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- package build --file examples/src/examples --out examples.kpar
+mercurio package build --file examples/src/examples --out examples.kpar
 ```
 
 Override the package metadata:
 
 ```powershell
-cargo run -p mercurio-cli --bin mercurio -- package build --file model.sysml --out model.kpar --name Demo --version 0.1.0
+mercurio package build --file model.sysml --out model.kpar --name Demo --version 0.1.0
 ```
 
 ## Developer Tools
@@ -263,10 +386,11 @@ cargo run -p mercurio-tools --bin import_pilot_stdlib -- --pilot-root path/to/pi
 
 - `Cargo.toml` - workspace manifest
 - `crates/mercurio-core/` - library crate
+- `crates/mercurio-server/` - product/server API, workspace service, and application DTO crate
 - `crates/mercurio-cli/` - public command-line binaries
 - `crates/mercurio-tools/` - maintainer diagnostics, benchmarks, demos, and Pilot comparison tools
 - `crates/mercurio-core/src/frontend/` - SysML, KerML, linting, formatting, and resolver code
-- `crates/mercurio-core/src/api/` - shared application DTOs and router helpers consumed by private hosts
+- `crates/mercurio-server/src/api/` - shared application DTOs and router helpers consumed by private hosts
 - `examples/` - KIR JSON models and SysML/KerML example corpora
 - `resources/` - bundled runtime and library resources
 - `docs/` - deeper architecture and implementation notes

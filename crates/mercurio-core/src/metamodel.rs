@@ -45,10 +45,10 @@ pub struct MetatypeQueryOverride {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MetamodelAttributeDeclaration {
-    pub(crate) name: String,
-    pub(crate) declared_by: ElementSummary,
-    pub(crate) type_label: Option<String>,
+pub struct MetamodelAttributeDeclaration {
+    pub name: String,
+    pub declared_by: ElementSummary,
+    pub type_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -123,10 +123,7 @@ impl MetamodelAttributeRegistry {
         self.metatype_summaries.get(&resolved).cloned()
     }
 
-    pub(crate) fn declared_attributes_for(
-        &self,
-        metatype_id: &str,
-    ) -> &[MetamodelAttributeDeclaration] {
+    pub fn declared_attributes_for(&self, metatype_id: &str) -> &[MetamodelAttributeDeclaration] {
         self.declared_attributes
             .get(metatype_id)
             .map(Vec::as_slice)

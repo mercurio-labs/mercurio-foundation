@@ -19,18 +19,18 @@ use crate::api::{
     lint_diagnostic_to_dto, normalize_relative_path, resolve_workspace_file,
     resolve_workspace_scope, source_language_for_path,
 };
-use crate::diagrams::{DiagramRenderRequestDto, DiagramViewDto};
-use crate::frontend::ast::{Declaration, PackageDecl, SysmlModule};
-use crate::frontend::format::format_path_text;
-use crate::frontend::lint::lint_text;
-use crate::ir::{KirDocument, load_model_stack};
-use crate::logging::{log_runtime_event, log_timed_event};
-use crate::project::{ResolvedProjectContext, resolve_project_context};
-use crate::runtime::Runtime;
-use crate::source_set::{
+use mercurio_core::diagrams::{DiagramRenderRequestDto, DiagramViewDto};
+use mercurio_core::frontend::ast::{Declaration, PackageDecl, SysmlModule};
+use mercurio_core::frontend::format::format_path_text;
+use mercurio_core::frontend::lint::lint_text;
+use mercurio_core::ir::{KirDocument, load_model_stack};
+use mercurio_core::logging::{log_runtime_event, log_timed_event};
+use mercurio_core::project::{ResolvedProjectContext, resolve_project_context};
+use mercurio_core::runtime::Runtime;
+use mercurio_core::source_set::{
     SourceCompileContext, SourceDocument, collect_context_modules, parse_source_module,
 };
-use crate::views::RequirementTableViewDto;
+use mercurio_core::views::RequirementTableViewDto;
 
 const MAX_SEMANTIC_COMPILE_CACHE_ENTRIES: usize = 512;
 
@@ -1989,7 +1989,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{SourceDependencyFingerprints, WorkspaceService};
-    use crate::source_set::SourceDocument;
+    use mercurio_core::source_set::SourceDocument;
 
     #[test]
     fn workspace_service_exposes_mounted_library_trees_per_library() {
@@ -2004,7 +2004,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            root.join(crate::project::PROJECT_DESCRIPTOR_FILE_NAME),
+            root.join(mercurio_core::project::PROJECT_DESCRIPTOR_FILE_NAME),
             serde_json::to_string_pretty(&serde_json::json!({
                 "version": 1,
                 "libraries": [

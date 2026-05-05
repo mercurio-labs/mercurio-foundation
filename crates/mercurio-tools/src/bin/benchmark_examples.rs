@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use mercurio_core::{StagedEditorFileDto, WorkspaceService};
+use mercurio_server::{StagedEditorFileDto, WorkspaceService};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {

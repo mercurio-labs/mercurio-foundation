@@ -179,7 +179,7 @@ pub fn compile_kerml_module_with_context(
     Ok(document)
 }
 
-pub(crate) fn compile_kerml_module_with_resolver_context(
+pub fn compile_kerml_module_with_resolver_context(
     module: &SysmlModule,
     source_name: &str,
     resolver_context: &ResolverContext,

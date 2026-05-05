@@ -7,7 +7,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 static LOG_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-pub(crate) fn log_runtime_event(message: impl AsRef<str>) {
+pub fn log_runtime_event(message: impl AsRef<str>) {
     let timestamp_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
@@ -35,12 +35,7 @@ pub(crate) fn log_runtime_event(message: impl AsRef<str>) {
     }
 }
 
-pub(crate) fn log_timed_event(
-    operation: &str,
-    start: Instant,
-    outcome: &str,
-    details: impl AsRef<str>,
-) {
+pub fn log_timed_event(operation: &str, start: Instant, outcome: &str, details: impl AsRef<str>) {
     log_runtime_event(format!(
         "{} {} elapsed_ms={} {}",
         operation,
@@ -50,7 +45,7 @@ pub(crate) fn log_timed_event(
     ));
 }
 
-pub(crate) fn log_compile_timed_event(
+pub fn log_compile_timed_event(
     operation: &str,
     start: Instant,
     outcome: &str,

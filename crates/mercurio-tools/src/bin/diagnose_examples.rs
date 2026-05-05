@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use mercurio_core::{StagedEditorFileDto, WorkspaceService};
+use mercurio_server::{StagedEditorFileDto, WorkspaceService};
 use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;

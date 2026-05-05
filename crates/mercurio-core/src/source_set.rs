@@ -14,20 +14,20 @@ use crate::ir::{KirDocument, KirError};
 use crate::logging::log_compile_timed_event;
 
 #[derive(Debug, Clone)]
-pub(crate) struct SourceDocument {
-    pub(crate) path: String,
-    pub(crate) content: String,
-    pub(crate) module: Option<SysmlModule>,
+pub struct SourceDocument {
+    pub path: String,
+    pub content: String,
+    pub module: Option<SysmlModule>,
 }
 
-pub(crate) struct SourceCompileContext {
-    pub(crate) context_modules: Vec<SysmlModule>,
-    pub(crate) mappings: &'static MappingBundle,
-    pub(crate) resolver_context: ResolverContext,
+pub struct SourceCompileContext {
+    pub context_modules: Vec<SysmlModule>,
+    pub mappings: &'static MappingBundle,
+    pub resolver_context: ResolverContext,
 }
 
 impl SourceCompileContext {
-    pub(crate) fn from_source_documents(
+    pub fn from_source_documents(
         source_documents: &[SourceDocument],
         library_context: &KirDocument,
     ) -> Result<Self, Diagnostic> {
@@ -45,7 +45,7 @@ impl SourceCompileContext {
 }
 
 impl SourceDocument {
-    pub(crate) fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
         let path = path.into();
         let content = content.into();
         let parse_start = std::time::Instant::now();
@@ -66,7 +66,7 @@ impl SourceDocument {
     }
 }
 
-pub(crate) fn parse_source_module(path: &str, content: &str) -> Result<SysmlModule, Diagnostic> {
+pub fn parse_source_module(path: &str, content: &str) -> Result<SysmlModule, Diagnostic> {
     if is_kerml_path(path) {
         parse_kerml(content)
     } else {
@@ -74,7 +74,7 @@ pub(crate) fn parse_source_module(path: &str, content: &str) -> Result<SysmlModu
     }
 }
 
-pub(crate) fn compile_source_text_with_context(
+pub fn compile_source_text_with_context(
     path: &str,
     content: &str,
     context_modules: &[SysmlModule],
@@ -87,7 +87,7 @@ pub(crate) fn compile_source_text_with_context(
     }
 }
 
-pub(crate) fn compile_source_document_with_context(
+pub fn compile_source_document_with_context(
     file: &SourceDocument,
     compile_context: &SourceCompileContext,
     library_context: &KirDocument,
@@ -114,14 +114,14 @@ pub(crate) fn compile_source_document_with_context(
     }
 }
 
-pub(crate) fn collect_context_modules(source_documents: &[SourceDocument]) -> Vec<SysmlModule> {
+pub fn collect_context_modules(source_documents: &[SourceDocument]) -> Vec<SysmlModule> {
     source_documents
         .iter()
         .filter_map(|file| file.module.clone())
         .collect()
 }
 
-pub(crate) fn compile_source_documents(
+pub fn compile_source_documents(
     source_documents: Vec<SourceDocument>,
     library_context: &KirDocument,
 ) -> Result<KirDocument, KirError> {

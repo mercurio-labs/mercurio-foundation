@@ -19,7 +19,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ai::{
+use crate::workspace::WorkspaceService;
+use mercurio_core::ai::{
     AskMercurioProjectContext, AskMercurioRequest, AskMercurioResponse, ChatCompletionRequest,
     ReasoningProvider, ReasoningProviderConfigOverrides, ReasoningProviderKind,
     ReasoningProviderSecretOverrides, ReasoningProviderStatus, SemanticSummaryRequest,
@@ -27,34 +28,33 @@ use crate::ai::{
     configured_reasoning_provider, summarize_semantic_changes,
     test_configured_reasoning_provider_connection, test_default_reasoning_provider_connection,
 };
-use crate::derived::derived_properties;
-use crate::diagrams::{
+use mercurio_core::derived::derived_properties;
+use mercurio_core::diagrams::{
     DiagramKindDto, DiagramRenderRequestDto, DiagramViewDto, list_diagram_kinds, render_diagram,
 };
-use crate::frontend::ast::{
+use mercurio_core::frontend::ast::{
     AliasDecl, Declaration, GenericDefinitionDecl, GenericUsageDecl, ImportDecl, PackageDecl,
     PartDefinitionDecl, PartUsageDecl, SourceSpan, SysmlModule,
 };
-use crate::frontend::diagnostics::Diagnostic;
-use crate::frontend::kerml::compile_kerml_module_with_resolver_context;
-use crate::frontend::lint::{LintDiagnostic, LintSeverity, SourceLanguage};
-use crate::frontend::sysml::{
+use mercurio_core::frontend::diagnostics::Diagnostic;
+use mercurio_core::frontend::kerml::compile_kerml_module_with_resolver_context;
+use mercurio_core::frontend::lint::{LintDiagnostic, LintSeverity, SourceLanguage};
+use mercurio_core::frontend::sysml::{
     SemanticCompileStatus, compile_sysml_module_with_resolver_context_report_with_limit,
     compile_sysml_text_with_context_report, partial_compile_attempt_limit,
 };
-use crate::graph::{Edge, Graph};
-use crate::ir::{KirDocument, KirElement, KirError};
-use crate::metamodel::{
+use mercurio_core::graph::{Edge, Graph};
+use mercurio_core::ir::{KirDocument, KirElement, KirError};
+use mercurio_core::metamodel::{
     AttributeRow, AttributeValueSource, MetamodelAttributeRegistry,
     collect_specialization_ancestors, query_element_attributes,
 };
-use crate::project::{ProjectDescriptor, ProjectDescriptorError, ProjectLibraryRole};
-use crate::runtime::{ExecutionContext, Runtime};
-use crate::source_set::{
+use mercurio_core::project::{ProjectDescriptor, ProjectDescriptorError, ProjectLibraryRole};
+use mercurio_core::runtime::{ExecutionContext, Runtime};
+use mercurio_core::source_set::{
     SourceCompileContext, SourceDocument, compile_source_document_with_context,
 };
-use crate::views::{RequirementTableViewDto, requirements_table_view};
-use crate::workspace::WorkspaceService;
+use mercurio_core::views::{RequirementTableViewDto, requirements_table_view};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ModelMetadataDto {
@@ -513,8 +513,8 @@ pub enum ApiError {
     Json(serde_json::Error),
     Kir(KirError),
     Project(ProjectDescriptorError),
-    Runtime(crate::runtime::RuntimeError),
-    Diagram(crate::diagrams::DiagramError),
+    Runtime(mercurio_core::runtime::RuntimeError),
+    Diagram(mercurio_core::diagrams::DiagramError),
     Diagnostic(Diagnostic),
     Ai(String),
     MissingElement(String),
@@ -556,8 +556,8 @@ impl From<serde_json::Error> for ApiError {
     }
 }
 
-impl From<crate::runtime::RuntimeError> for ApiError {
-    fn from(value: crate::runtime::RuntimeError) -> Self {
+impl From<mercurio_core::runtime::RuntimeError> for ApiError {
+    fn from(value: mercurio_core::runtime::RuntimeError) -> Self {
         Self::Runtime(value)
     }
 }
@@ -580,8 +580,8 @@ impl From<Diagnostic> for ApiError {
     }
 }
 
-impl From<crate::diagrams::DiagramError> for ApiError {
-    fn from(value: crate::diagrams::DiagramError) -> Self {
+impl From<mercurio_core::diagrams::DiagramError> for ApiError {
+    fn from(value: mercurio_core::diagrams::DiagramError) -> Self {
         Self::Diagram(value)
     }
 }
@@ -2330,7 +2330,7 @@ async fn post_ai_semantic_summary(
 
 async fn post_ai_chat(
     Json(request): Json<ChatCompletionRequest>,
-) -> Result<Json<crate::ai::ChatCompletionResponse>, PackageApiError> {
+) -> Result<Json<mercurio_core::ai::ChatCompletionResponse>, PackageApiError> {
     let settings = read_stored_ai_settings()?;
     let (config, secrets) = stored_reasoning_provider_config()?;
     let usage_scope = ai_usage_scope(&config, &secrets);
@@ -2415,7 +2415,7 @@ fn build_ask_mercurio_project_context(
         .messages
         .iter()
         .rev()
-        .find(|message| matches!(message.role, crate::ai::ChatMessageRole::User))
+        .find(|message| matches!(message.role, mercurio_core::ai::ChatMessageRole::User))
         .map(|message| message.content.as_str())
         .unwrap_or_default();
     let evidence = ask_mercurio_artifact_evidence(&artifact, latest_prompt);
@@ -3840,7 +3840,7 @@ async fn get_workspace_status(
 
 async fn get_default_workspace_path() -> Json<String> {
     Json(
-        crate::paths::default_workspace_root()
+        mercurio_core::paths::default_workspace_root()
             .to_string_lossy()
             .to_string(),
     )
@@ -4626,7 +4626,7 @@ fn default_package_schema_version() -> u32 {
 fn server_data_root() -> PathBuf {
     std::env::var_os("MERCURIO_SERVER_DATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| crate::paths::default_workspace_root().join(".server"))
+        .unwrap_or_else(|| mercurio_core::paths::default_workspace_root().join(".server"))
 }
 
 fn server_projects_root() -> PathBuf {
@@ -8463,7 +8463,7 @@ fn build_metatype_explorer_dto(
 fn build_metatype_explorer_node_dto(
     graph: &Graph,
     metamodel_registry: &MetamodelAttributeRegistry,
-    element: &crate::graph::Element,
+    element: &mercurio_core::graph::Element,
     seed_id: u32,
 ) -> MetatypeExplorerNodeDto {
     let mut attributes = metamodel_registry
@@ -8625,7 +8625,7 @@ fn build_l2_explorer_dto(
 
 fn build_l2_explorer_node_dto(
     graph: &Graph,
-    element: &crate::graph::Element,
+    element: &mercurio_core::graph::Element,
     seed_id: u32,
 ) -> L2ExplorerNodeDto {
     let mut attributes = owned_feature_attributes(graph, element);
@@ -8663,7 +8663,7 @@ fn include_l2_reference_relation(relation: &str) -> bool {
 
 fn owned_feature_attributes(
     graph: &Graph,
-    element: &crate::graph::Element,
+    element: &mercurio_core::graph::Element,
 ) -> Vec<ExplorerAttributeDto> {
     element
         .properties
@@ -8682,7 +8682,7 @@ fn owned_feature_attributes(
         .collect()
 }
 
-fn explorer_declared_name(element: &crate::graph::Element) -> Option<String> {
+fn explorer_declared_name(element: &mercurio_core::graph::Element) -> Option<String> {
     element
         .properties
         .get("declared_name")
@@ -8697,7 +8697,7 @@ fn explorer_declared_name(element: &crate::graph::Element) -> Option<String> {
         })
 }
 
-fn explorer_type_label(element: &crate::graph::Element) -> Option<String> {
+fn explorer_type_label(element: &mercurio_core::graph::Element) -> Option<String> {
     relation_type_label(element.properties.get("type"))
 }
 
@@ -8741,7 +8741,7 @@ fn collect_graph_scope_ids(graph: &Graph, scope: GraphScope) -> BTreeSet<u32> {
 fn build_element_details(
     graph: &Graph,
     metamodel_registry: &MetamodelAttributeRegistry,
-    element: &crate::graph::Element,
+    element: &mercurio_core::graph::Element,
     inbound: Vec<GraphEdgeDto>,
     outbound: Vec<GraphEdgeDto>,
 ) -> ElementDetailsDto {
@@ -8760,13 +8760,13 @@ fn build_element_details(
         .collect::<Vec<_>>();
 
     let derived_properties = derived_properties(graph, element);
-    let effective_properties = crate::metamodel::effective_properties_with_derived(
+    let effective_properties = mercurio_core::metamodel::effective_properties_with_derived(
         &ancestors,
         &element.properties,
         &derived_properties,
     );
     let attribute_query = query_element_attributes(graph, metamodel_registry, element.id, None)
-        .unwrap_or_else(|| crate::metamodel::ElementAttributeQuery {
+        .unwrap_or_else(|| mercurio_core::metamodel::ElementAttributeQuery {
             metatype: None,
             metatype_specialization_chain: Vec::new(),
             rows: Vec::new(),
@@ -8799,7 +8799,9 @@ fn build_element_details(
     }
 }
 
-fn element_summary_from_query(summary: crate::metamodel::ElementSummary) -> ElementSummaryDto {
+fn element_summary_from_query(
+    summary: mercurio_core::metamodel::ElementSummary,
+) -> ElementSummaryDto {
     ElementSummaryDto {
         id: summary.id,
         label: summary.label,
@@ -8832,7 +8834,7 @@ fn property_row_from_query(row: AttributeRow) -> ElementPropertyRowDto {
     }
 }
 
-fn element_summary_dto(element: &crate::graph::Element) -> ElementSummaryDto {
+fn element_summary_dto(element: &mercurio_core::graph::Element) -> ElementSummaryDto {
     ElementSummaryDto {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
@@ -8847,7 +8849,7 @@ fn build_library_tree(graph: &Graph) -> Vec<LibraryTreeNodeDto> {
 
 fn build_tree_from_graph(
     graph: &Graph,
-    include_element: impl Fn(&crate::graph::Element) -> bool,
+    include_element: impl Fn(&mercurio_core::graph::Element) -> bool,
 ) -> Vec<LibraryTreeNodeDto> {
     let mut root = TreeNode::root();
     let mut library_elements = graph
@@ -9070,7 +9072,7 @@ impl TreeNode {
         Self::default()
     }
 
-    fn insert(&mut self, segments: Vec<String>, element: &crate::graph::Element) {
+    fn insert(&mut self, segments: Vec<String>, element: &mercurio_core::graph::Element) {
         if segments.is_empty() {
             return;
         }
@@ -9143,9 +9145,11 @@ mod tests {
     use super::{
         EditorOutlineKey, ElementDetailsDto, ElementPropertyTableDto, GraphScope, StoredAiSettings,
         build_editor_outline_index, build_router, build_semantic_editor_outline, load_server_state,
-        read_current_ai_usage, reserve_ai_tokens, rewrite_url_base,
+        read_current_ai_usage, reserve_ai_tokens, rewrite_url_base, write_stored_ai_settings,
     };
-    use crate::repo_path;
+    use mercurio_core::repo_path;
+
+    static SERVER_DATA_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn sample_state() -> super::ServerState {
         load_server_state(&repo_path("examples/vehicle_model.json")).unwrap()
@@ -9232,6 +9236,16 @@ mod tests {
 
     #[tokio::test]
     async fn ask_mercurio_endpoint_returns_draft_without_project_context() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
+        let server_data = temp_server_data("ask_without_project");
+        unsafe {
+            std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
+        }
+        write_stored_ai_settings(&StoredAiSettings {
+            provider: Some("heuristic".to_string()),
+            ..StoredAiSettings::default()
+        })
+        .unwrap();
         let app = build_router(sample_state());
         let response = app
             .oneshot(
@@ -9268,10 +9282,16 @@ mod tests {
                 .unwrap()
                 .contains("Configure OpenAI")
         );
+
+        unsafe {
+            std::env::remove_var("MERCURIO_SERVER_DATA");
+        }
+        std::fs::remove_dir_all(server_data).unwrap();
     }
 
     #[tokio::test]
     async fn ai_settings_endpoint_persists_config_without_returning_secret() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("ai_settings");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -9335,6 +9355,7 @@ mod tests {
 
     #[test]
     fn ai_token_budget_rejects_oversized_external_requests() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.blocking_lock();
         let server_data = temp_server_data("ai_token_budget");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -9358,6 +9379,7 @@ mod tests {
 
     #[tokio::test]
     async fn proposal_endpoint_saves_ask_mercurio_proposal_draft() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("ask_proposal_save");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -9399,6 +9421,7 @@ mod tests {
 
     #[tokio::test]
     async fn proposal_pull_request_endpoint_records_provider_binding() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("proposal_pull_request_binding");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -9467,6 +9490,7 @@ mod tests {
 
     #[tokio::test]
     async fn problem_report_endpoint_links_discussion_to_gitea_issue_binding() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("discussion_problem_report_binding");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -9541,6 +9565,7 @@ mod tests {
 
     #[tokio::test]
     async fn demo_cycle_endpoint_advances_implementation_review_and_merge_state() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("demo_cycle_advance");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -9626,6 +9651,7 @@ mod tests {
 
     #[tokio::test]
     async fn watched_repository_catalog_creates_projects_without_server_files() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("watched_catalog");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -10090,6 +10116,7 @@ mod tests {
 
     #[tokio::test]
     async fn watched_project_refresh_builds_artifact_from_git_cache() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("watched_refresh");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -10415,6 +10442,7 @@ mod tests {
 
     #[tokio::test]
     async fn package_registry_publishes_lists_and_downloads_package() {
+        let _env_guard = SERVER_DATA_ENV_LOCK.lock().await;
         let server_data = temp_server_data("package_publish");
         unsafe {
             std::env::set_var("MERCURIO_SERVER_DATA", &server_data);
@@ -11495,7 +11523,7 @@ mod tests {
                 .any(|diagnostic| diagnostic["message"]
                     .as_str()
                     .unwrap()
-                    .contains("expected servicedd declaration name"))
+                    .contains("unresolved type `ServiceDiscoveryDD`"))
         );
         let outline = partial["semantic_outline"].as_array().unwrap();
         assert!(outline.iter().any(|node| node["element_id"] == "pkg.Demo"));

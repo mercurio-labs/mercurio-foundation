@@ -313,6 +313,9 @@ pub fn configured_reasoning_provider(
     secrets: ReasoningProviderSecretOverrides,
 ) -> ResolvedReasoningProvider {
     match config.provider {
+        Some(ReasoningProviderKind::Heuristic) => {
+            ResolvedReasoningProvider::Heuristic(heuristic_provider())
+        }
         Some(ReasoningProviderKind::AzureOpenAi) => {
             azure_openai_provider_from_config(&config, &secrets)
                 .map(ResolvedReasoningProvider::AzureOpenAi)
@@ -514,6 +517,7 @@ pub fn complete_configured_chat(
             })?;
             provider.complete_chat(request)
         }
+        Some(ReasoningProviderKind::Heuristic) => heuristic_provider().complete_chat(request),
         _ => complete_chat_with_secret_overrides(request, secrets),
     }
 }

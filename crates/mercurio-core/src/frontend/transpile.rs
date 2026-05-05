@@ -717,6 +717,10 @@ fn transpile_usage(
             Value::String(usage.owner_qualified_name.clone()),
         ),
         (
+            "qualified_name".to_string(),
+            Value::String(usage.qualified_name.clone()),
+        ),
+        (
             "declared_name".to_string(),
             if usage.is_implicit_name || declared_name_is_synthetic {
                 Value::Null
@@ -903,6 +907,17 @@ fn build_element(
         if let Some(Value::String(metatype)) = context.get("metatype_ref") {
             if !metatype.is_empty() {
                 properties.insert("metatype".to_string(), Value::String(metatype.clone()));
+            }
+        }
+    }
+
+    if !properties.contains_key("qualified_name") {
+        if let Some(Value::String(qualified_name)) = context.get("qualified_name") {
+            if !qualified_name.is_empty() {
+                properties.insert(
+                    "qualified_name".to_string(),
+                    Value::String(qualified_name.clone()),
+                );
             }
         }
     }

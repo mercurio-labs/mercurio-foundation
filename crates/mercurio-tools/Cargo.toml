@@ -2,6 +2,7 @@
 name = "mercurio-tools"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "audit_pilot_corpus"
@@ -45,6 +46,7 @@ path = "src/bin/runtime_demo.rs"
 
 [dependencies]
 mercurio-core = { path = "../mercurio-core" }
+mercurio-server = { path = "../mercurio-server" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true

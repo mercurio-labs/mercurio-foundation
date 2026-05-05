@@ -187,7 +187,7 @@ struct StdlibIndexes {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolverContext {
+pub struct ResolverContext {
     module_count: usize,
     packages: Vec<ResolvedPackage>,
     definitions: Vec<CollectedDefinition>,
@@ -199,11 +199,11 @@ pub(crate) struct ResolverContext {
 }
 
 impl ResolverContext {
-    pub(crate) fn module_count(&self) -> usize {
+    pub fn module_count(&self) -> usize {
         self.module_count
     }
 
-    pub(crate) fn from_modules(
+    pub fn from_modules(
         context_modules: &[SysmlModule],
         stdlib: &KirDocument,
         mappings: &MappingBundle,
