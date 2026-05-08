@@ -45,6 +45,7 @@ pub fn requirements_table_view(graph: &Graph) -> RequirementTableViewDto {
     let mut rows = graph
         .elements()
         .iter()
+        .filter(|element| !is_library_requirement(element))
         .filter(|element| {
             derived
                 .as_ref()
@@ -127,6 +128,10 @@ fn is_requirement(element: &Element) -> bool {
                         .filter_map(Value::as_str)
                         .any(|target| target.contains("Requirement"))
                 }))
+}
+
+fn is_library_requirement(element: &Element) -> bool {
+    element.element_id.contains("::")
 }
 
 fn is_requirement_relationship(element: &Element) -> bool {
