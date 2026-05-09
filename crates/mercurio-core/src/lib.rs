@@ -14,6 +14,7 @@ pub mod metamodel;
 pub mod paths;
 pub mod project;
 pub mod proposal;
+pub mod query;
 pub mod runtime;
 pub mod semantic_compare;
 pub mod source_set;
@@ -97,6 +98,10 @@ pub use project::{
 pub use proposal::{
     Proposal, ProposalStatus, PullRequestBinding, PullRequestState, SemanticImpact,
     SemanticImpactStatus, SemanticImpactSummary,
+};
+pub use query::{
+    FilterExpr, OrderBy, Projection, Query, QueryEngine, QueryError, QueryResultSet, QuerySource,
+    SortDirection, TermPattern, TriplePattern, parse_query,
 };
 pub use runtime::{ExecutionContext, QueryResult, Runtime, RuntimeError};
 pub use semantic_compare::{

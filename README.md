@@ -105,7 +105,7 @@ mercurio parse --text "package Demo { part def Vehicle; }"
 
 ## CLI Examples
 
-The public CLI is one cohesive `mercurio` binary with `project`, `parse`, `compile`, `evaluate`, `lint`, and `package` subcommands. `parse`, `compile`, `evaluate`, and `lint` accept source input from `--file PATH` or `--text TEXT`; inline text defaults to SysML, and file input defaults from `.sysml` or `.kerml`.
+The public CLI is one cohesive `mercurio` binary with `project`, `parse`, `compile`, `evaluate`, `lint`, and `package` subcommands. `parse`, `compile`, and `evaluate` accept source input from `--file PATH`, `--text TEXT`, or `--url URL`; inline text defaults to SysML, and file/URL input defaults from `.sysml` or `.kerml`. `compile` and `evaluate` also accept model-level KPAR input from `--kpar PATH`, or from `--url URL` when the URL ends in `.kpar`.
 
 ### Create a Project
 
@@ -241,6 +241,19 @@ Override the stdlib:
 mercurio compile --file model.sysml --stdlib resources/stdlib.full.kir.json
 ```
 
+Compile a KPAR package directly as a model input:
+
+```powershell
+mercurio compile --kpar model.kpar --format json
+```
+
+Compile source or KPAR input from a network URL:
+
+```powershell
+mercurio compile --url https://example.com/models/vehicle.sysml
+mercurio compile --url https://example.com/packages/domain.kpar --format json
+```
+
 ### Evaluate Runtime Expressions
 
 Evaluate a derived feature from source by compiling the model first:
@@ -253,6 +266,38 @@ Evaluate directly from a precompiled KIR document:
 
 ```powershell
 mercurio evaluate --kir model.kir.json --feature Demo.Vehicle.totalMass --owner Demo.Vehicle
+```
+
+Evaluate directly from a KPAR package:
+
+```powershell
+mercurio evaluate --kpar model.kpar --feature totalMass --owner Demo.Vehicle
+```
+
+### Query Models
+
+Query a model with a small field/filter language:
+
+```powershell
+mercurio query --file model.sysml --query 'from elements where kind = "SysML::Systems::PartDefinition" select id, qualified_name'
+mercurio query --kpar model.kpar --query 'from elements where qualified_name = "Demo.Vehicle" select id, kind' --format json
+mercurio query --kpar model.kpar --query-file queries/requirements.mq
+```
+
+Use `match` patterns to bind relationships:
+
+```powershell
+mercurio query --file model.sysml --query 'match ?type kind "SysML::Systems::PartDefinition" match ?type features ?feature select ?type, ?feature'
+mercurio query --file model.sysml --query 'match ?type features ?feature select ?type.qualified_name, ?feature.qualified_name'
+mercurio query --file model.sysml --query 'match ?req features ?feature where ?feature.metatype = "SysML::RequireUsage" select ?req.qualified_name, ?feature.qualified_name'
+```
+
+Use `contains`, `in`, `!=`, repeated `where` clauses, and `order by` for broader classification queries:
+
+```powershell
+mercurio query --file model.sysml --query 'from elements where metatype contains "Requirement" select id, qualified_name, metatype'
+mercurio query --file model.sysml --query 'from elements where metatype in ["SysML::Systems::RequirementDefinition", "SysML::RequirementUsage"] select id, qualified_name, metatype'
+mercurio query --file model.sysml --query 'from elements where metatype contains "Requirement" where qualified_name != "Demo.SkipNeed" select id, qualified_name, metatype order by qualified_name'
 ```
 
 Evaluate an inline expression model:

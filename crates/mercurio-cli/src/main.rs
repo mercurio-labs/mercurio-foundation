@@ -10,8 +10,9 @@ use mercurio_core::frontend::kerml::{compile_kerml_text, parse_kerml};
 use mercurio_core::frontend::sysml::{compile_sysml_text_with_context_report, parse_sysml};
 use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
-    LintSeverity, PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, Runtime, SemanticCompileStatus,
-    SourceLanguage, default_stdlib_path, lint_text, resolve_project_context, write_kpar_package,
+    LintSeverity, PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet,
+    Runtime, SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
+    resolve_project_context, write_kpar_package,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -29,6 +30,7 @@ enum Command {
     Parse(ParseCommand),
     Compile(CompileCommand),
     Evaluate(EvaluateCommand),
+    Query(QueryCommand),
     Lint(LintCommand),
     Package(PackageCommand),
     Project(ProjectCommand),
@@ -49,6 +51,8 @@ struct ParseCommand {
 struct CompileCommand {
     #[command(flatten)]
     input: SingleInput,
+    #[arg(long)]
+    kpar: Option<PathBuf>,
     #[arg(long, value_enum)]
     language: Option<LanguageArg>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
@@ -82,6 +86,8 @@ struct EvaluateCommand {
     #[arg(long)]
     kir: Option<PathBuf>,
     #[arg(long)]
+    kpar: Option<PathBuf>,
+    #[arg(long)]
     feature: String,
     #[arg(long)]
     owner: String,
@@ -99,6 +105,26 @@ struct EvaluateCommand {
     context_file: Option<PathBuf>,
     #[arg(long)]
     explain: bool,
+}
+
+#[derive(Debug, Args)]
+struct QueryCommand {
+    #[command(flatten)]
+    input: SingleInput,
+    #[arg(long)]
+    kir: Option<PathBuf>,
+    #[arg(long)]
+    kpar: Option<PathBuf>,
+    #[arg(long)]
+    query: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    query_file: Option<PathBuf>,
+    #[arg(long, value_enum)]
+    language: Option<LanguageArg>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+    #[arg(long)]
+    stdlib: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -162,6 +188,8 @@ struct SingleInput {
     file: Option<PathBuf>,
     #[arg(long)]
     text: Option<String>,
+    #[arg(long)]
+    url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -184,12 +212,24 @@ struct SourceInput {
     content: String,
 }
 
+#[derive(Debug, Clone)]
+struct ModelInput {
+    source: String,
+    document: KirDocument,
+}
+
 struct EvaluateInput {
     source: String,
     language: Option<SourceLanguage>,
     project_descriptor: ProjectDescriptorOutput,
     compile_status: &'static str,
     diagnostics: Vec<Diagnostic>,
+    document: KirDocument,
+}
+
+struct QueryModelInput {
+    source: String,
+    project_descriptor: ProjectDescriptorOutput,
     document: KirDocument,
 }
 
@@ -256,6 +296,7 @@ fn run(cli: Cli) -> Result<RunResult, CliError> {
         Command::Parse(command) => run_parse(command),
         Command::Compile(command) => run_compile(command),
         Command::Evaluate(command) => run_evaluate(command),
+        Command::Query(command) => run_query(command),
         Command::Lint(command) => run_lint(command),
         Command::Package(command) => run_package(command),
         Command::Project(command) => run_project(command),
@@ -296,12 +337,25 @@ fn run_parse(command: ParseCommand) -> Result<RunResult, CliError> {
 }
 
 fn run_compile(command: CompileCommand) -> Result<RunResult, CliError> {
-    let source = read_single_input(&command.input, command.language)?;
-    let library_context = load_library_context(
-        command.stdlib.as_deref(),
-        single_input_context_path(&command.input)?,
-    )?;
-    let mut response = compile_source(&source, &library_context.document);
+    let input_count = single_input_count(&command.input) + usize::from(command.kpar.is_some());
+    if input_count != 1 {
+        return Err(CliError::usage(
+            "provide exactly one of --file, --text, --url, or --kpar",
+        ));
+    }
+
+    let library_context =
+        load_library_context(command.stdlib.as_deref(), compile_context_path(&command)?)?;
+    let mut response = if let Some(path) = &command.kpar {
+        compile_kpar_model_input(path, &library_context.document)?
+    } else if let Some(url) = &command.input.url
+        && is_kpar_url(url)
+    {
+        compile_kpar_url_model_input(url, &library_context.document)?
+    } else {
+        let source = read_single_input(&command.input, command.language)?;
+        compile_source(&source, &library_context.document)
+    };
     response.project_descriptor = library_context.project_descriptor_output();
     let failed = response.status == "failed" || !response.diagnostics.is_empty();
     let stdout = match command.format {
@@ -402,6 +456,31 @@ fn run_evaluate(command: EvaluateCommand) -> Result<RunResult, CliError> {
 
     Ok(RunResult {
         exit_code: if failed { 1 } else { 0 },
+        stdout,
+    })
+}
+
+fn run_query(command: QueryCommand) -> Result<RunResult, CliError> {
+    let model = read_query_model_input(&command)?;
+    let query_text = read_query_text(&command)?;
+    let query =
+        parse_query(&query_text).map_err(|err| CliError::usage(format!("invalid query: {err}")))?;
+    let result = QueryEngine::new(&model.document)
+        .execute(&query)
+        .map_err(|err| CliError::execution(format!("query failed: {err}")))?;
+
+    let response = QueryResponse {
+        source: model.source,
+        project_descriptor: model.project_descriptor,
+        result,
+    };
+    let stdout = match command.format {
+        OutputFormat::Text => format_query_text(&response),
+        OutputFormat::Json => to_pretty_json(&response)?,
+    };
+
+    Ok(RunResult {
+        exit_code: 0,
         stdout,
     })
 }
@@ -634,21 +713,23 @@ fn read_single_input(
     input: &SingleInput,
     language: Option<LanguageArg>,
 ) -> Result<SourceInput, CliError> {
-    match (&input.file, &input.text) {
-        (Some(_), Some(_)) => Err(CliError::usage("provide exactly one of --file or --text")),
-        (None, None) => Err(CliError::usage("provide exactly one of --file or --text")),
-        (Some(path), None) => read_file_source(path, language),
-        (None, Some(text)) => read_text_source(text, language),
+    match (&input.file, &input.text, &input.url) {
+        (Some(path), None, None) => read_file_source(path, language),
+        (None, Some(text), None) => read_text_source(text, language),
+        (None, None, Some(url)) => read_url_source(url, language),
+        _ => Err(CliError::usage(
+            "provide exactly one of --file, --text, or --url",
+        )),
     }
 }
 
 fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliError> {
-    let input_count = usize::from(command.input.file.is_some())
-        + usize::from(command.input.text.is_some())
-        + usize::from(command.kir.is_some());
+    let input_count = single_input_count(&command.input)
+        + usize::from(command.kir.is_some())
+        + usize::from(command.kpar.is_some());
     if input_count != 1 {
         return Err(CliError::usage(
-            "provide exactly one of --file, --text, or --kir",
+            "provide exactly one of --file, --text, --url, --kir, or --kpar",
         ));
     }
 
@@ -673,6 +754,35 @@ fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliEr
         });
     }
 
+    if let Some(path) = &command.kpar {
+        let library_context = load_library_context(command.stdlib.as_deref(), path.clone())?;
+        let model = read_kpar_model_input(path, &library_context.document)?;
+        return Ok(EvaluateInput {
+            source: model.source,
+            language: None,
+            project_descriptor: library_context.project_descriptor_output(),
+            compile_status: "ok",
+            diagnostics: Vec::new(),
+            document: model.document,
+        });
+    }
+
+    if let Some(url) = &command.input.url
+        && is_kpar_url(url)
+    {
+        let library_context =
+            load_library_context(command.stdlib.as_deref(), current_directory_context_path()?)?;
+        let model = read_kpar_url_model_input(url, &library_context.document)?;
+        return Ok(EvaluateInput {
+            source: model.source,
+            language: None,
+            project_descriptor: library_context.project_descriptor_output(),
+            compile_status: "ok",
+            diagnostics: Vec::new(),
+            document: model.document,
+        });
+    }
+
     let source = read_single_input(&command.input, command.language)?;
     let library_context = load_library_context(
         command.stdlib.as_deref(),
@@ -681,7 +791,7 @@ fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliEr
     let response = compile_source(&source, &library_context.document);
     Ok(EvaluateInput {
         source: response.source,
-        language: Some(response.language),
+        language: response.language,
         project_descriptor: library_context.project_descriptor_output(),
         compile_status: response.status,
         diagnostics: response.diagnostics,
@@ -690,6 +800,98 @@ fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliEr
             elements: Vec::new(),
         }),
     })
+}
+
+fn read_query_model_input(command: &QueryCommand) -> Result<QueryModelInput, CliError> {
+    let input_count = single_input_count(&command.input)
+        + usize::from(command.kir.is_some())
+        + usize::from(command.kpar.is_some());
+    if input_count != 1 {
+        return Err(CliError::usage(
+            "provide exactly one of --file, --text, --url, --kir, or --kpar",
+        ));
+    }
+
+    if let Some(path) = &command.kir {
+        let document = KirDocument::from_path(path).map_err(|err| {
+            CliError::execution(format!(
+                "failed to load KIR document {}: {err}",
+                path.display()
+            ))
+        })?;
+        return Ok(QueryModelInput {
+            source: path.display().to_string(),
+            project_descriptor: ProjectDescriptorOutput {
+                used: false,
+                path: None,
+                status: "not_applicable",
+            },
+            document,
+        });
+    }
+
+    if let Some(path) = &command.kpar {
+        let library_context = load_library_context(command.stdlib.as_deref(), path.clone())?;
+        let model = read_kpar_model_input(path, &library_context.document)?;
+        return Ok(QueryModelInput {
+            source: model.source,
+            project_descriptor: library_context.project_descriptor_output(),
+            document: model.document,
+        });
+    }
+
+    if let Some(url) = &command.input.url
+        && is_kpar_url(url)
+    {
+        let library_context =
+            load_library_context(command.stdlib.as_deref(), current_directory_context_path()?)?;
+        let model = read_kpar_url_model_input(url, &library_context.document)?;
+        return Ok(QueryModelInput {
+            source: model.source,
+            project_descriptor: library_context.project_descriptor_output(),
+            document: model.document,
+        });
+    }
+
+    let source = read_single_input(&command.input, command.language)?;
+    let library_context = load_library_context(
+        command.stdlib.as_deref(),
+        single_input_context_path(&command.input)?,
+    )?;
+    let response = compile_source(&source, &library_context.document);
+    if response.status == "failed" || !response.diagnostics.is_empty() {
+        return Err(CliError::execution(format!(
+            "compile diagnostics prevented query: {} diagnostic(s)",
+            response.diagnostics.len()
+        )));
+    }
+    let document = response
+        .document
+        .ok_or_else(|| CliError::execution("compile succeeded without producing a KIR document"))?;
+
+    Ok(QueryModelInput {
+        source: response.source,
+        project_descriptor: library_context.project_descriptor_output(),
+        document,
+    })
+}
+
+fn read_query_text(command: &QueryCommand) -> Result<String, CliError> {
+    match (&command.query, &command.query_file) {
+        (Some(_), Some(_)) => Err(CliError::usage(
+            "provide exactly one of --query or --query-file",
+        )),
+        (None, None) => Err(CliError::usage(
+            "provide exactly one of --query or --query-file",
+        )),
+        (Some(query), None) => Ok(query.clone()),
+        (None, Some(path)) => std::fs::read_to_string(path).map_err(|err| {
+            CliError::execution(format!(
+                "failed to read query file {}: {err}",
+                path.display()
+            ))
+        }),
+    }
 }
 
 fn read_package_sources(paths: &[PathBuf]) -> Result<Vec<KparPackageSource>, CliError> {
@@ -829,6 +1031,16 @@ fn read_file_source(path: &Path, language: Option<LanguageArg>) -> Result<Source
     })
 }
 
+fn read_url_source(url: &str, language: Option<LanguageArg>) -> Result<SourceInput, CliError> {
+    let resolved_language = resolve_url_language(url, language)?;
+    let content = download_url_text(url)?;
+    Ok(SourceInput {
+        source_name: url.to_string(),
+        language: resolved_language,
+        content,
+    })
+}
+
 fn resolve_file_language(
     path: &Path,
     language: Option<LanguageArg>,
@@ -843,6 +1055,46 @@ fn resolve_file_language(
         Some(LanguageArg::Sysml) => Ok(SourceLanguage::Sysml),
         Some(LanguageArg::Kerml) => Ok(SourceLanguage::Kerml),
     }
+}
+
+fn resolve_url_language(
+    url: &str,
+    language: Option<LanguageArg>,
+) -> Result<SourceLanguage, CliError> {
+    match language {
+        None | Some(LanguageArg::Auto) => {
+            SourceLanguage::from_path(Path::new(url)).ok_or_else(|| {
+                CliError::usage(format!(
+                    "cannot infer language from {url}; use --language sysml|kerml"
+                ))
+            })
+        }
+        Some(LanguageArg::Sysml) => Ok(SourceLanguage::Sysml),
+        Some(LanguageArg::Kerml) => Ok(SourceLanguage::Kerml),
+    }
+}
+
+fn single_input_count(input: &SingleInput) -> usize {
+    usize::from(input.file.is_some())
+        + usize::from(input.text.is_some())
+        + usize::from(input.url.is_some())
+}
+
+fn download_url_text(url: &str) -> Result<String, CliError> {
+    reqwest::blocking::get(url)
+        .and_then(|response| response.error_for_status())
+        .map_err(|err| CliError::execution(format!("failed to fetch {url}: {err}")))?
+        .text()
+        .map_err(|err| CliError::execution(format!("failed to read response from {url}: {err}")))
+}
+
+fn download_url_bytes(url: &str) -> Result<Vec<u8>, CliError> {
+    reqwest::blocking::get(url)
+        .and_then(|response| response.error_for_status())
+        .map_err(|err| CliError::execution(format!("failed to fetch {url}: {err}")))?
+        .bytes()
+        .map(|bytes| bytes.to_vec())
+        .map_err(|err| CliError::execution(format!("failed to read response from {url}: {err}")))
 }
 
 fn collect_lint_files(
@@ -1094,7 +1346,7 @@ fn compile_source(source: &SourceInput, stdlib: &KirDocument) -> CompileResponse
             );
             CompileResponse {
                 source: source.source_name.clone(),
-                language: source.language,
+                language: Some(source.language),
                 status: compile_status_str(report.status),
                 project_descriptor: ProjectDescriptorOutput::not_set(),
                 diagnostics: report.diagnostics,
@@ -1105,7 +1357,7 @@ fn compile_source(source: &SourceInput, stdlib: &KirDocument) -> CompileResponse
             match compile_kerml_text(&source.content, &source.source_name, stdlib) {
                 Ok(document) => CompileResponse {
                     source: source.source_name.clone(),
-                    language: source.language,
+                    language: Some(source.language),
                     status: "ok",
                     project_descriptor: ProjectDescriptorOutput::not_set(),
                     diagnostics: Vec::new(),
@@ -1113,7 +1365,7 @@ fn compile_source(source: &SourceInput, stdlib: &KirDocument) -> CompileResponse
                 },
                 Err(diagnostic) => CompileResponse {
                     source: source.source_name.clone(),
-                    language: source.language,
+                    language: Some(source.language),
                     status: "failed",
                     project_descriptor: ProjectDescriptorOutput::not_set(),
                     diagnostics: vec![diagnostic],
@@ -1122,6 +1374,66 @@ fn compile_source(source: &SourceInput, stdlib: &KirDocument) -> CompileResponse
             }
         }
     }
+}
+
+fn compile_kpar_model_input(
+    path: &Path,
+    stdlib: &KirDocument,
+) -> Result<CompileResponse, CliError> {
+    let model = read_kpar_model_input(path, stdlib)?;
+    Ok(CompileResponse {
+        source: model.source,
+        language: None,
+        status: "ok",
+        project_descriptor: ProjectDescriptorOutput::not_set(),
+        diagnostics: Vec::new(),
+        document: Some(model.document),
+    })
+}
+
+fn compile_kpar_url_model_input(
+    url: &str,
+    stdlib: &KirDocument,
+) -> Result<CompileResponse, CliError> {
+    let model = read_kpar_url_model_input(url, stdlib)?;
+    Ok(CompileResponse {
+        source: model.source,
+        language: None,
+        status: "ok",
+        project_descriptor: ProjectDescriptorOutput::not_set(),
+        diagnostics: Vec::new(),
+        document: Some(model.document),
+    })
+}
+
+fn read_kpar_model_input(path: &Path, stdlib: &KirDocument) -> Result<ModelInput, CliError> {
+    let artifact = LibraryProviderConfig::KparFile {
+        path: path.display().to_string(),
+    }
+    .resolve_with_context("input", None, Some(stdlib))
+    .map_err(|err| CliError::execution(format!("failed to load KPAR {}: {err}", path.display())))?;
+
+    Ok(ModelInput {
+        source: path.display().to_string(),
+        document: artifact.document,
+    })
+}
+
+fn read_kpar_url_model_input(url: &str, stdlib: &KirDocument) -> Result<ModelInput, CliError> {
+    let bytes = download_url_bytes(url)?;
+    let temp_path = temp_url_kpar_path(url);
+    std::fs::write(&temp_path, bytes).map_err(|err| {
+        CliError::execution(format!(
+            "failed to write temporary KPAR {}: {err}",
+            temp_path.display()
+        ))
+    })?;
+    let result = read_kpar_model_input(&temp_path, stdlib).map(|mut model| {
+        model.source = url.to_string();
+        model
+    });
+    let _ = std::fs::remove_file(&temp_path);
+    result
 }
 
 fn load_stdlib(path: Option<&Path>) -> Result<KirDocument, CliError> {
@@ -1235,6 +1547,13 @@ fn single_input_context_path(input: &SingleInput) -> Result<PathBuf, CliError> {
     current_directory_context_path()
 }
 
+fn compile_context_path(command: &CompileCommand) -> Result<PathBuf, CliError> {
+    if let Some(path) = &command.kpar {
+        return Ok(path.clone());
+    }
+    single_input_context_path(&command.input)
+}
+
 fn lint_context_path(command: &LintCommand) -> Result<PathBuf, CliError> {
     command
         .files
@@ -1339,6 +1658,21 @@ fn temp_kpar_path(out: &Path) -> Result<PathBuf, CliError> {
         .unwrap_or_else(|| PathBuf::from(temp_name)))
 }
 
+fn temp_url_kpar_path(url: &str) -> PathBuf {
+    let file_name = Path::new(url)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("model.kpar");
+    std::env::temp_dir().join(format!(".mercurio-url-{}-{file_name}", std::process::id()))
+}
+
+fn is_kpar_url(url: &str) -> bool {
+    url.split(['?', '#'])
+        .next()
+        .is_some_and(|path| path.to_ascii_lowercase().ends_with(".kpar"))
+}
+
 #[derive(Serialize)]
 struct ParseResponse {
     source: String,
@@ -1352,7 +1686,8 @@ struct ParseResponse {
 #[derive(Serialize)]
 struct CompileResponse {
     source: String,
-    language: SourceLanguage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<SourceLanguage>,
     status: &'static str,
     project_descriptor: ProjectDescriptorOutput,
     diagnostics: Vec<Diagnostic>,
@@ -1389,6 +1724,13 @@ struct EvaluateResponse {
     error: Option<String>,
 }
 
+#[derive(Serialize)]
+struct QueryResponse {
+    source: String,
+    project_descriptor: ProjectDescriptorOutput,
+    result: QueryResultSet,
+}
+
 fn format_parse_text(response: &ParseResponse) -> String {
     let mut output = String::new();
     output.push_str(&format!("source: {}\n", response.source));
@@ -1420,7 +1762,9 @@ fn format_parse_text(response: &ParseResponse) -> String {
 fn format_compile_text(response: &CompileResponse) -> String {
     let mut output = String::new();
     output.push_str(&format!("source: {}\n", response.source));
-    output.push_str(&format!("language: {}\n", response.language));
+    if let Some(language) = response.language {
+        output.push_str(&format!("language: {language}\n"));
+    }
     output.push_str(&format!("status: {}\n", response.status));
     output.push_str(&format!(
         "project_descriptor: {}\n",
@@ -1477,6 +1821,45 @@ fn format_evaluate_text(response: &EvaluateResponse, explain: bool) -> String {
         }
     }
     output
+}
+
+fn format_query_text(response: &QueryResponse) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("source: {}\n", response.source));
+    output.push_str(&format!(
+        "project_descriptor: {}\n",
+        response.project_descriptor.to_text()
+    ));
+    output.push_str(&format!("rows: {}\n", response.result.rows.len()));
+
+    if response.result.columns.is_empty() {
+        return output;
+    }
+
+    output.push_str(&response.result.columns.join("\t"));
+    output.push('\n');
+    for row in &response.result.rows {
+        let values = response
+            .result
+            .columns
+            .iter()
+            .map(|column| format_query_cell(row.get(column).unwrap_or(&Value::Null)))
+            .collect::<Vec<_>>();
+        output.push_str(&values.join("\t"));
+        output.push('\n');
+    }
+
+    output
+}
+
+fn format_query_cell(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => value.to_string(),
+    }
 }
 
 fn format_lint_text(response: &LintResponse) -> String {
@@ -1973,6 +2356,249 @@ mod tests {
                 .iter()
                 .any(|element| element.id == "type.Demo.Vehicle")
         );
+    }
+
+    #[test]
+    fn compile_kpar_file_returns_document() {
+        let root = temp_dir("mercurio-cli-compile-kpar");
+        std::fs::create_dir_all(&root).unwrap();
+        let source_path = root.join("model.sysml");
+        let out_path = root.join("model.kpar");
+        std::fs::write(&source_path, "package Demo { part def Vehicle; }").unwrap();
+        run_args(&[
+            "package",
+            "build",
+            "--file",
+            source_path.to_str().unwrap(),
+            "--out",
+            out_path.to_str().unwrap(),
+            "--quiet",
+        ])
+        .unwrap();
+
+        let result = run_args(&[
+            "compile",
+            "--kpar",
+            out_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert!(json["language"].is_null());
+        assert!(
+            json["document"]["elements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|element| element["id"] == "type.Demo.Vehicle")
+        );
+    }
+
+    #[test]
+    fn evaluate_kpar_file_accepts_qualified_names() {
+        let root = temp_dir("mercurio-cli-evaluate-kpar");
+        std::fs::create_dir_all(&root).unwrap();
+        let source_path = root.join("model.sysml");
+        let out_path = root.join("model.kpar");
+        std::fs::write(
+            &source_path,
+            "package Demo { part def Vehicle { attribute mass = 40+(2); } }",
+        )
+        .unwrap();
+        run_args(&[
+            "package",
+            "build",
+            "--file",
+            source_path.to_str().unwrap(),
+            "--out",
+            out_path.to_str().unwrap(),
+            "--quiet",
+        ])
+        .unwrap();
+
+        let result = run_args(&[
+            "evaluate",
+            "--kpar",
+            out_path.to_str().unwrap(),
+            "--feature",
+            "mass",
+            "--owner",
+            "Demo.Vehicle",
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("source:"));
+        assert!(result.stdout.contains("compile_status: ok"));
+        assert!(result.stdout.contains("owner_id: type.Demo.Vehicle"));
+        assert!(result.stdout.contains("value: 42.0"));
+    }
+
+    #[test]
+    fn query_text_filters_and_selects_elements() {
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { part def Vehicle; attribute def Mass; }",
+            "--query",
+            r#"from elements where kind = "SysML::Systems::PartDefinition" select id, qualified_name"#,
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 1"));
+        assert!(result.stdout.contains("type.Demo.Vehicle"));
+        assert!(result.stdout.contains("Demo.Vehicle"));
+    }
+
+    #[test]
+    fn query_kpar_file_returns_json_rows() {
+        let root = temp_dir("mercurio-cli-query-kpar");
+        std::fs::create_dir_all(&root).unwrap();
+        let source_path = root.join("model.sysml");
+        let out_path = root.join("model.kpar");
+        std::fs::write(&source_path, "package Demo { part def Vehicle; }").unwrap();
+        run_args(&[
+            "package",
+            "build",
+            "--file",
+            source_path.to_str().unwrap(),
+            "--out",
+            out_path.to_str().unwrap(),
+            "--quiet",
+        ])
+        .unwrap();
+
+        let result = run_args(&[
+            "query",
+            "--kpar",
+            out_path.to_str().unwrap(),
+            "--query",
+            r#"from elements where qualified_name = "Demo.Vehicle" select id, kind"#,
+            "--format",
+            "json",
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(json["result"]["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(json["result"]["rows"][0]["id"], "type.Demo.Vehicle");
+    }
+
+    #[test]
+    fn query_match_binds_feature_relationships() {
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { part def Vehicle { attribute mass = 42; } }",
+            "--query",
+            r#"match ?type kind "SysML::Systems::PartDefinition" match ?type features ?feature select ?type, ?feature"#,
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 1"));
+        assert!(result.stdout.contains("type.Demo.Vehicle"));
+        assert!(result.stdout.contains("feature.Demo.Vehicle.mass"));
+    }
+
+    #[test]
+    fn query_filters_requirements_by_metatype_contains() {
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { requirement def VehicleNeed { subject vehicle; require constraint { true } } requirement vehicleNeed : VehicleNeed; }",
+            "--query",
+            r#"from elements where metatype contains "Requirement" select id, qualified_name, metatype"#,
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 2"));
+        assert!(result.stdout.contains("type.Demo.VehicleNeed"));
+        assert!(result.stdout.contains("requirement.Demo.vehicleNeed"));
+    }
+
+    #[test]
+    fn query_match_selects_bound_element_fields() {
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { part def Vehicle { attribute mass = 42; } }",
+            "--query",
+            r#"match ?type kind "SysML::Systems::PartDefinition" match ?type features ?feature select ?type.qualified_name, ?feature.qualified_name"#,
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 1"));
+        assert!(result.stdout.contains("Demo.Vehicle"));
+        assert!(result.stdout.contains("Demo.Vehicle.mass"));
+    }
+
+    #[test]
+    fn query_supports_multiple_filters_not_equals_and_order_by() {
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { requirement def VehicleNeed; requirement def SkipNeed; requirement vehicleNeed : VehicleNeed; }",
+            "--query",
+            r#"from elements where metatype contains "Requirement" where qualified_name != "Demo.SkipNeed" select id, qualified_name, metatype order by qualified_name desc"#,
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 2"));
+        assert!(result.stdout.contains("Demo.VehicleNeed"));
+        assert!(result.stdout.contains("Demo.vehicleNeed"));
+        assert!(!result.stdout.contains("Demo.SkipNeed\t"));
+    }
+
+    #[test]
+    fn query_match_supports_where_filters() {
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { requirement def VehicleNeed { subject vehicle; require constraint { true } } }",
+            "--query",
+            r#"match ?req features ?feature where ?feature.metatype = "SysML::RequireUsage" select ?req.qualified_name, ?feature.qualified_name"#,
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 1"));
+        assert!(result.stdout.contains("Demo.VehicleNeed"));
+        assert!(result.stdout.contains("Demo.VehicleNeed.constraint"));
+    }
+
+    #[test]
+    fn query_file_reads_query_from_disk() {
+        let root = temp_dir("mercurio-cli-query-file");
+        std::fs::create_dir_all(&root).unwrap();
+        let query_path = root.join("requirements.mq");
+        std::fs::write(
+            &query_path,
+            r#"from elements where metatype contains "Requirement" select id, qualified_name order by qualified_name"#,
+        )
+        .unwrap();
+
+        let result = run_args(&[
+            "query",
+            "--text",
+            "package Demo { requirement def VehicleNeed; }",
+            "--query-file",
+            query_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("rows: 1"));
+        assert!(result.stdout.contains("type.Demo.VehicleNeed"));
     }
 
     #[test]
