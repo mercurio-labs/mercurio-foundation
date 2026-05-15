@@ -10,6 +10,20 @@ pub struct SemanticGoalSpec {
     pub checks: Vec<SemanticGoalCheck>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticGoalProfile {
+    pub id: String,
+    pub name: String,
+    pub kind: SemanticGoalProfileKind,
+    pub goal: SemanticGoalSpec,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SemanticGoalProfileKind {
+    Task,
+    Quality,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum GoalPolicy {
     All,
@@ -27,6 +41,12 @@ pub enum SemanticGoalCheck {
         source: ElementRef,
         kind: String,
         target: ElementRef,
+    },
+    RequirementsHaveFields {
+        fields: Vec<String>,
+    },
+    TypedUsages {
+        usage_kinds: Vec<String>,
     },
 }
 
@@ -146,7 +166,152 @@ fn evaluate_goal_check(
                 evidence,
             }
         }
+        SemanticGoalCheck::RequirementsHaveFields { fields } => {
+            let requirements = context
+                .elements
+                .iter()
+                .filter(|element| element_kind_matches(element, "requirement"))
+                .collect::<Vec<_>>();
+            let mut evidence = Vec::new();
+            for requirement in &requirements {
+                for field in fields {
+                    if !element_has_required_field(requirement, field) {
+                        evidence.push(format!(
+                            "requirement `{}` is missing `{field}`",
+                            requirement.element.qualified_name
+                        ));
+                    }
+                }
+            }
+            let satisfied = evidence.is_empty();
+            if satisfied {
+                evidence.push(format!(
+                    "all {} requirement element(s) have required fields: {}",
+                    requirements.len(),
+                    fields.join(", ")
+                ));
+            }
+            GoalCheckEvaluation {
+                check,
+                satisfied,
+                evidence,
+            }
+        }
+        SemanticGoalCheck::TypedUsages { usage_kinds } => {
+            let mut evidence = Vec::new();
+            for element in &context.elements {
+                if element.kind != "usage" {
+                    continue;
+                }
+                let keyword = element
+                    .attributes
+                    .get("keyword")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if !usage_kinds
+                    .iter()
+                    .any(|usage_kind| keyword.eq_ignore_ascii_case(usage_kind))
+                {
+                    continue;
+                }
+                if !element.attributes.contains_key("type") {
+                    evidence.push(format!(
+                        "usage `{}` with kind `{keyword}` is missing type",
+                        element.element.qualified_name
+                    ));
+                }
+            }
+            let satisfied = evidence.is_empty();
+            if satisfied {
+                evidence.push(format!(
+                    "all usage kinds have types where required: {}",
+                    usage_kinds.join(", ")
+                ));
+            }
+            GoalCheckEvaluation {
+                check,
+                satisfied,
+                evidence,
+            }
+        }
     }
+}
+
+pub fn default_model_quality_profile() -> SemanticGoalProfile {
+    SemanticGoalProfile {
+        id: "default-model-quality".to_string(),
+        name: "Default Model Quality".to_string(),
+        kind: SemanticGoalProfileKind::Quality,
+        goal: SemanticGoalSpec {
+            policy: GoalPolicy::All,
+            checks: vec![
+                SemanticGoalCheck::RequirementsHaveFields {
+                    fields: vec!["text".to_string()],
+                },
+                SemanticGoalCheck::TypedUsages {
+                    usage_kinds: vec!["part".to_string()],
+                },
+            ],
+        },
+    }
+}
+
+fn element_kind_matches(element: &crate::mutation::SemanticElementContext, expected: &str) -> bool {
+    element.kind.eq_ignore_ascii_case(expected)
+        || element
+            .attributes
+            .get("keyword")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|keyword| keyword.eq_ignore_ascii_case(expected))
+        || element
+            .attributes
+            .get("kirKind")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kir_kind| kir_kind.eq_ignore_ascii_case(expected))
+}
+
+fn element_has_required_field(
+    element: &crate::mutation::SemanticElementContext,
+    field: &str,
+) -> bool {
+    match field {
+        "text" => {
+            string_attribute_present(element, "text")
+                || string_attribute_present(element, "body")
+                || string_attribute_present(element, "doc")
+                || string_attribute_present(element, "documentation")
+                || !element
+                    .attributes
+                    .get("docs")
+                    .and_then(serde_json::Value::as_array)
+                    .is_none_or(Vec::is_empty)
+        }
+        "id" => {
+            string_attribute_present(element, "id")
+                || string_attribute_present(element, "requirementId")
+                || string_attribute_present(element, "requirement_id")
+        }
+        other => element
+            .attributes
+            .get(other)
+            .is_some_and(|value| match value {
+                serde_json::Value::String(text) => !text.trim().is_empty(),
+                serde_json::Value::Array(items) => !items.is_empty(),
+                serde_json::Value::Null => false,
+                _ => true,
+            }),
+    }
+}
+
+fn string_attribute_present(
+    element: &crate::mutation::SemanticElementContext,
+    attribute: &str,
+) -> bool {
+    element
+        .attributes
+        .get(attribute)
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty())
 }
 
 fn relationship_kind_matches(actual: &str, expected: &str) -> bool {
@@ -222,5 +387,111 @@ mod tests {
         assert!(evaluation.satisfied);
         assert_eq!(evaluation.score, 1.0);
         assert_eq!(evaluation.results.len(), 2);
+    }
+
+    #[test]
+    fn default_quality_profile_flags_requirements_without_text_and_untyped_part_usages() {
+        let context = SemanticReasoningContext {
+            metamodel_version: "test".to_string(),
+            workspace_revision: WorkspaceRevision::unchecked(),
+            focus: Vec::new(),
+            elements: vec![
+                SemanticElementContext {
+                    element: ElementRef::new("Demo.NeedRange"),
+                    kind: "definition".to_string(),
+                    label: "NeedRange".to_string(),
+                    owner: Some(ElementRef::new("Demo")),
+                    attributes: BTreeMap::from([(
+                        "keyword".to_string(),
+                        serde_json::Value::String("requirement".to_string()),
+                    )]),
+                },
+                SemanticElementContext {
+                    element: ElementRef::new("Demo.Vehicle.engine"),
+                    kind: "usage".to_string(),
+                    label: "engine".to_string(),
+                    owner: Some(ElementRef::new("Demo.Vehicle")),
+                    attributes: BTreeMap::from([(
+                        "keyword".to_string(),
+                        serde_json::Value::String("part".to_string()),
+                    )]),
+                },
+            ],
+            relationships: Vec::new(),
+            facts: Vec::<SemanticFactContext>::new(),
+            affordances: Vec::new(),
+            source_files: Vec::new(),
+            truncated: false,
+        };
+
+        let evaluation = evaluate_semantic_goal(&context, &default_model_quality_profile().goal);
+
+        assert!(!evaluation.satisfied);
+        assert_eq!(evaluation.score, 0.0);
+        assert!(evaluation.results.iter().any(|result| {
+            !result.satisfied
+                && matches!(
+                    result.check,
+                    SemanticGoalCheck::RequirementsHaveFields { .. }
+                )
+        }));
+        assert!(evaluation.results.iter().any(|result| {
+            !result.satisfied && matches!(result.check, SemanticGoalCheck::TypedUsages { .. })
+        }));
+    }
+
+    #[test]
+    fn default_quality_profile_accepts_requirement_text_and_typed_part_usage() {
+        let context = SemanticReasoningContext {
+            metamodel_version: "test".to_string(),
+            workspace_revision: WorkspaceRevision::unchecked(),
+            focus: Vec::new(),
+            elements: vec![
+                SemanticElementContext {
+                    element: ElementRef::new("Demo.NeedRange"),
+                    kind: "definition".to_string(),
+                    label: "NeedRange".to_string(),
+                    owner: Some(ElementRef::new("Demo")),
+                    attributes: BTreeMap::from([
+                        (
+                            "keyword".to_string(),
+                            serde_json::Value::String("requirement".to_string()),
+                        ),
+                        (
+                            "text".to_string(),
+                            serde_json::Value::String(
+                                "The vehicle shall exceed 200 miles.".to_string(),
+                            ),
+                        ),
+                    ]),
+                },
+                SemanticElementContext {
+                    element: ElementRef::new("Demo.Vehicle.engine"),
+                    kind: "usage".to_string(),
+                    label: "engine".to_string(),
+                    owner: Some(ElementRef::new("Demo.Vehicle")),
+                    attributes: BTreeMap::from([
+                        (
+                            "keyword".to_string(),
+                            serde_json::Value::String("part".to_string()),
+                        ),
+                        (
+                            "type".to_string(),
+                            serde_json::Value::String("Engine".to_string()),
+                        ),
+                    ]),
+                },
+            ],
+            relationships: Vec::new(),
+            facts: Vec::<SemanticFactContext>::new(),
+            affordances: Vec::new(),
+            source_files: Vec::new(),
+            truncated: false,
+        };
+
+        let evaluation = evaluate_semantic_goal(&context, &default_model_quality_profile().goal);
+
+        assert!(evaluation.satisfied);
+        assert_eq!(evaluation.score, 1.0);
     }
 }
