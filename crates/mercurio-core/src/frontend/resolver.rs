@@ -1587,6 +1587,15 @@ fn resolve_usage(
         effective_reference_target = effective_redefines.first().cloned();
         effective_redefines.clear();
     }
+    if matches!(usage.construct.as_str(), "SatisfyUsage" | "VerifyUsage")
+        && effective_reference_target.is_none()
+        && !usage.declared_name.is_empty()
+    {
+        effective_reference_target = Some(QualifiedName {
+            segments: vec![usage.declared_name.clone()],
+            span: usage.span.clone(),
+        });
+    }
     let expression = usage
         .expression
         .as_ref()
@@ -1626,19 +1635,31 @@ fn resolve_usage(
     let reference_target = effective_reference_target
         .as_ref()
         .map(|name| {
-            resolve_reference_usage_target(
-                &usage,
-                name,
-                stdlib_ids,
-                stdlib_feature_index,
-                stdlib_aliases,
-                local_definitions,
-                local_aliases,
-                import_aliases,
-                definition_index,
-                local_feature_index,
-                local_usage_map,
-            )
+            if matches!(usage.construct.as_str(), "SatisfyUsage" | "VerifyUsage") {
+                resolve_type_reference_in_scope(
+                    name,
+                    &usage.owner_qualified_name,
+                    stdlib_ids,
+                    stdlib_aliases,
+                    local_definitions,
+                    local_aliases,
+                    import_aliases,
+                )
+            } else {
+                resolve_reference_usage_target(
+                    &usage,
+                    name,
+                    stdlib_ids,
+                    stdlib_feature_index,
+                    stdlib_aliases,
+                    local_definitions,
+                    local_aliases,
+                    import_aliases,
+                    definition_index,
+                    local_feature_index,
+                    local_usage_map,
+                )
+            }
             .ok_or_else(|| {
                 Diagnostic::new(
                     format!("unresolved reference target `{}`", name.as_colon_string()),
@@ -4191,7 +4212,9 @@ fn add_compat_stdlib_alias(
     target: &str,
 ) {
     if stdlib.elements.iter().any(|element| element.id == target) {
-        aliases.entry(alias.to_string()).or_insert(target.to_string());
+        aliases
+            .entry(alias.to_string())
+            .or_insert(target.to_string());
     }
 }
 

@@ -1,16 +1,16 @@
-#[cfg(feature = "ai")]
-pub mod ai;
 pub mod assessment;
 pub mod authoring;
 pub mod datalog;
 pub mod derived;
 pub mod diagrams;
+pub mod feasibility;
 pub mod frontend;
 pub mod graph;
 pub mod ir;
 pub mod library;
 pub mod logging;
 pub mod metamodel;
+pub mod mutation;
 pub mod paths;
 pub mod project;
 pub mod proposal;
@@ -21,21 +21,6 @@ pub mod source_set;
 pub mod syntax_compare;
 pub mod views;
 
-#[cfg(feature = "ai")]
-pub use ai::{
-    AskMercurioArtifact, AskMercurioCitation, AskMercurioProjectContext, AskMercurioRequest,
-    AskMercurioResponse, AskMercurioTask, ChatCompletionRequest, ChatCompletionResponse,
-    ChatMessageRole, ProposalDraft, ReasoningProvider, ReasoningProviderConfigOverrides,
-    ReasoningProviderKind, ReasoningProviderSecretOverrides, ReasoningProviderStatus,
-    ResolvedReasoningProvider, SemanticChangeItem, SemanticChangeKind, SemanticSummaryRequest,
-    SemanticSummaryResponse, ask_mercurio, classify_ask_mercurio_task, complete_configured_chat,
-    configured_reasoning_provider, default_reasoning_provider, default_reasoning_provider_status,
-    default_reasoning_provider_status_with_secret_overrides,
-    default_reasoning_provider_with_secret_overrides, summarize_semantic_changes,
-    summarize_semantic_changes_with_secret_overrides,
-    test_configured_reasoning_provider_connection, test_default_reasoning_provider_connection,
-    test_default_reasoning_provider_connection_with_secret_overrides,
-};
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
     AssessmentQuery, AssessmentReport, AssessmentSpec, AssessmentStatus, RuntimeAssessmentRequest,
@@ -59,6 +44,12 @@ pub use diagrams::{
     DiagramAttributeDto, DiagramDirectionDto, DiagramEdgeDto, DiagramKindDto,
     DiagramLayoutOptionsDto, DiagramNodeDto, DiagramQueryOptionsDto, DiagramRenderRequestDto,
     DiagramSpecDto, DiagramStyleOptionsDto, DiagramViewDto, list_diagram_kinds, render_diagram,
+};
+pub use feasibility::{
+    AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
+    CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
+    MutationContext, MutationFeasibilityReport, MutationFeasibilityService, RequiredChoice,
+    SemanticCapabilityOracle, workspace_revision_for_project,
 };
 pub use frontend::format::{FormatError, format_path_text, format_sysml_text, format_text};
 pub use frontend::kerml::{KermlError, compile_kerml_text, load_kerml_document, parse_kerml};
@@ -87,6 +78,11 @@ pub use metamodel::{
     MetamodelAttributeRegistry, MetatypeQueryOverride, collect_specialization_ancestors,
     effective_properties, effective_properties_with_derived, element_metatype,
     query_element_attributes,
+};
+pub use mutation::{
+    ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
+    MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
+    RetypedUsage, SemanticDiff, SemanticExpression, SemanticMutation, WorkspaceRevision,
 };
 pub use paths::{
     default_stdlib_path, default_stdlib_rulepack_path, default_workspace_root, repo_path, repo_root,

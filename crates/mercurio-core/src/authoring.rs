@@ -5,7 +5,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::frontend::ast::{
-    Declaration as AstDeclaration, MultiplicityRange, PackageDecl, SourceSpan, SysmlModule,
+    BinaryOp, Declaration as AstDeclaration, Expr, LiteralExpr, MultiplicityRange, PackageDecl,
+    SourceSpan, SysmlModule, UnaryOp,
 };
 use crate::frontend::diagnostics::Diagnostic;
 use crate::frontend::sysml::{compile_sysml_text, parse_sysml};
@@ -64,6 +65,7 @@ pub struct Usage {
     pub ty: Option<QualifiedName>,
     pub reference_target: Option<QualifiedName>,
     pub multiplicity: Option<MultiplicityRange>,
+    pub expression: Option<String>,
     pub additional_types: Vec<QualifiedName>,
     pub specializes: Vec<QualifiedName>,
     pub subsets: Vec<QualifiedName>,
@@ -122,6 +124,12 @@ pub enum Mutation {
         ty: Option<QualifiedName>,
         specializes: Vec<QualifiedName>,
     },
+    AddRelationship {
+        container: ContainerSelector,
+        kind: String,
+        source: QualifiedName,
+        target: QualifiedName,
+    },
     RemoveDeclaration {
         qualified_name: QualifiedName,
     },
@@ -136,6 +144,10 @@ pub enum Mutation {
     UpdateUsageType {
         qualified_name: QualifiedName,
         ty: Option<QualifiedName>,
+    },
+    SetExpression {
+        qualified_name: QualifiedName,
+        expression: Option<String>,
     },
     MoveDeclaration {
         qualified_name: QualifiedName,
@@ -720,6 +732,7 @@ impl AuthoringProject {
                     ty,
                     reference_target: None,
                     multiplicity: None,
+                    expression: None,
                     additional_types: Vec::new(),
                     specializes,
                     subsets: Vec::new(),
@@ -733,6 +746,21 @@ impl AuthoringProject {
                 changed_files.insert(file.clone());
                 let owner = owner_qname.unwrap_or_default();
                 changed_declarations.insert(join_qname(&owner, &name));
+                vec![instruction]
+            }
+            Mutation::AddRelationship {
+                container,
+                kind,
+                source,
+                target,
+            } => {
+                let usage = relationship_usage(&kind, &source, &target)?;
+                let relationship_name = usage.name.clone();
+                let (file, owner_qname, instruction) =
+                    self.push_into_container(container, Declaration::Usage(usage))?;
+                changed_files.insert(file.clone());
+                let owner = owner_qname.unwrap_or_default();
+                changed_declarations.insert(join_qname(&owner, &relationship_name));
                 vec![instruction]
             }
             Mutation::RemoveDeclaration { qualified_name } => {
@@ -834,6 +862,24 @@ impl AuthoringProject {
                     render_qname: qualified_name.as_dot_string(),
                 }]
             }
+            Mutation::SetExpression {
+                qualified_name,
+                expression,
+            } => {
+                let located = self.locate_declaration(&qualified_name)?;
+                let file = self
+                    .files
+                    .get_mut(&located.file)
+                    .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+                set_usage_expression(&mut file.module, &qualified_name, expression)?;
+                changed_files.insert(located.file.clone());
+                changed_declarations.insert(qualified_name.as_dot_string());
+                vec![RewriteInstruction::ReplaceNode {
+                    file: located.file,
+                    anchor_qname: qualified_name.as_dot_string(),
+                    render_qname: qualified_name.as_dot_string(),
+                }]
+            }
             Mutation::MoveDeclaration {
                 qualified_name,
                 destination,
@@ -915,6 +961,20 @@ impl AuthoringProject {
         Ok(WriteBackResult {
             edited_files,
             mode,
+            changed_spans,
+            validation,
+        })
+    }
+
+    pub fn write_back_changed_files(
+        &self,
+        changed_files: &BTreeSet<String>,
+    ) -> Result<WriteBackResult, AuthoringError> {
+        let (edited_files, changed_spans) = self.canonical_rewrite(changed_files)?;
+        let validation = self.validate_rendered_files(&edited_files)?;
+        Ok(WriteBackResult {
+            edited_files,
+            mode: WriteBackMode::CanonicalRewrite,
             changed_spans,
             validation,
         })
@@ -1631,6 +1691,26 @@ impl Usage {
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
+        if self.keyword == "satisfy" {
+            header.push_str("satisfy requirement ");
+            header.push_str(&self.name);
+            if self.members.is_empty() {
+                header.push(';');
+                lines.push(format!("{prefix}{header}"));
+                return lines.join("\n");
+            }
+            header.push_str(" {");
+            lines.push(format!("{prefix}{header}"));
+            let body = self
+                .members
+                .iter()
+                .map(|member| member.render(indent + 2))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            lines.push(body);
+            lines.push(format!("{prefix}}}"));
+            return lines.join("\n");
+        }
         header.push_str(&self.keyword);
         header.push(' ');
         if !self.is_implicit_name {
@@ -1696,6 +1776,10 @@ impl Usage {
         if let Some(reference_target) = &self.reference_target {
             header.push_str(" references ");
             header.push_str(&reference_target.as_dot_string());
+        }
+        if let Some(expression) = &self.expression {
+            header.push_str(" = ");
+            header.push_str(expression);
         }
         if self.members.is_empty() {
             header.push(';');
@@ -1767,6 +1851,7 @@ impl Declaration {
                     .map(|ty| QualifiedName(ty.segments.clone())),
                 reference_target: None,
                 multiplicity: usage.multiplicity.clone(),
+                expression: usage.expression.as_ref().map(render_expr),
                 additional_types: usage
                     .additional_types
                     .iter()
@@ -1824,6 +1909,7 @@ impl Declaration {
                     .as_ref()
                     .map(|target| QualifiedName(target.segments.clone())),
                 multiplicity: usage.multiplicity.clone(),
+                expression: usage.expression.as_ref().map(render_expr),
                 additional_types: usage
                     .additional_types
                     .iter()
@@ -2997,6 +3083,121 @@ fn update_usage_type_in_members(
     None
 }
 
+fn set_usage_expression(
+    module: &mut AuthoringModule,
+    qualified_name: &QualifiedName,
+    expression: Option<String>,
+) -> Result<(), AuthoringError> {
+    if let Some(package_owner) = module
+        .package
+        .as_ref()
+        .map(|package| package.name.as_dot_string())
+        && let Some(package) = module.package.as_mut()
+        && set_usage_expression_in_members(
+            &mut package.members,
+            &package_owner,
+            qualified_name,
+            expression.as_deref(),
+        )
+        .is_some()
+    {
+        return Ok(());
+    }
+    set_usage_expression_in_members(
+        &mut module.members,
+        "",
+        qualified_name,
+        expression.as_deref(),
+    )
+    .ok_or_else(|| AuthoringError::MissingDeclaration(qualified_name.as_dot_string()))
+}
+
+fn set_usage_expression_in_members(
+    declarations: &mut [Declaration],
+    owner: &str,
+    qualified_name: &QualifiedName,
+    expression: Option<&str>,
+) -> Option<()> {
+    for declaration in declarations {
+        match declaration {
+            Declaration::Usage(usage) => {
+                let qname = qualify_name(owner, &usage.name);
+                if qname == qualified_name.as_dot_string() {
+                    usage.expression = expression.map(str::to_string);
+                    return Some(());
+                }
+                if set_usage_expression_in_members(
+                    &mut usage.members,
+                    &qname,
+                    qualified_name,
+                    expression,
+                )
+                .is_some()
+                {
+                    return Some(());
+                }
+            }
+            Declaration::Definition(definition) => {
+                let qname = qualify_name(owner, &definition.name);
+                if set_usage_expression_in_members(
+                    &mut definition.members,
+                    &qname,
+                    qualified_name,
+                    expression,
+                )
+                .is_some()
+                {
+                    return Some(());
+                }
+            }
+            Declaration::Package(package) => {
+                let qname = qualify_name(owner, &package.name.as_dot_string());
+                if set_usage_expression_in_members(
+                    &mut package.members,
+                    &qname,
+                    qualified_name,
+                    expression,
+                )
+                .is_some()
+                {
+                    return Some(());
+                }
+            }
+            Declaration::Import(_) | Declaration::Alias(_) => {}
+        }
+    }
+    None
+}
+
+fn relationship_usage(
+    kind: &str,
+    _source: &QualifiedName,
+    target: &QualifiedName,
+) -> Result<Usage, AuthoringError> {
+    let normalized = kind.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "satisfy" | "satisfies" => Ok(Usage {
+            keyword: "satisfy".to_string(),
+            name: target.tail().unwrap_or("requirement").to_string(),
+            is_implicit_name: false,
+            ty: None,
+            reference_target: Some(target.clone()),
+            multiplicity: None,
+            expression: None,
+            additional_types: Vec::new(),
+            specializes: Vec::new(),
+            subsets: Vec::new(),
+            redefines: Vec::new(),
+            members: Vec::new(),
+            docs: Vec::new(),
+            modifiers: Vec::new(),
+        }),
+        other => Err(AuthoringError::Unsupported(format!(
+            "relationship kind `{other}` is not supported by authoring write-back"
+        ))),
+    }
+}
+
 fn extract_declaration(
     module: &mut AuthoringModule,
     qualified_name: &QualifiedName,
@@ -3132,6 +3333,58 @@ fn render_modifier_prefix(modifiers: &[String]) -> String {
         String::new()
     } else {
         format!("{} ", modifiers.join(" "))
+    }
+}
+
+fn render_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Literal(literal) => match literal {
+            LiteralExpr::Integer(value) => value.to_string(),
+            LiteralExpr::Real(value) => value.clone(),
+            LiteralExpr::Boolean(value) => value.to_string(),
+            LiteralExpr::String(value) => format!("{value:?}"),
+        },
+        Expr::Name(name) => name.as_colon_string(),
+        Expr::SelfRef(_) => "self".to_string(),
+        Expr::Tuple { items, .. } => format!(
+            "({})",
+            items.iter().map(render_expr).collect::<Vec<_>>().join(", ")
+        ),
+        Expr::Unary { op, expr, .. } => match op {
+            UnaryOp::Negate => format!("-{}", render_expr(expr)),
+            UnaryOp::Not => format!("not {}", render_expr(expr)),
+        },
+        Expr::Binary {
+            left, op, right, ..
+        } => format!(
+            "{} {} {}",
+            render_expr(left),
+            render_binary_op(op),
+            render_expr(right)
+        ),
+        Expr::Path { root, segment, .. } => format!("{}.{}", render_expr(root), segment),
+        Expr::Call { function, args, .. } => format!(
+            "{function}({})",
+            args.iter().map(render_expr).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+fn render_binary_op(op: &BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Add => "+",
+        BinaryOp::Subtract => "-",
+        BinaryOp::Multiply => "*",
+        BinaryOp::Divide => "/",
+        BinaryOp::Power => "**",
+        BinaryOp::Equal => "==",
+        BinaryOp::NotEqual => "!=",
+        BinaryOp::Less => "<",
+        BinaryOp::LessEqual => "<=",
+        BinaryOp::Greater => ">",
+        BinaryOp::GreaterEqual => ">=",
+        BinaryOp::And => "and",
+        BinaryOp::Or => "or",
     }
 }
 
@@ -3481,6 +3734,11 @@ fn build_declaration_from_kir(
                 .get("multiplicity")
                 .and_then(Value::as_str)
                 .map(multiplicity_range_from_raw),
+            expression: element
+                .properties
+                .get("expression_ir")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             additional_types: Vec::new(),
             specializes: specializations_from_properties(&element.properties, ty.as_ref()),
             subsets: property_qnames(&element.properties, "subsetted_features"),

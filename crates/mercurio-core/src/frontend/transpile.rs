@@ -935,6 +935,7 @@ fn transpile_usage(
         }
     }
     enrich_usage_semantics(&mut element, usage, owner_id);
+    enrich_trace_relationship_semantics(&mut element, usage, owner_id);
     Ok(element)
 }
 
@@ -1173,6 +1174,38 @@ fn enrich_usage_semantics(element: &mut KirElement, usage: &ResolvedUsage, owner
                 Value::String(owner_id.to_string()),
             );
         }
+    }
+}
+
+fn enrich_trace_relationship_semantics(
+    element: &mut KirElement,
+    usage: &ResolvedUsage,
+    owner_id: &str,
+) {
+    match usage.construct.as_str() {
+        "SatisfyUsage" => {
+            element.kind = "SysML::Requirements::SatisfyRequirementUsage".to_string();
+            element
+                .properties
+                .insert("source".to_string(), Value::String(owner_id.to_string()));
+            if let Some(target) = &usage.reference_target {
+                element
+                    .properties
+                    .insert("target".to_string(), Value::String(target.clone()));
+            }
+        }
+        "VerifyUsage" => {
+            element.kind = "SysML::Requirements::VerifyRequirementUsage".to_string();
+            element
+                .properties
+                .insert("source".to_string(), Value::String(owner_id.to_string()));
+            if let Some(target) = &usage.reference_target {
+                element
+                    .properties
+                    .insert("target".to_string(), Value::String(target.clone()));
+            }
+        }
+        _ => {}
     }
 }
 
