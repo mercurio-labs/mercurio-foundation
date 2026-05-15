@@ -534,6 +534,23 @@ fn collect_declaration_semantic_context(
                     source: ElementRef::new(qname.clone()),
                     target: ElementRef::new(target.as_dot_string()),
                 });
+                if semantic_trace_relationship_uses_owner_source(&usage.keyword) {
+                    if let Some(owner) = &owner {
+                        relationships.push(SemanticRelationshipContext {
+                            kind: usage.keyword.clone(),
+                            source: ElementRef::new(owner.clone()),
+                            target: ElementRef::new(target.as_dot_string()),
+                        });
+                    }
+                }
+            } else if semantic_trace_relationship_uses_owner_source(&usage.keyword) {
+                if let Some(owner) = &owner {
+                    relationships.push(SemanticRelationshipContext {
+                        kind: usage.keyword.clone(),
+                        source: ElementRef::new(owner.clone()),
+                        target: ElementRef::new(usage.name.clone()),
+                    });
+                }
             }
             if let Some(expression) = &usage.expression {
                 attributes.insert("expression".to_string(), Value::String(expression.clone()));
@@ -627,6 +644,13 @@ fn qualify_context_name(owner: Option<&str>, name: &str) -> String {
         .filter(|owner| !owner.is_empty())
         .map(|owner| format!("{owner}.{name}"))
         .unwrap_or_else(|| name.to_string())
+}
+
+fn semantic_trace_relationship_uses_owner_source(keyword: &str) -> bool {
+    matches!(
+        keyword.to_ascii_lowercase().as_str(),
+        "satisfy" | "verify" | "refine"
+    )
 }
 
 pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabilityContext {
@@ -963,6 +987,42 @@ package HybridVehicle {
             relationship.kind == "typedBy"
                 && relationship.source.qualified_name == "HybridVehicle.HybridVehicle.battery"
                 && relationship.target.qualified_name == "BatteryPack"
+        }));
+    }
+
+    #[test]
+    fn semantic_reasoning_context_normalizes_trace_relationship_source_to_owner() {
+        let files = BTreeMap::from([(
+            "hybrid.sysml".to_string(),
+            r#"
+package HybridVehicle {
+    part def Vehicle {
+        action def RegenerativeBraking {
+            satisfy requirement EfficiencyRequirement;
+        }
+    }
+
+    requirement def EfficiencyRequirement;
+}
+"#
+            .to_string(),
+        )]);
+        let project = AuthoringProject::from_sysml_files(files).expect("project parses");
+
+        let context = semantic_reasoning_context_from_authoring_project(
+            &project,
+            WorkspaceRevision::unchecked(),
+            Vec::new(),
+            64,
+        );
+
+        assert!(context.relationships.iter().any(|relationship| {
+            relationship.kind == "satisfy"
+                && relationship.source.qualified_name == "HybridVehicle.Vehicle.RegenerativeBraking"
+                && relationship
+                    .target
+                    .qualified_name
+                    .ends_with("EfficiencyRequirement")
         }));
     }
 

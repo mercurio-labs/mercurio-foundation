@@ -33,14 +33,29 @@ pub enum GoalPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SemanticGoalCheck {
+    AllOf {
+        checks: Vec<SemanticGoalCheck>,
+    },
+    AnyOf {
+        checks: Vec<SemanticGoalCheck>,
+    },
     ElementExists {
         element: ElementRef,
+        kind: Option<String>,
+    },
+    NamedElementExists {
+        name: String,
         kind: Option<String>,
     },
     RelationshipExists {
         source: ElementRef,
         kind: String,
         target: ElementRef,
+    },
+    NamedRelationshipExists {
+        source_name: String,
+        kind: String,
+        target_name: String,
     },
     RequirementsHaveFields {
         fields: Vec<String>,
@@ -102,6 +117,40 @@ fn evaluate_goal_check(
     check: SemanticGoalCheck,
 ) -> GoalCheckEvaluation {
     match &check {
+        SemanticGoalCheck::AllOf { checks } => {
+            let nested = checks
+                .iter()
+                .cloned()
+                .map(|check| evaluate_goal_check(context, check))
+                .collect::<Vec<_>>();
+            let satisfied = nested.iter().all(|result| result.satisfied);
+            let evidence = nested
+                .iter()
+                .flat_map(|result| result.evidence.iter().cloned())
+                .collect();
+            GoalCheckEvaluation {
+                check,
+                satisfied,
+                evidence,
+            }
+        }
+        SemanticGoalCheck::AnyOf { checks } => {
+            let nested = checks
+                .iter()
+                .cloned()
+                .map(|check| evaluate_goal_check(context, check))
+                .collect::<Vec<_>>();
+            let satisfied = nested.iter().any(|result| result.satisfied);
+            let evidence = nested
+                .iter()
+                .flat_map(|result| result.evidence.iter().cloned())
+                .collect();
+            GoalCheckEvaluation {
+                check,
+                satisfied,
+                evidence,
+            }
+        }
         SemanticGoalCheck::ElementExists { element, kind } => {
             let mut evidence = Vec::new();
             let satisfied = context.elements.iter().any(|candidate| {
@@ -126,6 +175,32 @@ fn evaluate_goal_check(
             });
             if !satisfied {
                 evidence.push(format!("missing element `{}`", element.qualified_name));
+            }
+            GoalCheckEvaluation {
+                check,
+                satisfied,
+                evidence,
+            }
+        }
+        SemanticGoalCheck::NamedElementExists { name, kind } => {
+            let mut evidence = Vec::new();
+            let satisfied = context.elements.iter().any(|candidate| {
+                if !element_name_matches(candidate, name) {
+                    return false;
+                }
+                let kind_matches = kind
+                    .as_ref()
+                    .is_none_or(|expected_kind| element_kind_matches(candidate, expected_kind));
+                if kind_matches {
+                    evidence.push(format!(
+                        "found element named `{name}` at `{}`",
+                        candidate.element.qualified_name
+                    ));
+                }
+                kind_matches
+            });
+            if !satisfied {
+                evidence.push(format!("missing element named `{name}`"));
             }
             GoalCheckEvaluation {
                 check,
@@ -158,6 +233,37 @@ fn evaluate_goal_check(
                 evidence.push(format!(
                     "missing relationship `{}` --{}--> `{}`",
                     source.qualified_name, kind, target.qualified_name
+                ));
+            }
+            GoalCheckEvaluation {
+                check,
+                satisfied,
+                evidence,
+            }
+        }
+        SemanticGoalCheck::NamedRelationshipExists {
+            source_name,
+            kind,
+            target_name,
+        } => {
+            let mut evidence = Vec::new();
+            let satisfied = context.relationships.iter().any(|relationship| {
+                let matches = relationship_kind_matches(&relationship.kind, kind)
+                    && element_ref_name_matches(context, &relationship.source, source_name)
+                    && element_ref_name_matches(context, &relationship.target, target_name);
+                if matches {
+                    evidence.push(format!(
+                        "found relationship `{}` --{}--> `{}`",
+                        relationship.source.qualified_name,
+                        relationship.kind,
+                        relationship.target.qualified_name
+                    ));
+                }
+                matches
+            });
+            if !satisfied {
+                evidence.push(format!(
+                    "missing relationship named `{source_name}` --{kind}--> `{target_name}`"
                 ));
             }
             GoalCheckEvaluation {
@@ -268,6 +374,41 @@ fn element_kind_matches(element: &crate::mutation::SemanticElementContext, expec
             .get("kirKind")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|kir_kind| kir_kind.eq_ignore_ascii_case(expected))
+}
+
+fn element_name_matches(element: &crate::mutation::SemanticElementContext, expected: &str) -> bool {
+    element.label.eq_ignore_ascii_case(expected)
+        || qualified_name_leaf_matches(&element.element.qualified_name, expected)
+        || element
+            .attributes
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+        || element
+            .attributes
+            .get("declaredName")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+}
+
+fn element_ref_name_matches(
+    context: &SemanticReasoningContext,
+    element: &ElementRef,
+    expected: &str,
+) -> bool {
+    context
+        .elements
+        .iter()
+        .find(|candidate| candidate.element == *element)
+        .is_some_and(|candidate| element_name_matches(candidate, expected))
+        || qualified_name_leaf_matches(&element.qualified_name, expected)
+}
+
+fn qualified_name_leaf_matches(qualified_name: &str, expected: &str) -> bool {
+    qualified_name
+        .rsplit(['.', ':'])
+        .find(|part| !part.is_empty())
+        .is_some_and(|leaf| leaf.eq_ignore_ascii_case(expected))
 }
 
 fn element_has_required_field(
@@ -387,6 +528,73 @@ mod tests {
         assert!(evaluation.satisfied);
         assert_eq!(evaluation.score, 1.0);
         assert_eq!(evaluation.results.len(), 2);
+    }
+
+    #[test]
+    fn evaluates_named_elements_and_relationships() {
+        let context = SemanticReasoningContext {
+            metamodel_version: "test".to_string(),
+            workspace_revision: WorkspaceRevision::unchecked(),
+            focus: Vec::new(),
+            elements: vec![
+                SemanticElementContext {
+                    element: ElementRef::new("HybridVehicle.Vehicle.RegenerativeBraking"),
+                    kind: "definition".to_string(),
+                    label: "RegenerativeBraking".to_string(),
+                    owner: Some(ElementRef::new("HybridVehicle.Vehicle")),
+                    attributes: BTreeMap::from([(
+                        "keyword".to_string(),
+                        serde_json::Value::String("action".to_string()),
+                    )]),
+                },
+                SemanticElementContext {
+                    element: ElementRef::new("HybridVehicle.EfficiencyRequirement"),
+                    kind: "definition".to_string(),
+                    label: "EfficiencyRequirement".to_string(),
+                    owner: Some(ElementRef::new("HybridVehicle")),
+                    attributes: BTreeMap::from([(
+                        "keyword".to_string(),
+                        serde_json::Value::String("requirement".to_string()),
+                    )]),
+                },
+            ],
+            relationships: vec![SemanticRelationshipContext {
+                kind: "satisfy".to_string(),
+                source: ElementRef::new("HybridVehicle.Vehicle.RegenerativeBraking"),
+                target: ElementRef::new("HybridVehicle.EfficiencyRequirement"),
+            }],
+            facts: Vec::<SemanticFactContext>::new(),
+            affordances: Vec::new(),
+            source_files: Vec::new(),
+            truncated: false,
+        };
+        let goal = SemanticGoalSpec {
+            policy: GoalPolicy::All,
+            checks: vec![
+                SemanticGoalCheck::AnyOf {
+                    checks: vec![
+                        SemanticGoalCheck::NamedElementExists {
+                            name: "RegenerativeBrakingSystem".to_string(),
+                            kind: Some("part".to_string()),
+                        },
+                        SemanticGoalCheck::NamedElementExists {
+                            name: "RegenerativeBraking".to_string(),
+                            kind: Some("action".to_string()),
+                        },
+                    ],
+                },
+                SemanticGoalCheck::NamedRelationshipExists {
+                    source_name: "RegenerativeBraking".to_string(),
+                    kind: "satisfy".to_string(),
+                    target_name: "EfficiencyRequirement".to_string(),
+                },
+            ],
+        };
+
+        let evaluation = evaluate_semantic_goal(&context, &goal);
+
+        assert!(evaluation.satisfied);
+        assert_eq!(evaluation.score, 1.0);
     }
 
     #[test]

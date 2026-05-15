@@ -1888,47 +1888,88 @@ fn default_semantic_agent_goal_spec(goal: &str) -> Option<SemanticGoalSpec> {
                 element: ElementRef::new("HybridVehicle"),
                 kind: Some("package".to_string()),
             },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.HybridVehicle"),
+            SemanticGoalCheck::AnyOf {
+                checks: vec![
+                    SemanticGoalCheck::ElementExists {
+                        element: ElementRef::new("HybridVehicle.HybridVehicle"),
+                        kind: Some("part".to_string()),
+                    },
+                    SemanticGoalCheck::ElementExists {
+                        element: ElementRef::new("HybridVehicle.Vehicle"),
+                        kind: Some("part".to_string()),
+                    },
+                    SemanticGoalCheck::NamedElementExists {
+                        name: "Vehicle".to_string(),
+                        kind: Some("part".to_string()),
+                    },
+                ],
+            },
+            SemanticGoalCheck::NamedElementExists {
+                name: "Engine".to_string(),
                 kind: Some("part".to_string()),
             },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.Engine"),
+            SemanticGoalCheck::NamedElementExists {
+                name: "ElectricMotor".to_string(),
                 kind: Some("part".to_string()),
             },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.ElectricMotor"),
+            SemanticGoalCheck::NamedElementExists {
+                name: "BatteryPack".to_string(),
                 kind: Some("part".to_string()),
             },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.BatteryPack"),
-                kind: Some("part".to_string()),
+            SemanticGoalCheck::AnyOf {
+                checks: vec![
+                    SemanticGoalCheck::ElementExists {
+                        element: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                        kind: Some("requirement".to_string()),
+                    },
+                    SemanticGoalCheck::ElementExists {
+                        element: ElementRef::new("HybridVehicle.EfficiencyRequirement"),
+                        kind: Some("requirement".to_string()),
+                    },
+                    SemanticGoalCheck::NamedElementExists {
+                        name: "ImproveEfficiency".to_string(),
+                        kind: Some("requirement".to_string()),
+                    },
+                    SemanticGoalCheck::NamedElementExists {
+                        name: "EfficiencyRequirement".to_string(),
+                        kind: Some("requirement".to_string()),
+                    },
+                ],
             },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.HybridVehicle.engine"),
-                kind: Some("part".to_string()),
+            SemanticGoalCheck::AnyOf {
+                checks: vec![
+                    SemanticGoalCheck::NamedElementExists {
+                        name: "RegenerativeBrakingSystem".to_string(),
+                        kind: Some("part".to_string()),
+                    },
+                    SemanticGoalCheck::NamedElementExists {
+                        name: "RegenerativeBraking".to_string(),
+                        kind: Some("part".to_string()),
+                    },
+                    SemanticGoalCheck::NamedElementExists {
+                        name: "RegenerativeBraking".to_string(),
+                        kind: Some("action".to_string()),
+                    },
+                ],
             },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.HybridVehicle.motor"),
-                kind: Some("part".to_string()),
-            },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.HybridVehicle.battery"),
-                kind: Some("part".to_string()),
-            },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.ImproveEfficiency"),
-                kind: Some("requirement".to_string()),
-            },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new("HybridVehicle.RegenerativeBrakingSystem"),
-                kind: Some("part".to_string()),
-            },
-            SemanticGoalCheck::ElementExists {
-                element: ElementRef::new(
-                    "HybridVehicle.RegenerativeBrakingSystem.ImproveEfficiency",
-                ),
-                kind: Some("satisfy".to_string()),
+            SemanticGoalCheck::AnyOf {
+                checks: vec![
+                    SemanticGoalCheck::NamedRelationshipExists {
+                        source_name: "RegenerativeBrakingSystem".to_string(),
+                        kind: "satisfy".to_string(),
+                        target_name: "ImproveEfficiency".to_string(),
+                    },
+                    SemanticGoalCheck::NamedRelationshipExists {
+                        source_name: "RegenerativeBraking".to_string(),
+                        kind: "satisfy".to_string(),
+                        target_name: "EfficiencyRequirement".to_string(),
+                    },
+                    SemanticGoalCheck::NamedRelationshipExists {
+                        source_name: "RegenerativeBraking".to_string(),
+                        kind: "satisfy".to_string(),
+                        target_name: "ImproveEfficiency".to_string(),
+                    },
+                ],
             },
         ],
     })

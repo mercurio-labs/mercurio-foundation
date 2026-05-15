@@ -16,6 +16,7 @@ The goal of this repository is to make the modeling kernel useful on its own: pa
 ## What Lives Here
 
 - `mercurio-core` parses, compiles, lints, loads libraries, builds runtime graphs, and computes derived values.
+- `mercurio-ai` contains provider adapters and semantic agent workflows that depend on core mutation, feasibility, and goal contracts without becoming part of the core library crate.
 - `mercurio-cli` provides the public `mercurio` command for parse, compile, lint, and package workflows.
 - `mercurio-tools` contains maintainer tools for diagnostics, benchmarks, demos, and Pilot comparison/export workflows.
 - `resources/` contains bundled runtime and standard library artifacts.
