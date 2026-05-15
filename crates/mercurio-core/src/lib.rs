@@ -5,6 +5,7 @@ pub mod derived;
 pub mod diagrams;
 pub mod feasibility;
 pub mod frontend;
+pub mod goal;
 pub mod graph;
 pub mod ir;
 pub mod library;
@@ -65,6 +66,10 @@ pub use frontend::pilot::{
 pub use frontend::sysml::{
     SemanticCompileReport, SemanticCompileStatus, SysmlError, compile_sysml_text,
     compile_sysml_text_with_context_report, load_sysml_document, parse_sysml,
+};
+pub use goal::{
+    GoalCheckEvaluation, GoalEvaluation, GoalPolicy, SemanticGoalCheck, SemanticGoalSpec,
+    evaluate_semantic_goal,
 };
 pub use graph::{Edge, Graph, GraphError, NodeId};
 pub use ir::{KirDocument, KirElement, KirError, load_model_stack};
