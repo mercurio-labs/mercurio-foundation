@@ -247,6 +247,114 @@ pub fn wasm_run_source_assessment(input: &str, request: JsValue) -> JsValue {
     })
 }
 
+#[wasm_bindgen(js_name = runSourceEvaluation)]
+pub fn wasm_run_source_evaluation(input: &str, request: JsValue) -> JsValue {
+    json_response(|| {
+        let request: SourceEvaluationRequest = from_js(request)?;
+        let language = parse_language(&request.language)?;
+        if language != SourceLanguage::Sysml {
+            return Err(WasmError::new(
+                "language",
+                "source evaluation currently supports SysML sources",
+            ));
+        }
+
+        let stdlib = load_stdlib(None)?;
+        let report =
+            compile_sysml_text_with_context_report(input, &request.filename, &[], &stdlib);
+        let diagnostics = report
+            .diagnostics
+            .iter()
+            .map(snippet_diagnostic)
+            .collect::<Vec<_>>();
+        let Some(document) = report.document else {
+            return Ok(success(
+                json!({
+                    "evaluationId": request.evaluation_id,
+                    "status": "failed",
+                    "diagnostics": diagnostics,
+                    "scenarios": [],
+                    "error": "source did not produce an evaluatable semantic document",
+                }),
+                [("runtime", json!("wasm"))],
+            ));
+        };
+        if !diagnostics.is_empty() {
+            return Ok(success(
+                json!({
+                    "evaluationId": request.evaluation_id,
+                    "status": "failed",
+                    "diagnostics": diagnostics,
+                    "scenarios": [],
+                    "error": "Resolve semantic diagnostics before evaluating this expression.",
+                }),
+                [("runtime", json!("wasm"))],
+            ));
+        }
+
+        let merged_document = KirDocument::merge([stdlib, document])?;
+        let runtime = Runtime::from_document(merged_document.clone())?;
+        let mut scenario_results = Vec::new();
+        for scenario in request.scenarios {
+            let feature_id = find_feature_id(&merged_document, &scenario.feature_name)
+                .ok_or_else(|| WasmError::new("evaluation", format!("feature `{}` not found", scenario.feature_name)))?;
+            let owner_id = scenario
+                .owner_name
+                .as_deref()
+                .and_then(|owner_name| find_owner_id_by_name(&merged_document, owner_name))
+                .or_else(|| find_owner_id_for_feature(&merged_document, &feature_id))
+                .ok_or_else(|| WasmError::new("evaluation", format!("owner for feature `{}` not found", scenario.feature_name)))?;
+            let mut context = ExecutionContext::default();
+            for parameter in &scenario.parameters {
+                context
+                    .values
+                    .insert((owner_id.clone(), parameter.name.clone()), parameter.value.clone());
+            }
+            let result = runtime.evaluate(&feature_id, &owner_id, &context);
+            scenario_results.push(match result {
+                Ok(result) => json!({
+                    "id": scenario.id,
+                    "label": scenario.label,
+                    "featureId": feature_id,
+                    "ownerId": owner_id,
+                    "ok": true,
+                    "value": result.value,
+                    "valueType": value_type(&result.value),
+                    "explanation": result.explanation,
+                    "error": null,
+                    "parameters": scenario.parameters,
+                }),
+                Err(err) => json!({
+                    "id": scenario.id,
+                    "label": scenario.label,
+                    "featureId": feature_id,
+                    "ownerId": owner_id,
+                    "ok": false,
+                    "value": null,
+                    "valueType": null,
+                    "explanation": [],
+                    "error": err.to_string(),
+                    "parameters": scenario.parameters,
+                }),
+            });
+        }
+
+        let passed = scenario_results
+            .iter()
+            .all(|scenario| scenario.get("ok").and_then(Value::as_bool).unwrap_or(false));
+        Ok(success(
+            json!({
+                "evaluationId": request.evaluation_id,
+                "status": if passed { "pass" } else { "failed" },
+                "diagnostics": diagnostics,
+                "scenarios": scenario_results,
+                "error": null,
+            }),
+            [("runtime", json!("wasm"))],
+        ))
+    })
+}
+
 #[wasm_bindgen(js_name = parseSysmlSnippet)]
 pub fn wasm_parse_sysml_snippet(input: &str, request: JsValue) -> JsValue {
     json_response(|| {
@@ -525,6 +633,38 @@ struct SourceAssessmentRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SourceEvaluationRequest {
+    evaluation_id: String,
+    scenarios: Vec<SourceEvaluationScenario>,
+    #[serde(default = "default_source_name")]
+    filename: String,
+    #[serde(default = "default_source_language")]
+    language: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceEvaluationScenario {
+    id: String,
+    label: String,
+    feature_name: String,
+    #[serde(default)]
+    owner_name: Option<String>,
+    #[serde(default)]
+    parameters: Vec<SourceEvaluationParameter>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceEvaluationParameter {
+    name: String,
+    #[serde(default)]
+    label: Option<String>,
+    value: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SnippetParseRequest {
     #[serde(default = "default_source_name")]
     path: String,
@@ -660,6 +800,73 @@ fn assessment_fact_summary(facts: &[Fact]) -> Value {
         "predicates": predicates,
         "items": facts,
     })
+}
+
+fn find_feature_id(document: &KirDocument, feature_name: &str) -> Option<String> {
+    document
+        .elements
+        .iter()
+        .find(|element| {
+            element_name(&element.properties) == Some(feature_name)
+                && element.properties.contains_key("expression_ir")
+        })
+        .or_else(|| {
+            document
+                .elements
+                .iter()
+                .find(|element| element_name(&element.properties) == Some(feature_name))
+        })
+        .map(|element| element.id.clone())
+}
+
+fn find_owner_id_by_name(document: &KirDocument, owner_name: &str) -> Option<String> {
+    document
+        .elements
+        .iter()
+        .find(|element| element_name(&element.properties) == Some(owner_name))
+        .map(|element| element.id.clone())
+}
+
+fn find_owner_id_for_feature(document: &KirDocument, feature_id: &str) -> Option<String> {
+    document
+        .elements
+        .iter()
+        .find(|element| {
+            property_array_contains(&element.properties, "features", feature_id)
+                || property_array_contains(&element.properties, "members", feature_id)
+                || property_array_contains(&element.properties, "member_ids", feature_id)
+        })
+        .map(|element| element.id.clone())
+}
+
+fn property_array_contains(
+    properties: &BTreeMap<String, Value>,
+    key: &str,
+    expected: &str,
+) -> bool {
+    properties
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| values.iter().any(|value| value.as_str() == Some(expected)))
+        .unwrap_or(false)
+}
+
+fn element_name(properties: &BTreeMap<String, Value>) -> Option<&str> {
+    properties
+        .get("declared_name")
+        .or_else(|| properties.get("name"))
+        .and_then(Value::as_str)
+}
+
+fn value_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 fn snippet_diagnostic(diagnostic: &mercurio_core::frontend::diagnostics::Diagnostic) -> Value {

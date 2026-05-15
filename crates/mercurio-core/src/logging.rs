@@ -69,12 +69,7 @@ pub fn log_compile_timed_event(
         #[cfg(target_arch = "wasm32")]
         {
             let _ = start;
-            log_runtime_event(format!(
-                "{} {} {}",
-                operation,
-                outcome,
-                details.as_ref()
-            ));
+            log_runtime_event(format!("{} {} {}", operation, outcome, details.as_ref()));
         }
         #[cfg(not(target_arch = "wasm32"))]
         log_timed_event(operation, start, outcome, details);

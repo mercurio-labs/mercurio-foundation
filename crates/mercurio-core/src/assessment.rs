@@ -3,7 +3,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::datalog::{Atom, DatalogError, Evaluation, Fact, RulePack, Term, evaluate, extract_graph_facts};
+use crate::datalog::{
+    Atom, DatalogError, Evaluation, Fact, RulePack, Term, evaluate, extract_graph_facts,
+};
 use crate::frontend::ast::{Declaration, SysmlModule};
 use crate::graph::Graph;
 
@@ -279,11 +281,17 @@ fn collect_declaration_assessment_facts(
             Declaration::GenericUsage(usage) => {
                 let id = scoped_id(owner, &usage.name);
                 facts.push(Fact::new("usage", [id.clone()]));
-                facts.push(Fact::new("usage_keyword", [id.clone(), usage.keyword.clone()]));
+                facts.push(Fact::new(
+                    "usage_keyword",
+                    [id.clone(), usage.keyword.clone()],
+                ));
                 for modifier in &usage.modifiers {
                     facts.push(Fact::new("modifier", [id.clone(), modifier.clone()]));
                 }
-                if matches!(usage.keyword.as_str(), "connect" | "connection" | "interface") {
+                if matches!(
+                    usage.keyword.as_str(),
+                    "connect" | "connection" | "interface"
+                ) {
                     facts.push(Fact::new("connection_usage", [id.clone()]));
                 }
                 if usage.keyword == "interface" {
@@ -300,7 +308,11 @@ fn collect_declaration_assessment_facts(
                     let target = reference_target.as_colon_string();
                     facts.push(Fact::new("reference_target", [id.clone(), target.clone()]));
                     if let Some(owner) = owner {
-                        if usage.modifiers.iter().any(|modifier| modifier == "end-source") {
+                        if usage
+                            .modifiers
+                            .iter()
+                            .any(|modifier| modifier == "end-source")
+                        {
                             facts.push(Fact::new(
                                 "connected_source",
                                 [owner.to_string(), target.clone()],
@@ -310,7 +322,11 @@ fn collect_declaration_assessment_facts(
                                 [owner.to_string(), "source".to_string(), target.clone()],
                             ));
                         }
-                        if usage.modifiers.iter().any(|modifier| modifier == "end-target") {
+                        if usage
+                            .modifiers
+                            .iter()
+                            .any(|modifier| modifier == "end-target")
+                        {
                             facts.push(Fact::new(
                                 "connected_target",
                                 [owner.to_string(), target.clone()],
@@ -377,7 +393,11 @@ fn report_assertion(
     }
 }
 
-fn assertion_message(expectation: &AssessmentExpectation, binding_count: usize, passed: bool) -> String {
+fn assertion_message(
+    expectation: &AssessmentExpectation,
+    binding_count: usize,
+    passed: bool,
+) -> String {
     let prefix = if passed { "pass" } else { "failed" };
     match expectation {
         AssessmentExpectation::Exists => {
@@ -390,7 +410,9 @@ fn assertion_message(expectation: &AssessmentExpectation, binding_count: usize, 
             format!("{prefix}: expected at least {value} binding(s); found {binding_count}")
         }
         AssessmentExpectation::ContainsBinding { variable, value } => {
-            format!("{prefix}: expected binding {variable}={value}; found {binding_count} binding(s)")
+            format!(
+                "{prefix}: expected binding {variable}={value}; found {binding_count} binding(s)"
+            )
         }
     }
 }
@@ -419,10 +441,7 @@ fn unify_query_atom(
     Some(next)
 }
 
-fn project_binding(
-    binding: BTreeMap<String, String>,
-    find: &[String],
-) -> BTreeMap<String, String> {
+fn project_binding(binding: BTreeMap<String, String>, find: &[String]) -> BTreeMap<String, String> {
     if find.is_empty() {
         return binding;
     }
@@ -606,9 +625,6 @@ mod tests {
             "connected_endpoint",
             &[link_id, "source", "controller::out"]
         ));
-        assert!(evaluation.contains(
-            "connected_endpoint",
-            &[link_id, "target", "rotor::input"]
-        ));
+        assert!(evaluation.contains("connected_endpoint", &[link_id, "target", "rotor::input"]));
     }
 }

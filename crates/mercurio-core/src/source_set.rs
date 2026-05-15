@@ -10,8 +10,8 @@ use crate::frontend::sysml::{
     compile_sysml_module_with_resolver_context, compile_sysml_text_with_context, parse_sysml,
 };
 use crate::frontend::transpile::MappingBundle;
-use crate::logging::compile_timer_start;
 use crate::ir::{KirDocument, KirError};
+use crate::logging::compile_timer_start;
 use crate::logging::log_compile_timed_event;
 
 #[derive(Debug, Clone)]

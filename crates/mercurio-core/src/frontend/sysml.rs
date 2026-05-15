@@ -244,17 +244,19 @@ pub(crate) fn compile_sysml_module_with_context_report_with_limit(
             };
         }
     };
-    let working_context_modules = replace_equivalent_context_module(context_modules, module, module);
-    let resolver_context = match ResolverContext::from_modules(&working_context_modules, stdlib, mappings) {
-        Ok(context) => context,
-        Err(diagnostic) => {
-            return SemanticCompileReport {
-                status: SemanticCompileStatus::Failed,
-                diagnostics: vec![diagnostic],
-                document: None,
-            };
-        }
-    };
+    let working_context_modules =
+        replace_equivalent_context_module(context_modules, module, module);
+    let resolver_context =
+        match ResolverContext::from_modules(&working_context_modules, stdlib, mappings) {
+            Ok(context) => context,
+            Err(diagnostic) => {
+                return SemanticCompileReport {
+                    status: SemanticCompileStatus::Failed,
+                    diagnostics: vec![diagnostic],
+                    document: None,
+                };
+            }
+        };
     compile_sysml_module_with_resolver_context_report_with_limit(
         module,
         source_name,
@@ -3351,12 +3353,11 @@ mod tests {
         );
 
         assert_eq!(report.status, SemanticCompileStatus::Partial);
-        assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| { diagnostic.message.contains("unresolved type `MissingFuelOutPort`") })
-        );
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("unresolved type `MissingFuelOutPort`")
+        }));
         let kir = report.document.unwrap();
         assert!(kir.elements.iter().any(|element| {
             element
@@ -4672,7 +4673,9 @@ mod tests {
                 .message
                 .contains("unresolved import `UavLibrary::*`")
                 || diagnostic.message.contains("unresolved type `BatteryPack`")
-                || diagnostic.message.contains("unresolved type `FlightComputer`")
+                || diagnostic
+                    .message
+                    .contains("unresolved type `FlightComputer`")
         }));
     }
 
