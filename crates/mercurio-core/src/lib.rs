@@ -82,9 +82,10 @@ pub use metamodel::{
 pub use mutation::{
     ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
     MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
-    RetypedUsage, SemanticDiff, SemanticExpression, SemanticMutation,
-    SemanticMutationCapabilityContext, WorkspaceRevision,
-    default_semantic_mutation_capability_context,
+    RetypedUsage, SemanticDiff, SemanticElementContext, SemanticExpression, SemanticMutation,
+    SemanticMutationCapabilityContext, SemanticReasoningContext, SemanticRelationshipContext,
+    WorkspaceRevision, default_semantic_mutation_capability_context,
+    semantic_reasoning_context_from_authoring_project,
 };
 pub use paths::{
     default_stdlib_path, default_stdlib_rulepack_path, default_workspace_root, repo_path, repo_root,

@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::authoring::{MutationResult, QualifiedName};
+use crate::authoring::{
+    AuthoringModule, AuthoringProject, Declaration, MutationResult, QualifiedName,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ElementRef {
@@ -118,6 +120,329 @@ pub struct SemanticMutationCapabilityContext {
     pub usage_keywords: Vec<String>,
     pub relationship_kinds: Vec<String>,
     pub guidance: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticReasoningContext {
+    pub metamodel_version: String,
+    pub workspace_revision: WorkspaceRevision,
+    pub focus: Vec<ElementRef>,
+    pub elements: Vec<SemanticElementContext>,
+    pub relationships: Vec<SemanticRelationshipContext>,
+    pub source_files: Vec<String>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticElementContext {
+    pub element: ElementRef,
+    pub kind: String,
+    pub label: String,
+    pub owner: Option<ElementRef>,
+    pub attributes: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticRelationshipContext {
+    pub kind: String,
+    pub source: ElementRef,
+    pub target: ElementRef,
+}
+
+pub fn semantic_reasoning_context_from_authoring_project(
+    project: &AuthoringProject,
+    workspace_revision: WorkspaceRevision,
+    focus: Vec<ElementRef>,
+    max_elements: usize,
+) -> SemanticReasoningContext {
+    let mut elements = Vec::new();
+    let mut relationships = Vec::new();
+    let mut source_files = Vec::new();
+    let mut truncated = false;
+
+    for (path, module) in project.files() {
+        source_files.push(path.to_string());
+        collect_module_semantic_context(
+            module,
+            path,
+            None,
+            max_elements,
+            &mut elements,
+            &mut relationships,
+            &mut truncated,
+        );
+    }
+
+    SemanticReasoningContext {
+        metamodel_version: "sysml-v2-authoring-context-v1".to_string(),
+        workspace_revision,
+        focus,
+        elements,
+        relationships,
+        source_files,
+        truncated,
+    }
+}
+
+fn collect_module_semantic_context(
+    module: &AuthoringModule,
+    source_file: &str,
+    owner: Option<String>,
+    max_elements: usize,
+    elements: &mut Vec<SemanticElementContext>,
+    relationships: &mut Vec<SemanticRelationshipContext>,
+    truncated: &mut bool,
+) {
+    if let Some(package) = &module.package {
+        let package_name = package.name.as_dot_string();
+        push_semantic_element(
+            elements,
+            max_elements,
+            truncated,
+            SemanticElementContext {
+                element: ElementRef::new(package_name.clone()),
+                kind: "package".to_string(),
+                label: package_name.clone(),
+                owner: owner.as_ref().map(ElementRef::new),
+                attributes: context_attributes([
+                    ("sourceFile", Value::String(source_file.to_string())),
+                    ("memberCount", Value::from(package.members.len())),
+                ]),
+            },
+        );
+        for member in &package.members {
+            collect_declaration_semantic_context(
+                member,
+                source_file,
+                Some(package_name.clone()),
+                max_elements,
+                elements,
+                relationships,
+                truncated,
+            );
+        }
+    }
+
+    for member in &module.members {
+        collect_declaration_semantic_context(
+            member,
+            source_file,
+            owner.clone(),
+            max_elements,
+            elements,
+            relationships,
+            truncated,
+        );
+    }
+}
+
+fn collect_declaration_semantic_context(
+    declaration: &Declaration,
+    source_file: &str,
+    owner: Option<String>,
+    max_elements: usize,
+    elements: &mut Vec<SemanticElementContext>,
+    relationships: &mut Vec<SemanticRelationshipContext>,
+    truncated: &mut bool,
+) {
+    match declaration {
+        Declaration::Package(package) => {
+            let qname = qualify_context_name(owner.as_deref(), &package.name.as_dot_string());
+            push_semantic_element(
+                elements,
+                max_elements,
+                truncated,
+                SemanticElementContext {
+                    element: ElementRef::new(qname.clone()),
+                    kind: "package".to_string(),
+                    label: package.name.as_dot_string(),
+                    owner: owner.as_ref().map(ElementRef::new),
+                    attributes: context_attributes([
+                        ("sourceFile", Value::String(source_file.to_string())),
+                        ("memberCount", Value::from(package.members.len())),
+                    ]),
+                },
+            );
+            for member in &package.members {
+                collect_declaration_semantic_context(
+                    member,
+                    source_file,
+                    Some(qname.clone()),
+                    max_elements,
+                    elements,
+                    relationships,
+                    truncated,
+                );
+            }
+        }
+        Declaration::Definition(definition) => {
+            let qname = qualify_context_name(owner.as_deref(), &definition.name);
+            let mut attributes = context_attributes([
+                ("sourceFile", Value::String(source_file.to_string())),
+                ("keyword", Value::String(definition.keyword.clone())),
+                ("memberCount", Value::from(definition.members.len())),
+            ]);
+            if !definition.specializes.is_empty() {
+                attributes.insert(
+                    "specializes".to_string(),
+                    Value::Array(
+                        definition
+                            .specializes
+                            .iter()
+                            .map(|item| Value::String(item.as_dot_string()))
+                            .collect(),
+                    ),
+                );
+            }
+            push_semantic_element(
+                elements,
+                max_elements,
+                truncated,
+                SemanticElementContext {
+                    element: ElementRef::new(qname.clone()),
+                    kind: "definition".to_string(),
+                    label: definition.name.clone(),
+                    owner: owner.as_ref().map(ElementRef::new),
+                    attributes,
+                },
+            );
+            for target in &definition.specializes {
+                relationships.push(SemanticRelationshipContext {
+                    kind: "specializes".to_string(),
+                    source: ElementRef::new(qname.clone()),
+                    target: ElementRef::new(target.as_dot_string()),
+                });
+            }
+            for member in &definition.members {
+                collect_declaration_semantic_context(
+                    member,
+                    source_file,
+                    Some(qname.clone()),
+                    max_elements,
+                    elements,
+                    relationships,
+                    truncated,
+                );
+            }
+        }
+        Declaration::Usage(usage) => {
+            let qname = qualify_context_name(owner.as_deref(), &usage.name);
+            let mut attributes = context_attributes([
+                ("sourceFile", Value::String(source_file.to_string())),
+                ("keyword", Value::String(usage.keyword.clone())),
+                ("memberCount", Value::from(usage.members.len())),
+            ]);
+            if let Some(ty) = &usage.ty {
+                attributes.insert("type".to_string(), Value::String(ty.as_dot_string()));
+                relationships.push(SemanticRelationshipContext {
+                    kind: "typedBy".to_string(),
+                    source: ElementRef::new(qname.clone()),
+                    target: ElementRef::new(ty.as_dot_string()),
+                });
+            }
+            if let Some(target) = &usage.reference_target {
+                attributes.insert(
+                    "referenceTarget".to_string(),
+                    Value::String(target.as_dot_string()),
+                );
+                relationships.push(SemanticRelationshipContext {
+                    kind: usage.keyword.clone(),
+                    source: ElementRef::new(qname.clone()),
+                    target: ElementRef::new(target.as_dot_string()),
+                });
+            }
+            if let Some(expression) = &usage.expression {
+                attributes.insert("expression".to_string(), Value::String(expression.clone()));
+            }
+            push_semantic_element(
+                elements,
+                max_elements,
+                truncated,
+                SemanticElementContext {
+                    element: ElementRef::new(qname.clone()),
+                    kind: "usage".to_string(),
+                    label: usage.name.clone(),
+                    owner: owner.as_ref().map(ElementRef::new),
+                    attributes,
+                },
+            );
+            for member in &usage.members {
+                collect_declaration_semantic_context(
+                    member,
+                    source_file,
+                    Some(qname.clone()),
+                    max_elements,
+                    elements,
+                    relationships,
+                    truncated,
+                );
+            }
+        }
+        Declaration::Import(import) => {
+            if let Some(owner) = &owner {
+                relationships.push(SemanticRelationshipContext {
+                    kind: "imports".to_string(),
+                    source: ElementRef::new(owner.clone()),
+                    target: ElementRef::new(import.path.as_dot_string()),
+                });
+            }
+        }
+        Declaration::Alias(alias) => {
+            let qname = qualify_context_name(owner.as_deref(), &alias.name);
+            push_semantic_element(
+                elements,
+                max_elements,
+                truncated,
+                SemanticElementContext {
+                    element: ElementRef::new(qname.clone()),
+                    kind: "alias".to_string(),
+                    label: alias.name.clone(),
+                    owner: owner.as_ref().map(ElementRef::new),
+                    attributes: context_attributes([
+                        ("sourceFile", Value::String(source_file.to_string())),
+                        ("target", Value::String(alias.target.as_dot_string())),
+                    ]),
+                },
+            );
+            relationships.push(SemanticRelationshipContext {
+                kind: "aliases".to_string(),
+                source: ElementRef::new(qname),
+                target: ElementRef::new(alias.target.as_dot_string()),
+            });
+        }
+    }
+}
+
+fn push_semantic_element(
+    elements: &mut Vec<SemanticElementContext>,
+    max_elements: usize,
+    truncated: &mut bool,
+    element: SemanticElementContext,
+) {
+    if elements.len() >= max_elements {
+        *truncated = true;
+        return;
+    }
+    elements.push(element);
+}
+
+fn context_attributes(
+    attributes: impl IntoIterator<Item = (&'static str, Value)>,
+) -> BTreeMap<String, Value> {
+    attributes
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
+}
+
+fn qualify_context_name(owner: Option<&str>, name: &str) -> String {
+    if name.contains('.') || name.contains("::") {
+        return QualifiedName::parse(name).as_dot_string();
+    }
+    owner
+        .filter(|owner| !owner.is_empty())
+        .map(|owner| format!("{owner}.{name}"))
+        .unwrap_or_else(|| name.to_string())
 }
 
 pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabilityContext {
@@ -378,23 +703,78 @@ pub(crate) fn merge_diff(target: &mut SemanticDiff, source: SemanticDiff) {
 
 #[cfg(test)]
 mod tests {
-    use super::default_semantic_mutation_capability_context;
+    use std::collections::BTreeMap;
+
+    use super::{
+        ElementRef, WorkspaceRevision, default_semantic_mutation_capability_context,
+        semantic_reasoning_context_from_authoring_project,
+    };
+    use crate::authoring::AuthoringProject;
 
     #[test]
     fn default_capability_context_exposes_writable_sysml_v2_vocabulary() {
         let context = default_semantic_mutation_capability_context();
 
-        assert_eq!(
-            context.metamodel_version,
-            "sysml-v2-writable-mutation-v1"
+        assert_eq!(context.metamodel_version, "sysml-v2-writable-mutation-v1");
+        assert!(
+            context
+                .supported_operations
+                .contains(&"AddDefinition".to_string())
         );
-        assert!(context.supported_operations.contains(&"AddDefinition".to_string()));
         assert!(context.definition_keywords.contains(&"part".to_string()));
         assert!(!context.definition_keywords.contains(&"block".to_string()));
         assert!(context.relationship_kinds.contains(&"satisfy".to_string()));
-        assert!(context
-            .guidance
-            .iter()
-            .any(|item| item.contains("Never use keyword `block`")));
+        assert!(
+            context
+                .guidance
+                .iter()
+                .any(|item| item.contains("Never use keyword `block`"))
+        );
+    }
+
+    #[test]
+    fn semantic_reasoning_context_summarizes_authoring_project() {
+        let files = BTreeMap::from([(
+            "hybrid.sysml".to_string(),
+            r#"
+package HybridVehicle {
+    part HybridVehicle {
+        part battery : BatteryPack;
+        attribute efficiency;
+    }
+
+    part BatteryPack;
+}
+"#
+            .to_string(),
+        )]);
+        let project = AuthoringProject::from_sysml_files(files).expect("project parses");
+
+        let context = semantic_reasoning_context_from_authoring_project(
+            &project,
+            WorkspaceRevision::unchecked(),
+            vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            64,
+        );
+
+        assert_eq!(context.metamodel_version, "sysml-v2-authoring-context-v1");
+        assert_eq!(context.source_files, vec!["hybrid.sysml".to_string()]);
+        assert!(!context.truncated);
+        assert!(
+            context
+                .elements
+                .iter()
+                .any(|item| item.element.qualified_name == "HybridVehicle.HybridVehicle")
+        );
+        assert!(context.elements.iter().any(|item| {
+            item.element.qualified_name == "HybridVehicle.HybridVehicle.battery"
+                && item.attributes.get("type").and_then(|value| value.as_str())
+                    == Some("BatteryPack")
+        }));
+        assert!(context.relationships.iter().any(|relationship| {
+            relationship.kind == "typedBy"
+                && relationship.source.qualified_name == "HybridVehicle.HybridVehicle.battery"
+                && relationship.target.qualified_name == "BatteryPack"
+        }));
     }
 }
