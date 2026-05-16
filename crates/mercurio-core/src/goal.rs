@@ -352,7 +352,7 @@ pub fn default_model_quality_profile() -> SemanticGoalProfile {
             policy: GoalPolicy::All,
             checks: vec![
                 SemanticGoalCheck::RequirementsHaveFields {
-                    fields: vec!["text".to_string()],
+                    fields: vec!["id".to_string(), "text".to_string()],
                 },
                 SemanticGoalCheck::TypedUsages {
                     usage_kinds: vec!["part".to_string()],
@@ -598,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn default_quality_profile_flags_requirements_without_text_and_untyped_part_usages() {
+    fn default_quality_profile_flags_requirements_without_id_text_and_untyped_part_usages() {
         let context = SemanticReasoningContext {
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
@@ -649,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn default_quality_profile_accepts_requirement_text_and_typed_part_usage() {
+    fn default_quality_profile_accepts_requirement_id_text_and_typed_part_usage() {
         let context = SemanticReasoningContext {
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
@@ -664,6 +664,10 @@ mod tests {
                         (
                             "keyword".to_string(),
                             serde_json::Value::String("requirement".to_string()),
+                        ),
+                        (
+                            "id".to_string(),
+                            serde_json::Value::String("REQ-001".to_string()),
                         ),
                         (
                             "text".to_string(),

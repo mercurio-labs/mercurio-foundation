@@ -506,6 +506,14 @@ impl AuthoringProject {
                     }
                     "imports" => self
                         .apply_imports_replace(&element, value_as_qname_list(&value, "imports")?),
+                    "doc" | "text" => self.apply_doc_edit(
+                        &element,
+                        DocEdit::Text(value_as_string(&value, &attribute)?),
+                    ),
+                    "id" | "requirement_id" => self.apply_doc_edit(
+                        &element,
+                        DocEdit::Id(value_as_string(&value, &attribute)?),
+                    ),
                     other => Err(AuthoringError::Unsupported(format!(
                         "semantic set is not supported for attribute `{other}`"
                     ))),
@@ -534,6 +542,8 @@ impl AuthoringProject {
                     "direction" => self.apply_direction_edit(&element, None),
                     "target" => self.apply_target_edit(&element, None),
                     "imports" => self.apply_imports_replace(&element, Vec::new()),
+                    "doc" | "text" => self.apply_doc_edit(&element, DocEdit::ClearText),
+                    "id" | "requirement_id" => self.apply_doc_edit(&element, DocEdit::ClearId),
                     other => Err(AuthoringError::Unsupported(format!(
                         "semantic clear is not supported for attribute `{other}`"
                     ))),
@@ -1467,6 +1477,41 @@ impl AuthoringProject {
             changed_declarations,
             vec![RewriteInstruction::ReplaceContainer {
                 file: located.file,
+                anchor_qname: Some(element.as_dot_string()),
+                render_qname: Some(element.as_dot_string()),
+            }],
+        )
+    }
+
+    fn apply_doc_edit(
+        &mut self,
+        element: &QualifiedName,
+        edit: DocEdit,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let changed_file = located.file.clone();
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+
+        if matches!(located.kind, DeclarationKind::Package) {
+            let package = locate_package_mut(&mut file.module, element)
+                .ok_or_else(|| AuthoringError::MissingPackage(element.as_dot_string()))?;
+            apply_doc_value_edit(&mut package.docs, edit);
+        } else {
+            let declaration = locate_declaration_mut(&mut file.module, element)
+                .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+            apply_doc_value_edit(declaration_docs_mut(declaration), edit);
+        }
+
+        self.finalize_change(
+            before,
+            BTreeSet::from([changed_file.clone()]),
+            BTreeSet::from([element.as_dot_string()]),
+            vec![RewriteInstruction::ReplaceContainer {
+                file: changed_file,
                 anchor_qname: Some(element.as_dot_string()),
                 render_qname: Some(element.as_dot_string()),
             }],
@@ -2500,6 +2545,19 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 Some(Value::String(definition.name.clone())),
                 true,
             ),
+            semantic_doc_attribute("doc", &definition.docs),
+            semantic_doc_attribute(
+                "text",
+                &requirement_text_from_docs(&definition.docs)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ),
+            semantic_doc_attribute(
+                "id",
+                &requirement_id_from_docs(&definition.docs)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ),
             semantic_list_attribute("specializes", &definition.specializes),
             semantic_scalar_attribute(
                 "is_abstract",
@@ -2520,6 +2578,19 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 "declared_name",
                 Some(Value::String(usage.name.clone())),
                 true,
+            ),
+            semantic_doc_attribute("doc", &usage.docs),
+            semantic_doc_attribute(
+                "text",
+                &requirement_text_from_docs(&usage.docs)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ),
+            semantic_doc_attribute(
+                "id",
+                &requirement_id_from_docs(&usage.docs)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
             ),
             SemanticAttribute {
                 name: "type".to_string(),
@@ -2606,6 +2677,26 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
     }
 }
 
+fn semantic_doc_attribute(name: &str, docs: &[String]) -> SemanticAttribute {
+    let value = match docs {
+        [] => None,
+        [single] => Some(Value::String(single.clone())),
+        many => Some(Value::Array(
+            many.iter().map(|doc| Value::String(doc.clone())).collect(),
+        )),
+    };
+    SemanticAttribute {
+        name: name.to_string(),
+        origin_kind: if value.is_some() {
+            "direct".to_string()
+        } else {
+            "declared".to_string()
+        },
+        direct_value: value.clone(),
+        effective_value: value,
+    }
+}
+
 fn semantic_scalar_attribute(
     name: &str,
     value: Option<Value>,
@@ -2670,6 +2761,10 @@ fn normalize_attribute_name(name: &str) -> String {
         "ownedMember" => "members".to_string(),
         "ownedSpecialization" => "specializes".to_string(),
         "documentation" => "doc".to_string(),
+        "requirementId" => "requirement_id".to_string(),
+        "requirement_id" => "requirement_id".to_string(),
+        "id" => "id".to_string(),
+        "text" => "text".to_string(),
         "declaredName" => "declared_name".to_string(),
         "declaredShortName" => "declared_short_name".to_string(),
         "shortName" => "short_name".to_string(),
@@ -2696,6 +2791,68 @@ fn normalize_attribute_name(name: &str) -> String {
             result
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DocEdit {
+    Id(String),
+    Text(String),
+    ClearId,
+    ClearText,
+}
+
+fn declaration_docs_mut(declaration: &mut Declaration) -> &mut Vec<String> {
+    match declaration {
+        Declaration::Package(package) => &mut package.docs,
+        Declaration::Import(import) => &mut import.docs,
+        Declaration::Definition(definition) => &mut definition.docs,
+        Declaration::Usage(usage) => &mut usage.docs,
+        Declaration::Alias(alias) => &mut alias.docs,
+    }
+}
+
+fn apply_doc_value_edit(docs: &mut Vec<String>, edit: DocEdit) {
+    match edit {
+        DocEdit::Id(value) => {
+            docs.retain(|doc| !is_requirement_id_doc(doc));
+            let value = value.trim();
+            if !value.is_empty() {
+                docs.insert(0, format!("id: {value}"));
+            }
+        }
+        DocEdit::Text(value) => {
+            docs.retain(|doc| is_requirement_id_doc(doc));
+            let value = value.trim();
+            if !value.is_empty() {
+                docs.push(value.to_string());
+            }
+        }
+        DocEdit::ClearId => docs.retain(|doc| !is_requirement_id_doc(doc)),
+        DocEdit::ClearText => docs.retain(|doc| is_requirement_id_doc(doc)),
+    }
+}
+
+fn requirement_id_from_docs(docs: &[String]) -> Option<String> {
+    docs.iter().find_map(|doc| {
+        let trimmed = doc.trim();
+        trimmed
+            .strip_prefix("id:")
+            .or_else(|| trimmed.strip_prefix("ID:"))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn requirement_text_from_docs(docs: &[String]) -> Option<String> {
+    docs.iter()
+        .find(|doc| !is_requirement_id_doc(doc) && !doc.trim().is_empty())
+        .cloned()
+}
+
+fn is_requirement_id_doc(doc: &str) -> bool {
+    let trimmed = doc.trim();
+    trimmed.starts_with("id:") || trimmed.starts_with("ID:")
 }
 
 fn value_as_string(value: &Value, attribute: &str) -> Result<String, AuthoringError> {

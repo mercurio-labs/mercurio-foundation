@@ -466,6 +466,7 @@ fn collect_declaration_semantic_context(
                 ("keyword", Value::String(definition.keyword.clone())),
                 ("memberCount", Value::from(definition.members.len())),
             ]);
+            insert_doc_context_attributes(&mut attributes, &definition.docs);
             if !definition.specializes.is_empty() {
                 attributes.insert(
                     "specializes".to_string(),
@@ -516,6 +517,7 @@ fn collect_declaration_semantic_context(
                 ("keyword", Value::String(usage.keyword.clone())),
                 ("memberCount", Value::from(usage.members.len())),
             ]);
+            insert_doc_context_attributes(&mut attributes, &usage.docs);
             if let Some(ty) = &usage.ty {
                 attributes.insert("type".to_string(), Value::String(ty.as_dot_string()));
                 relationships.push(SemanticRelationshipContext {
@@ -636,6 +638,45 @@ fn context_attributes(
         .collect()
 }
 
+fn insert_doc_context_attributes(attributes: &mut BTreeMap<String, Value>, docs: &[String]) {
+    if docs.is_empty() {
+        return;
+    }
+    attributes.insert(
+        "docs".to_string(),
+        Value::Array(docs.iter().map(|doc| Value::String(doc.clone())).collect()),
+    );
+    if let Some(id) = requirement_id_from_docs(docs) {
+        attributes.insert("id".to_string(), Value::String(id));
+    }
+    if let Some(text) = requirement_text_from_docs(docs) {
+        attributes.insert("text".to_string(), Value::String(text));
+    }
+}
+
+fn requirement_id_from_docs(docs: &[String]) -> Option<String> {
+    docs.iter().find_map(|doc| {
+        let trimmed = doc.trim();
+        trimmed
+            .strip_prefix("id:")
+            .or_else(|| trimmed.strip_prefix("ID:"))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn requirement_text_from_docs(docs: &[String]) -> Option<String> {
+    docs.iter()
+        .find(|doc| !is_requirement_id_doc(doc) && !doc.trim().is_empty())
+        .cloned()
+}
+
+fn is_requirement_id_doc(doc: &str) -> bool {
+    let trimmed = doc.trim();
+    trimmed.starts_with("id:") || trimmed.starts_with("ID:")
+}
+
 fn qualify_context_name(owner: Option<&str>, name: &str) -> String {
     if name.contains('.') || name.contains("::") {
         return QualifiedName::parse(name).as_dot_string();
@@ -707,6 +748,8 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
         guidance: vec![
             "Use SysML v2 textual concepts, not SysML v1 block terminology.".to_string(),
             "Never use keyword `block`; use `part` for part definitions and part usages."
+                .to_string(),
+            "Requirement definitions should carry explicit `id` and `text` semantic attributes; use SetAttribute on existing requirement elements when those fields are missing."
                 .to_string(),
             "Return semantic mutations, not source text edits.".to_string(),
             "Core feasibility remains authoritative for contextual legality.".to_string(),

@@ -5,7 +5,8 @@ use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::authoring::{
-    AuthoringModule, AuthoringProject, ContainerSelector, Declaration, Mutation, QualifiedName,
+    AttributeWritePolicy, AuthoringModule, AuthoringProject, ContainerSelector, Declaration,
+    Mutation, QualifiedName, SemanticEdit,
 };
 use crate::mutation::{
     ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, RelationshipChange,
@@ -192,6 +193,10 @@ impl SemanticCapabilityOracle for ConservativeSemanticCapabilityOracle {
                 | "target"
                 | "imports"
                 | "expression"
+                | "doc"
+                | "text"
+                | "id"
+                | "requirement_id"
         );
         AttributePolicyAnswer {
             writable,
@@ -256,21 +261,34 @@ where
         let mut semantic_diff = SemanticDiff::default();
 
         for (index, operation) in plan.normalized_operations.iter().enumerate() {
-            let Some(mutation) = self.authoring_mutation_for(&project, operation) else {
-                return Err(FeasibilityIssue {
-                    kind: FeasibilityIssueKind::UnsupportedByAuthoringBackend,
-                    operation_index: Some(index),
-                    message: "operation is semantically represented but not yet writable"
-                        .to_string(),
-                });
-            };
-            let result = project
-                .apply_mutation(mutation)
-                .map_err(|err| FeasibilityIssue {
-                    kind: FeasibilityIssueKind::ValidationFailure,
-                    operation_index: Some(index),
-                    message: err.to_string(),
-                })?;
+            let result = match operation {
+                SemanticMutation::SetAttribute {
+                    element,
+                    attribute,
+                    value,
+                } => project.apply_semantic_edit(SemanticEdit::SetAttribute {
+                    element: element.as_qualified_name(),
+                    attribute: attribute.clone(),
+                    value: value.clone(),
+                    policy: AttributeWritePolicy::UpsertDirect,
+                }),
+                _ => {
+                    let Some(mutation) = self.authoring_mutation_for(&project, operation) else {
+                        return Err(FeasibilityIssue {
+                            kind: FeasibilityIssueKind::UnsupportedByAuthoringBackend,
+                            operation_index: Some(index),
+                            message: "operation is semantically represented but not yet writable"
+                                .to_string(),
+                        });
+                    };
+                    project.apply_mutation(mutation)
+                }
+            }
+            .map_err(|err| FeasibilityIssue {
+                kind: FeasibilityIssueKind::ValidationFailure,
+                operation_index: Some(index),
+                message: err.to_string(),
+            })?;
             changed_files.extend(result.changed_files.iter().cloned());
             changed_declarations.extend(result.changed_declarations.iter().cloned());
             merge_diff(
@@ -339,18 +357,33 @@ where
                 continue;
             }
 
-            let Some(mutation) = self.authoring_mutation_for(&project, operation) else {
-                unsupported_backend = true;
-                warnings.push(FeasibilityIssue {
-                    kind: FeasibilityIssueKind::UnsupportedByAuthoringBackend,
-                    operation_index: Some(index),
-                    message: "operation is represented semantically but has no authoring write-back path yet".to_string(),
-                });
-                merge_diff(&mut resulting_diff, diff_for_operation(operation, None));
-                continue;
+            let result = match operation {
+                SemanticMutation::SetAttribute {
+                    element,
+                    attribute,
+                    value,
+                } => project.apply_semantic_edit(SemanticEdit::SetAttribute {
+                    element: element.as_qualified_name(),
+                    attribute: attribute.clone(),
+                    value: value.clone(),
+                    policy: AttributeWritePolicy::UpsertDirect,
+                }),
+                _ => {
+                    let Some(mutation) = self.authoring_mutation_for(&project, operation) else {
+                        unsupported_backend = true;
+                        warnings.push(FeasibilityIssue {
+                            kind: FeasibilityIssueKind::UnsupportedByAuthoringBackend,
+                            operation_index: Some(index),
+                            message: "operation is represented semantically but has no authoring write-back path yet".to_string(),
+                        });
+                        merge_diff(&mut resulting_diff, diff_for_operation(operation, None));
+                        continue;
+                    };
+                    project.apply_mutation(mutation)
+                }
             };
 
-            match project.apply_mutation(mutation) {
+            match result {
                 Ok(result) => {
                     changed_files.extend(result.changed_files.iter().cloned());
                     merge_diff(
@@ -1438,5 +1471,44 @@ package Demo {
             issue.kind == FeasibilityIssueKind::MetamodelViolation
                 && issue.message.contains("not writable")
         }));
+    }
+
+    #[test]
+    fn feasibility_applies_requirement_id_and_text_attributes() {
+        let context = MutationContext::from_project(hybrid_vehicle_project());
+        let proposal = MutationProposal {
+            intent: "Fill requirement metadata".to_string(),
+            affected_elements: vec![ElementRef::new("HybridVehicle.ImproveEfficiency")],
+            operations: vec![
+                SemanticMutation::SetAttribute {
+                    element: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                    attribute: "id".to_string(),
+                    value: serde_json::json!("REQ-EFF-001"),
+                },
+                SemanticMutation::SetAttribute {
+                    element: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                    attribute: "text".to_string(),
+                    value: serde_json::json!(
+                        "The hybrid vehicle shall improve efficiency through energy recovery."
+                    ),
+                },
+            ],
+            evidence: Vec::new(),
+            rationale: None,
+            workspace_revision: context.workspace_revision.clone(),
+        };
+
+        let service = CoreMutationFeasibilityService::new();
+        let report = service.check(&context, &proposal);
+
+        assert_eq!(report.status, FeasibilityStatus::Allowed);
+        let application = service
+            .apply_checked_plan(&context, &report.normalized_plan.unwrap())
+            .unwrap();
+        let source = application.edited_files.get("hybrid.sysml").unwrap();
+        assert!(source.contains("doc /* id: REQ-EFF-001 */"));
+        assert!(source.contains(
+            "doc /* The hybrid vehicle shall improve efficiency through energy recovery. */"
+        ));
     }
 }

@@ -2298,7 +2298,9 @@ fn semantic_mutation_proposal_developer_prompt() -> &'static str {
      inside ElementRef. Do not propose adding an element that already appears in \
      semantic_context.elements. Prefer one coherent batch of 2 to 5 non-empty operations \
      when the required containers and types already exist. For an empty model, create only \
-     the root package first. Core feasibility will reject impossible changes."
+     the root package first. Requirement definitions should have explicit id and text \
+     attributes; use SetAttribute on existing requirement elements to fill missing fields. \
+     Core feasibility will reject impossible changes."
 }
 
 fn semantic_mutation_proposal_user_prompt(request: &SemanticMutationProposalRequest) -> String {
@@ -2308,6 +2310,7 @@ fn semantic_mutation_proposal_user_prompt(request: &SemanticMutationProposalRequ
             "element_ref_format": "Use dot-qualified names such as HybridVehicle.Vehicle, never HybridVehicle::Vehicle.",
             "current_state_rule": "Treat semantic_context.elements as already existing. Do not re-add them.",
             "operation_rule": "Every proposal must contain at least one operation. Empty proposals are ignored.",
+            "quality_rule": "When a requirement already exists without id or text, prefer SetAttribute operations for id and text before adding more requirements.",
             "batching_rule": "Batch related operations only when their containers and referenced types already exist in the current semantic context.",
             "affordance_rule": "Prefer operations supported by semantic_context.affordances for the target element."
         },
