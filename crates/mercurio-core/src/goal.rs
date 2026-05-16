@@ -81,6 +81,83 @@ pub struct GoalCheckEvaluation {
     pub evidence: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticGoalExplanation {
+    pub policy: String,
+    pub instructions: Vec<String>,
+}
+
+pub fn explain_semantic_goal(goal: &SemanticGoalSpec) -> SemanticGoalExplanation {
+    SemanticGoalExplanation {
+        policy: explain_goal_policy(goal.policy, goal.checks.len()),
+        instructions: goal
+            .checks
+            .iter()
+            .flat_map(explain_goal_check)
+            .collect(),
+    }
+}
+
+fn explain_goal_policy(policy: GoalPolicy, check_count: usize) -> String {
+    match policy {
+        GoalPolicy::All => format!("All {check_count} checks must be satisfied."),
+        GoalPolicy::Any => format!("At least one of {check_count} checks must be satisfied."),
+        GoalPolicy::ScoreAtLeast(threshold) => {
+            format!("The satisfied check score must be at least {threshold:.2}.")
+        }
+    }
+}
+
+fn explain_goal_check(check: &SemanticGoalCheck) -> Vec<String> {
+    match check {
+        SemanticGoalCheck::AllOf { checks } => checks.iter().flat_map(explain_goal_check).collect(),
+        SemanticGoalCheck::AnyOf { checks } => {
+            let options = checks
+                .iter()
+                .flat_map(explain_goal_check)
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            vec![format!("Satisfy at least one alternative: {options}")]
+        }
+        SemanticGoalCheck::ElementExists { element, kind } => vec![format!(
+            "Ensure element `{}` exists{}.",
+            element.qualified_name,
+            kind.as_ref()
+                .map(|kind| format!(" as a `{kind}`"))
+                .unwrap_or_default()
+        )],
+        SemanticGoalCheck::NamedElementExists { name, kind } => vec![format!(
+            "Ensure a model element named `{name}` exists{}.",
+            kind.as_ref()
+                .map(|kind| format!(" as a `{kind}`"))
+                .unwrap_or_default()
+        )],
+        SemanticGoalCheck::RelationshipExists {
+            source,
+            kind,
+            target,
+        } => vec![format!(
+            "Ensure `{}` has a `{kind}` relationship to `{}`.",
+            source.qualified_name, target.qualified_name
+        )],
+        SemanticGoalCheck::NamedRelationshipExists {
+            source_name,
+            kind,
+            target_name,
+        } => vec![format!(
+            "Ensure `{source_name}` has a `{kind}` relationship to `{target_name}`."
+        )],
+        SemanticGoalCheck::RequirementsHaveFields { fields } => vec![format!(
+            "Every requirement element must have non-empty semantic field(s): {}. If an existing requirement is missing one, propose SetAttribute for that field instead of creating a duplicate requirement.",
+            fields.join(", ")
+        )],
+        SemanticGoalCheck::TypedUsages { usage_kinds } => vec![format!(
+            "Every usage with kind(s) {} must be explicitly typed by an appropriate definition. Prefer AddDefinition first, then AddUsage with ty set to that definition.",
+            usage_kinds.join(", ")
+        )],
+    }
+}
+
 pub fn evaluate_semantic_goal(
     context: &SemanticReasoningContext,
     goal: &SemanticGoalSpec,

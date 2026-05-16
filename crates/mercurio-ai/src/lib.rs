@@ -8,10 +8,11 @@ pub use mercurio_core::{
     CoreMutationFeasibilityService, ElementRef, FeasibilityStatus, GoalEvaluation,
     MutationApplicationResult, MutationContext, MutationEvidence, MutationFeasibilityReport,
     MutationFeasibilityService, MutationProposal, SemanticExpression, SemanticGoalCheck,
-    SemanticGoalSpec, SemanticMutation, SemanticMutationCapabilityContext,
+    SemanticGoalExplanation, SemanticGoalSpec, SemanticMutation, SemanticMutationCapabilityContext,
     SemanticReasoningContext, WorkspaceRevision, default_model_quality_profile,
     default_semantic_mutation_capability_context,
     enrich_semantic_reasoning_context_with_child_affordances, evaluate_semantic_goal,
+    explain_semantic_goal,
     load_authoring_project_from_sysml, semantic_reasoning_context_from_authoring_project,
 };
 
@@ -293,6 +294,10 @@ pub struct SemanticMutationProposalRequest {
     #[serde(default)]
     pub focus: Vec<ElementRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_goal_guidance: Option<SemanticGoalExplanation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_goal_guidance: Option<SemanticGoalExplanation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_context: Option<SemanticReasoningContext>,
 }
 
@@ -399,6 +404,8 @@ where
             design_intent: request.goal.clone(),
             workspace_revision: context.workspace_revision.clone(),
             focus: request.focus.clone(),
+            task_goal_guidance: goal_spec.as_ref().map(explain_semantic_goal),
+            quality_goal_guidance: quality_goal.as_ref().map(explain_semantic_goal),
             semantic_context: Some(semantic_context.clone()),
         };
         let proposals =
@@ -2771,6 +2778,8 @@ package HybridVehicle {
                 fingerprint: "test-revision".to_string(),
             },
             focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            task_goal_guidance: None,
+            quality_goal_guidance: None,
             semantic_context: None,
         });
 
@@ -2811,6 +2820,10 @@ package HybridVehicle {
             design_intent: "Improve efficiency".to_string(),
             workspace_revision: mutation_context.workspace_revision.clone(),
             focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            task_goal_guidance: None,
+            quality_goal_guidance: Some(explain_semantic_goal(
+                &default_model_quality_profile().goal,
+            )),
             semantic_context: Some(semantic_context),
         };
         let prompt = semantic_mutation_proposal_user_prompt(&request);
@@ -2831,6 +2844,8 @@ package HybridVehicle {
                 fingerprint: "fresh".to_string(),
             },
             focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            task_goal_guidance: None,
+            quality_goal_guidance: None,
             semantic_context: None,
         };
 
@@ -2897,6 +2912,8 @@ package HybridVehicle {
                 design_intent: "Improve hybrid vehicle efficiency".to_string(),
                 workspace_revision: context.workspace_revision.clone(),
                 focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+                task_goal_guidance: None,
+                quality_goal_guidance: None,
                 semantic_context: None,
             },
         );
@@ -2940,6 +2957,8 @@ package HybridVehicle {
                 design_intent: "Improve hybrid vehicle efficiency".to_string(),
                 workspace_revision: context.workspace_revision.clone(),
                 focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+                task_goal_guidance: None,
+                quality_goal_guidance: None,
                 semantic_context: None,
             },
         );
@@ -3019,6 +3038,10 @@ package HybridVehicle {
                         .to_string(),
                 workspace_revision: context.workspace_revision.clone(),
                 focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+                task_goal_guidance: None,
+                quality_goal_guidance: Some(explain_semantic_goal(
+                    &default_model_quality_profile().goal,
+                )),
                 semantic_context: None,
             },
         );
@@ -3073,6 +3096,10 @@ package HybridVehicle {
                     .to_string(),
             workspace_revision: context.workspace_revision.clone(),
             focus: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            task_goal_guidance: None,
+            quality_goal_guidance: Some(explain_semantic_goal(
+                &default_model_quality_profile().goal,
+            )),
             semantic_context: None,
         };
         println!("design intent: {}", request.design_intent);
