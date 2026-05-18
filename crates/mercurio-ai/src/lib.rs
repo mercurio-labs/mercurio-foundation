@@ -538,7 +538,7 @@ where
             evaluate_current_goal(quality_goal.as_ref(), &project, &request.focus);
         let goal_satisfied = goal_evaluation
             .as_ref()
-            .is_some_and(|evaluation| evaluation.satisfied);
+            .is_none_or(|evaluation| evaluation.satisfied);
         let quality_satisfied = minimum_quality_score.is_none_or(|minimum_score| {
             quality_evaluation
                 .as_ref()
@@ -1502,7 +1502,15 @@ fn request_openai_text(
     if !request.context.is_empty() {
         input.push(json!({
             "role": "developer",
-            "content": format!("Use this Mercurio model context when it is relevant:\n{}", request.context.join("\n")),
+            "content": format!(
+                "Use this Mercurio model context as the authoritative current workspace state.\n\
+                 Critical grounding rules:\n\
+                 - Treat live editor/workspace snapshots as newer and more authoritative than chat history, compiled metadata, or prior assistant messages.\n\
+                 - Do not claim a file, package, requirement, element, relationship, diagram, commit, or edit exists unless it appears in the supplied current workspace context or validated tool output.\n\
+                 - If prior chat says something was created but the current workspace snapshot does not contain it, say it is not present in the current model.\n\
+                 - For questions asking what is in the current model, summarize only elements present in the current workspace context and state when expected evidence is missing.\n\n{}",
+                request.context.join("\n")
+            ),
         }));
     }
     input.extend(request.messages.iter().map(|message| {
@@ -2724,6 +2732,32 @@ mod tests {
         }
     }
 
+    struct RequestRevisionProposalProvider;
+
+    impl SemanticMutationProposalProvider for RequestRevisionProposalProvider {
+        fn propose_semantic_mutations(
+            &self,
+            request: &SemanticMutationProposalRequest,
+        ) -> Vec<MutationProposal> {
+            if crate::request_context_has_element(request, "Demo.UAVInterceptor") {
+                return Vec::new();
+            }
+            vec![MutationProposal {
+                intent: "Add UAV interceptor definition".to_string(),
+                affected_elements: vec![ElementRef::new("Demo")],
+                operations: vec![SemanticMutation::AddDefinition {
+                    container: ElementRef::new("Demo"),
+                    keyword: "part".to_string(),
+                    name: "UAVInterceptor".to_string(),
+                    specializes: Vec::new(),
+                }],
+                evidence: Vec::new(),
+                rationale: None,
+                workspace_revision: request.workspace_revision.clone(),
+            }]
+        }
+    }
+
     fn hybrid_vehicle_project() -> AuthoringProject {
         load_authoring_project_from_sysml(BTreeMap::from([(
             "hybrid.sysml".to_string(),
@@ -3018,6 +3052,32 @@ package HybridVehicle {
         assert!(rendered.contains("requirement def ImproveEfficiency"));
         assert!(rendered.contains("part def RegenerativeBrakingSystem"));
         assert!(rendered.contains("satisfy requirement ImproveEfficiency"));
+    }
+
+    #[test]
+    fn semantic_agent_can_complete_without_task_goal_spec() {
+        let run = run_semantic_mutation_agent(
+            &RequestRevisionProposalProvider,
+            SemanticAgentRunRequest {
+                goal: "Create a UAV interceptor".to_string(),
+                goal_spec: None,
+                quality_goal: Some(default_model_quality_profile().goal),
+                minimum_quality_score: Some(0.5),
+                initial_files: BTreeMap::from([(
+                    "model.sysml".to_string(),
+                    "package Demo {}".to_string(),
+                )]),
+                focus: Vec::new(),
+                max_steps: 4,
+            },
+        );
+
+        assert_eq!(run.status, SemanticAgentRunStatus::Completed);
+        assert_eq!(run.stop_reason, "goal and quality satisfied");
+        assert!(run
+            .final_files
+            .get("model.sysml")
+            .is_some_and(|source| source.contains("part def UAVInterceptor")));
     }
 
     #[test]
