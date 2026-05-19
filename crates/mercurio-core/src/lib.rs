@@ -129,9 +129,12 @@ pub use syntax_compare::{
     SyntaxSourceSpan, build_rust_syntax_snapshot, compare_syntax_snapshots,
 };
 pub use views::{
-    ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto, GraphDto,
-    GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto, InheritedPropertyValueDto,
-    LibraryTreeNodeDto, RequirementSourceDto, RequirementTableColumnDto, RequirementTableRowDto,
-    RequirementTableViewDto, element_details, graph_view, library_tree_view,
-    library_tree_view_from_document, requirements_table_view,
+    ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
+    ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
+    InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto, L2ExplorerNodeDto,
+    L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto, MetatypeExplorerGraphDto,
+    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, RequirementSourceDto,
+    RequirementTableColumnDto, RequirementTableRowDto, RequirementTableViewDto, element_details,
+    graph_view, l2_explorer_view, library_tree_view, library_tree_view_from_document,
+    metatype_explorer_view, requirements_table_view,
 };

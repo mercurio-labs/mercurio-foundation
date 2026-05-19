@@ -68,6 +68,87 @@ pub struct GraphEdgeDto {
     pub relation: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MetatypeExplorerRequestDto {
+    pub seed_id: String,
+    #[serde(default)]
+    pub expanded_parents: Vec<String>,
+    #[serde(default)]
+    pub expanded_children: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct L2ExplorerRequestDto {
+    pub seed_id: String,
+    #[serde(default)]
+    pub expanded_parents: Vec<String>,
+    #[serde(default)]
+    pub expanded_children: Vec<String>,
+    #[serde(default = "default_true")]
+    pub include_reference_edges: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ExplorerAttributeDto {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MetatypeExplorerGraphDto {
+    pub seed_id: String,
+    pub nodes: Vec<MetatypeExplorerNodeDto>,
+    pub edges: Vec<MetatypeExplorerEdgeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MetatypeExplorerNodeDto {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub layer: u8,
+    pub attributes: Vec<ExplorerAttributeDto>,
+    pub specializes_count: usize,
+    pub specialized_by_count: usize,
+    pub is_seed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MetatypeExplorerEdgeDto {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct L2ExplorerGraphDto {
+    pub seed_id: String,
+    pub nodes: Vec<L2ExplorerNodeDto>,
+    pub edges: Vec<L2ExplorerEdgeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct L2ExplorerNodeDto {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub layer: u8,
+    pub attributes: Vec<ExplorerAttributeDto>,
+    pub specializes_count: usize,
+    pub specialized_by_count: usize,
+    pub is_seed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct L2ExplorerEdgeDto {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ElementDetailsDto {
     pub id: String,
@@ -190,6 +271,213 @@ pub fn element_details(
         inbound,
         outbound,
     ))
+}
+
+pub fn metatype_explorer_view(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    request: &MetatypeExplorerRequestDto,
+) -> Option<MetatypeExplorerGraphDto> {
+    let seed = graph.element_by_element_id(&request.seed_id)?;
+    let expanded_parents = request
+        .expanded_parents
+        .iter()
+        .filter_map(|id| graph.node_id(id))
+        .collect::<BTreeSet<_>>();
+    let expanded_children = request
+        .expanded_children
+        .iter()
+        .filter_map(|id| graph.node_id(id))
+        .collect::<BTreeSet<_>>();
+    let mut visible_ids = BTreeSet::from([seed.id]);
+
+    for edge in graph.outgoing(seed.id, "specializes") {
+        visible_ids.insert(edge.target);
+    }
+
+    for node_id in &expanded_parents {
+        visible_ids.insert(*node_id);
+        for edge in graph.outgoing(*node_id, "specializes") {
+            visible_ids.insert(edge.target);
+        }
+    }
+
+    for node_id in &expanded_children {
+        visible_ids.insert(*node_id);
+        for edge in graph.incoming(*node_id, "specializes") {
+            visible_ids.insert(edge.source);
+        }
+    }
+
+    let mut nodes = visible_ids
+        .iter()
+        .filter_map(|node_id| graph.element(*node_id))
+        .map(|element| metatype_explorer_node(graph, metamodel_registry, element, seed.id))
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let mut edge_keys = BTreeSet::new();
+    for node_id in &visible_ids {
+        for edge in graph.outgoing(*node_id, "specializes") {
+            if !visible_ids.contains(&edge.target) {
+                continue;
+            }
+
+            let Some(source_id) = graph.element_id(edge.source) else {
+                continue;
+            };
+            let Some(target_id) = graph.element_id(edge.target) else {
+                continue;
+            };
+            edge_keys.insert((source_id.to_string(), target_id.to_string()));
+        }
+    }
+
+    let edges = edge_keys
+        .into_iter()
+        .map(|(source, target)| MetatypeExplorerEdgeDto {
+            id: format!("specializes:{source}->{target}"),
+            source,
+            target,
+            relation: "specializes".to_string(),
+        })
+        .collect();
+
+    Some(MetatypeExplorerGraphDto {
+        seed_id: seed.element_id.clone(),
+        nodes,
+        edges,
+    })
+}
+
+pub fn l2_explorer_view(graph: &Graph, request: &L2ExplorerRequestDto) -> Option<L2ExplorerGraphDto> {
+    let seed = graph.element_by_element_id(&request.seed_id)?;
+    if seed.layer != 2 {
+        return None;
+    }
+
+    let expanded_parents = request
+        .expanded_parents
+        .iter()
+        .filter_map(|id| graph.node_id(id))
+        .collect::<BTreeSet<_>>();
+    let expanded_children = request
+        .expanded_children
+        .iter()
+        .filter_map(|id| graph.node_id(id))
+        .collect::<BTreeSet<_>>();
+    let mut visible_ids = BTreeSet::from([seed.id]);
+
+    for edge in graph.outgoing(seed.id, "specializes") {
+        if graph
+            .element(edge.target)
+            .is_some_and(|element| element.layer == 2)
+        {
+            visible_ids.insert(edge.target);
+        }
+    }
+
+    for node_id in &expanded_parents {
+        let Some(element) = graph.element(*node_id) else {
+            continue;
+        };
+        if element.layer != 2 {
+            continue;
+        }
+        visible_ids.insert(*node_id);
+        for edge in graph.outgoing(*node_id, "specializes") {
+            if graph
+                .element(edge.target)
+                .is_some_and(|target| target.layer == 2)
+            {
+                visible_ids.insert(edge.target);
+            }
+        }
+    }
+
+    for node_id in &expanded_children {
+        let Some(element) = graph.element(*node_id) else {
+            continue;
+        };
+        if element.layer != 2 {
+            continue;
+        }
+        visible_ids.insert(*node_id);
+        for edge in graph.incoming(*node_id, "specializes") {
+            if graph
+                .element(edge.source)
+                .is_some_and(|source| source.layer == 2)
+            {
+                visible_ids.insert(edge.source);
+            }
+        }
+    }
+
+    let mut nodes = visible_ids
+        .iter()
+        .filter_map(|node_id| graph.element(*node_id))
+        .map(|element| l2_explorer_node(graph, element, seed.id))
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let mut edge_keys = BTreeSet::new();
+    for node_id in &visible_ids {
+        for edge in graph.outgoing(*node_id, "specializes") {
+            if !visible_ids.contains(&edge.target) {
+                continue;
+            }
+            let Some(source_id) = graph.element_id(edge.source) else {
+                continue;
+            };
+            let Some(target_id) = graph.element_id(edge.target) else {
+                continue;
+            };
+            edge_keys.insert((
+                source_id.to_string(),
+                target_id.to_string(),
+                "specializes".to_string(),
+            ));
+        }
+    }
+
+    if request.include_reference_edges {
+        for node_id in &visible_ids {
+            for edge in graph.outgoing_edges(*node_id) {
+                if !visible_ids.contains(&edge.target)
+                    || !include_l2_reference_relation(&edge.relation)
+                {
+                    continue;
+                }
+                let Some(source_id) = graph.element_id(edge.source) else {
+                    continue;
+                };
+                let Some(target_id) = graph.element_id(edge.target) else {
+                    continue;
+                };
+                edge_keys.insert((
+                    source_id.to_string(),
+                    target_id.to_string(),
+                    edge.relation.clone(),
+                ));
+            }
+        }
+    }
+
+    let edges = edge_keys
+        .into_iter()
+        .map(|(source, target, relation)| L2ExplorerEdgeDto {
+            id: format!("{relation}:{source}->{target}"),
+            source,
+            target,
+            relation,
+        })
+        .collect();
+
+    Some(L2ExplorerGraphDto {
+        seed_id: seed.element_id.clone(),
+        nodes,
+        edges,
+    })
 }
 
 pub fn library_tree_view(graph: &Graph) -> Vec<LibraryTreeNodeDto> {
@@ -432,6 +720,116 @@ fn collect_graph_scope_ids(graph: &Graph, scope: GraphScope) -> BTreeSet<u32> {
     visible_ids
 }
 
+fn metatype_explorer_node(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    element: &Element,
+    seed_id: u32,
+) -> MetatypeExplorerNodeDto {
+    let mut attributes = metamodel_registry
+        .declared_attributes_for(&element.element_id)
+        .iter()
+        .map(|declaration| ExplorerAttributeDto {
+            name: declaration.name.clone(),
+            type_label: declaration.type_label.clone(),
+        })
+        .collect::<Vec<_>>();
+    attributes.sort_by(|left, right| left.name.cmp(&right.name));
+
+    MetatypeExplorerNodeDto {
+        id: element.element_id.clone(),
+        label: label_for_id(&element.element_id),
+        kind: element.kind.clone(),
+        layer: element.layer,
+        attributes,
+        specializes_count: graph.outgoing(element.id, "specializes").count(),
+        specialized_by_count: graph.incoming(element.id, "specializes").count(),
+        is_seed: element.id == seed_id,
+    }
+}
+
+fn l2_explorer_node(graph: &Graph, element: &Element, seed_id: u32) -> L2ExplorerNodeDto {
+    let mut attributes = owned_feature_attributes(graph, element);
+    attributes.sort_by(|left, right| left.name.cmp(&right.name));
+
+    L2ExplorerNodeDto {
+        id: element.element_id.clone(),
+        label: label_for_id(&element.element_id),
+        kind: element.kind.clone(),
+        layer: element.layer,
+        attributes,
+        specializes_count: graph
+            .outgoing(element.id, "specializes")
+            .filter(|edge| {
+                graph
+                    .element(edge.target)
+                    .is_some_and(|target| target.layer == 2)
+            })
+            .count(),
+        specialized_by_count: graph
+            .incoming(element.id, "specializes")
+            .filter(|edge| {
+                graph
+                    .element(edge.source)
+                    .is_some_and(|source| source.layer == 2)
+            })
+            .count(),
+        is_seed: element.id == seed_id,
+    }
+}
+
+fn include_l2_reference_relation(relation: &str) -> bool {
+    !matches!(relation, "specializes" | "owner" | "metatype")
+}
+
+fn owned_feature_attributes(graph: &Graph, element: &Element) -> Vec<ExplorerAttributeDto> {
+    element
+        .properties
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|feature_id| graph.element_by_element_id(feature_id))
+        .filter_map(|feature| {
+            explorer_declared_name(feature).map(|name| ExplorerAttributeDto {
+                name,
+                type_label: explorer_type_label(feature),
+            })
+        })
+        .collect()
+}
+
+fn explorer_declared_name(element: &Element) -> Option<String> {
+    element
+        .properties
+        .get("declared_name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            element
+                .properties
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+fn explorer_type_label(element: &Element) -> Option<String> {
+    relation_type_label(element.properties.get("type"))
+}
+
+fn relation_type_label(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::String(entry)) => Some(label_for_id(entry)),
+        Some(Value::Array(entries)) => entries.iter().find_map(|entry| match entry {
+            Value::String(item) => Some(label_for_id(item)),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 fn build_tree_from_graph(
     graph: &Graph,
     include_element: impl Fn(&Element) -> bool,
@@ -457,6 +855,10 @@ fn path_segments_for_tree(element_id: &str) -> Vec<String> {
     } else {
         element_id.split('.').map(str::to_string).collect()
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Default)]
@@ -660,7 +1062,8 @@ mod tests {
     use crate::{repo_path, Graph, KirDocument, KirElement, MetamodelAttributeRegistry, Runtime};
 
     use super::{
-        element_details, graph_view, library_tree_view, requirements_table_view, GraphScope,
+        element_details, graph_view, l2_explorer_view, library_tree_view, metatype_explorer_view,
+        requirements_table_view, GraphScope, L2ExplorerRequestDto, MetatypeExplorerRequestDto,
     };
 
     #[test]
@@ -813,6 +1216,136 @@ mod tests {
             child.id == "PartDefinition"
                 && child.node_type == "element"
                 && child.element_id.as_deref() == Some("SysML::Systems::PartDefinition")
+        }));
+    }
+
+    #[test]
+    fn metatype_explorer_view_expands_specialization_neighborhood() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::Block".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "specializes".to_string(),
+                        Value::Array(vec![Value::String("SysML::Core::Type".to_string())]),
+                    )]),
+                },
+                KirElement {
+                    id: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "specializes".to_string(),
+                        Value::Array(vec![Value::String("SysML::Systems::Block".to_string())]),
+                    )]),
+                },
+                KirElement {
+                    id: "SysML::Core::Type".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+
+        let view = metatype_explorer_view(
+            &graph,
+            &registry,
+            &MetatypeExplorerRequestDto {
+                seed_id: "SysML::Systems::PartDefinition".to_string(),
+                expanded_parents: vec!["SysML::Systems::Block".to_string()],
+                expanded_children: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(view.seed_id, "SysML::Systems::PartDefinition");
+        assert!(view.nodes.iter().any(|node| node.id == "SysML::Core::Type"));
+        assert!(view.edges.iter().any(|edge| {
+            edge.source == "SysML::Systems::Block" && edge.target == "SysML::Core::Type"
+        }));
+    }
+
+    #[test]
+    fn l2_explorer_view_includes_owned_feature_attributes_and_reference_edges() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "type.BaseVehicle".to_string(),
+                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "type.Engine".to_string(),
+                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "specializes".to_string(),
+                        Value::Array(vec![Value::String("type.Vehicle".to_string())]),
+                    )]),
+                },
+                KirElement {
+                    id: "type.Vehicle".to_string(),
+                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        (
+                            "specializes".to_string(),
+                            Value::Array(vec![Value::String("type.BaseVehicle".to_string())]),
+                        ),
+                        (
+                            "features".to_string(),
+                            Value::Array(vec![Value::String("feature.Vehicle.engine".to_string())]),
+                        ),
+                        ("related".to_string(), Value::String("type.Engine".to_string())),
+                    ]),
+                },
+                KirElement {
+                    id: "feature.Vehicle.engine".to_string(),
+                    kind: "SysML::Systems::PartUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        (
+                            "declared_name".to_string(),
+                            Value::String("engine".to_string()),
+                        ),
+                        ("type".to_string(), Value::String("type.Engine".to_string())),
+                    ]),
+                },
+            ],
+        })
+        .unwrap();
+
+        let view = l2_explorer_view(
+            &graph,
+            &L2ExplorerRequestDto {
+                seed_id: "type.Vehicle".to_string(),
+                expanded_parents: Vec::new(),
+                expanded_children: vec!["type.Vehicle".to_string()],
+                include_reference_edges: true,
+            },
+        )
+        .unwrap();
+
+        let vehicle = view
+            .nodes
+            .iter()
+            .find(|node| node.id == "type.Vehicle")
+            .unwrap();
+        assert!(vehicle.attributes.iter().any(|attribute| {
+            attribute.name == "engine" && attribute.type_label.as_deref() == Some("Engine")
+        }));
+        assert!(view.edges.iter().any(|edge| {
+            edge.source == "type.Vehicle"
+                && edge.target == "type.Engine"
+                && edge.relation == "related"
         }));
     }
 }
