@@ -129,6 +129,8 @@ pub use syntax_compare::{
     SyntaxSourceSpan, build_rust_syntax_snapshot, compare_syntax_snapshots,
 };
 pub use views::{
+    ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto, GraphDto,
+    GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto, InheritedPropertyValueDto,
     RequirementSourceDto, RequirementTableColumnDto, RequirementTableRowDto,
-    RequirementTableViewDto, requirements_table_view,
+    RequirementTableViewDto, element_details, graph_view, requirements_table_view,
 };
