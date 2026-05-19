@@ -68,6 +68,20 @@ pub struct GraphEdgeDto {
     pub relation: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ModelMetadataDto {
+    pub element_count: usize,
+    pub edge_count: usize,
+    pub library_element_count: usize,
+    pub user_element_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_version: Option<String>,
+    pub layers: Vec<u8>,
+    pub relations: Vec<String>,
+    pub graph_scopes: Vec<String>,
+    pub default_graph_scope: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MetatypeExplorerRequestDto {
     pub seed_id: String,
@@ -251,6 +265,67 @@ pub fn graph_view(graph: &Graph, scope: GraphScope) -> GraphDto {
     edges.sort_by(|left, right| left.id.cmp(&right.id));
 
     GraphDto { nodes, edges }
+}
+
+pub fn model_metadata_view(graph: &Graph, stdlib_document: &KirDocument) -> ModelMetadataDto {
+    let layers = graph
+        .elements()
+        .iter()
+        .map(|element| element.layer)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let relations = graph
+        .edges()
+        .iter()
+        .map(|edge| edge.relation.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let library_element_count = graph
+        .elements()
+        .iter()
+        .filter(|element| element.layer < 2)
+        .count();
+    let user_element_count = graph
+        .elements()
+        .iter()
+        .filter(|element| element.layer == 2)
+        .count();
+
+    ModelMetadataDto {
+        element_count: graph.elements().len(),
+        edge_count: graph.edge_count(),
+        library_element_count,
+        user_element_count,
+        library_version: metadata_string(stdlib_document, "stdlib_version"),
+        layers,
+        relations,
+        graph_scopes: GraphScope::all(),
+        default_graph_scope: GraphScope::L2.as_str().to_string(),
+    }
+}
+
+pub fn document_model_metadata_view(document: &KirDocument) -> ModelMetadataDto {
+    let layers = document
+        .elements
+        .iter()
+        .map(|element| element.layer)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    ModelMetadataDto {
+        element_count: document.elements.len(),
+        edge_count: 0,
+        library_element_count: document.elements.len(),
+        user_element_count: 0,
+        library_version: metadata_string(document, "stdlib_version"),
+        layers,
+        relations: Vec::new(),
+        graph_scopes: GraphScope::all(),
+        default_graph_scope: GraphScope::L2.as_str().to_string(),
+    }
 }
 
 pub fn element_details(
@@ -974,6 +1049,26 @@ fn derived_sources(
     Some(sources.iter().cloned().collect())
 }
 
+fn metadata_string(document: &KirDocument, key: &str) -> Option<String> {
+    document
+        .metadata
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            document
+                .metadata
+                .get("merged_sources")
+                .and_then(Value::as_array)
+                .and_then(|sources| {
+                    sources
+                        .iter()
+                        .find_map(|source| source.get(key).and_then(Value::as_str))
+                })
+                .map(str::to_string)
+        })
+}
+
 fn column(key: &str, label: &str) -> RequirementTableColumnDto {
     RequirementTableColumnDto {
         key: key.to_string(),
@@ -1092,9 +1187,9 @@ mod tests {
     use crate::{repo_path, Graph, KirDocument, KirElement, MetamodelAttributeRegistry, Runtime};
 
     use super::{
-        element_details, graph_view, l2_explorer_view, library_tree_view, metatype_explorer_view,
-        requirements_table_view, search_view, GraphScope, L2ExplorerRequestDto,
-        MetatypeExplorerRequestDto,
+        document_model_metadata_view, element_details, graph_view, l2_explorer_view,
+        library_tree_view, metatype_explorer_view, model_metadata_view, requirements_table_view,
+        search_view, GraphScope, L2ExplorerRequestDto, MetatypeExplorerRequestDto,
     };
 
     #[test]
@@ -1165,6 +1260,83 @@ mod tests {
         assert_eq!(l2_plus_context.nodes.len(), 2);
         assert_eq!(l2_plus_context.edges.len(), 1);
         assert_eq!(l2_plus_context.edges[0].relation, "metatype");
+    }
+
+    #[test]
+    fn model_metadata_view_summarizes_graph_and_merged_source_metadata() {
+        let stdlib_document = KirDocument {
+            metadata: BTreeMap::from([(
+                "merged_sources".to_string(),
+                Value::Array(vec![serde_json::json!({"stdlib_version": "test-stdlib"})]),
+            )]),
+            elements: Vec::new(),
+        };
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "type.Vehicle".to_string(),
+                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "metatype".to_string(),
+                        Value::String("SysML::Systems::PartDefinition".to_string()),
+                    )]),
+                },
+            ],
+        })
+        .unwrap();
+
+        let metadata = model_metadata_view(&graph, &stdlib_document);
+
+        assert_eq!(metadata.element_count, 2);
+        assert_eq!(metadata.edge_count, 1);
+        assert_eq!(metadata.library_element_count, 1);
+        assert_eq!(metadata.user_element_count, 1);
+        assert_eq!(metadata.library_version.as_deref(), Some("test-stdlib"));
+        assert_eq!(metadata.layers, vec![1, 2]);
+        assert_eq!(metadata.relations, vec!["metatype"]);
+        assert_eq!(metadata.default_graph_scope, GraphScope::L2.as_str());
+    }
+
+    #[test]
+    fn document_model_metadata_view_summarizes_shell_document() {
+        let document = KirDocument {
+            metadata: BTreeMap::from([(
+                "stdlib_version".to_string(),
+                Value::String("shell-stdlib".to_string()),
+            )]),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        };
+
+        let metadata = document_model_metadata_view(&document);
+
+        assert_eq!(metadata.element_count, 2);
+        assert_eq!(metadata.edge_count, 0);
+        assert_eq!(metadata.library_element_count, 2);
+        assert_eq!(metadata.user_element_count, 0);
+        assert_eq!(metadata.library_version.as_deref(), Some("shell-stdlib"));
+        assert_eq!(metadata.layers, vec![1]);
+        assert!(metadata.relations.is_empty());
     }
 
     #[test]

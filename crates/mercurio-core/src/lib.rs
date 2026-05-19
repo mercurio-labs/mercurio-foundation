@@ -133,8 +133,9 @@ pub use views::{
     ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
     InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto, L2ExplorerNodeDto,
     L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto, MetatypeExplorerGraphDto,
-    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, RequirementSourceDto,
+    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, ModelMetadataDto, RequirementSourceDto,
     RequirementTableColumnDto, RequirementTableRowDto, RequirementTableViewDto, SearchResultDto,
-    element_details, graph_view, l2_explorer_view, library_tree_view,
-    library_tree_view_from_document, metatype_explorer_view, requirements_table_view, search_view,
+    document_model_metadata_view, element_details, graph_view, l2_explorer_view,
+    library_tree_view, library_tree_view_from_document, metatype_explorer_view,
+    model_metadata_view, requirements_table_view, search_view,
 };
