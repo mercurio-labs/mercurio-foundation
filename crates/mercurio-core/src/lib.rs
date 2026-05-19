@@ -131,6 +131,7 @@ pub use syntax_compare::{
 pub use views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto, GraphDto,
     GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto, InheritedPropertyValueDto,
-    RequirementSourceDto, RequirementTableColumnDto, RequirementTableRowDto,
-    RequirementTableViewDto, element_details, graph_view, requirements_table_view,
+    LibraryTreeNodeDto, RequirementSourceDto, RequirementTableColumnDto, RequirementTableRowDto,
+    RequirementTableViewDto, element_details, graph_view, library_tree_view,
+    library_tree_view_from_document, requirements_table_view,
 };

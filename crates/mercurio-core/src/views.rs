@@ -6,10 +6,12 @@ use serde_json::Value;
 use crate::datalog::materialize_core_indexes;
 use crate::derived::derived_properties;
 use crate::graph::{Edge, Element, Graph};
+use crate::ir::KirDocument;
 use crate::metamodel::{
-    AttributeRow, AttributeValueSource, ElementSummary, MetamodelAttributeRegistry,
     collect_specialization_ancestors, effective_properties_with_derived, query_element_attributes,
+    AttributeRow, AttributeValueSource, ElementSummary, MetamodelAttributeRegistry,
 };
+use crate::runtime::{Runtime, RuntimeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GraphScope {
@@ -124,6 +126,17 @@ pub struct InheritedPropertyValueDto {
     pub value: Value,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LibraryTreeNodeDto {
+    pub id: String,
+    pub label: String,
+    pub node_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
+    pub child_count: usize,
+    pub children: Vec<LibraryTreeNodeDto>,
+}
+
 pub fn graph_view(graph: &Graph, scope: GraphScope) -> GraphDto {
     let visible_ids = collect_graph_scope_ids(graph, scope);
     let mut nodes = graph
@@ -177,6 +190,17 @@ pub fn element_details(
         inbound,
         outbound,
     ))
+}
+
+pub fn library_tree_view(graph: &Graph) -> Vec<LibraryTreeNodeDto> {
+    build_tree_from_graph(graph, |element| element.layer < 2)
+}
+
+pub fn library_tree_view_from_document(
+    document: &KirDocument,
+) -> Result<Vec<LibraryTreeNodeDto>, RuntimeError> {
+    let runtime = Runtime::from_document(document.clone())?;
+    Ok(build_tree_from_graph(runtime.graph(), |_| true))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -408,6 +432,102 @@ fn collect_graph_scope_ids(graph: &Graph, scope: GraphScope) -> BTreeSet<u32> {
     visible_ids
 }
 
+fn build_tree_from_graph(
+    graph: &Graph,
+    include_element: impl Fn(&Element) -> bool,
+) -> Vec<LibraryTreeNodeDto> {
+    let mut root = TreeNode::root();
+    let mut library_elements = graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element))
+        .collect::<Vec<_>>();
+    library_elements.sort_by(|left, right| left.element_id.cmp(&right.element_id));
+
+    for element in library_elements {
+        root.insert(path_segments_for_tree(&element.element_id), element);
+    }
+
+    root.into_children()
+}
+
+fn path_segments_for_tree(element_id: &str) -> Vec<String> {
+    if element_id.contains("::") {
+        element_id.split("::").map(str::to_string).collect()
+    } else {
+        element_id.split('.').map(str::to_string).collect()
+    }
+}
+
+#[derive(Debug, Default)]
+struct TreeNode {
+    label: String,
+    element_id: Option<String>,
+    children: BTreeMap<String, TreeNode>,
+}
+
+impl TreeNode {
+    fn root() -> Self {
+        Self::default()
+    }
+
+    fn insert(&mut self, segments: Vec<String>, element: &Element) {
+        if segments.is_empty() {
+            return;
+        }
+
+        let mut current = self;
+        let path_len = segments.len();
+        for (index, segment) in segments.into_iter().enumerate() {
+            current = current
+                .children
+                .entry(segment.clone())
+                .or_insert_with(|| TreeNode {
+                    label: segment,
+                    element_id: None,
+                    children: BTreeMap::new(),
+                });
+
+            if index + 1 == path_len {
+                current.element_id = Some(element.element_id.clone());
+            }
+        }
+    }
+
+    fn into_children(self) -> Vec<LibraryTreeNodeDto> {
+        self.children
+            .into_iter()
+            .map(|(key, child)| child.into_dto(key))
+            .collect()
+    }
+
+    fn into_dto(self, id: String) -> LibraryTreeNodeDto {
+        let TreeNode {
+            label,
+            element_id,
+            children,
+        } = self;
+        let children = children
+            .into_iter()
+            .map(|(child_id, child)| child.into_dto(child_id))
+            .collect::<Vec<_>>();
+        let node_type = if element_id.is_some() {
+            "element"
+        } else {
+            "namespace"
+        };
+
+        LibraryTreeNodeDto {
+            id,
+            label,
+            node_type: node_type.to_string(),
+            element_id,
+            child_count: children.len(),
+            children,
+        }
+    }
+}
+
 fn derived_sources(
     derived: &Option<crate::datalog::DerivedIndexes>,
     requirement_id: &str,
@@ -537,9 +657,11 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::{Graph, KirDocument, KirElement, MetamodelAttributeRegistry, Runtime, repo_path};
+    use crate::{repo_path, Graph, KirDocument, KirElement, MetamodelAttributeRegistry, Runtime};
 
-    use super::{GraphScope, element_details, graph_view, requirements_table_view};
+    use super::{
+        element_details, graph_view, library_tree_view, requirements_table_view, GraphScope,
+    };
 
     #[test]
     fn extracts_requirement_rows_from_example_model() {
@@ -650,5 +772,47 @@ mod tests {
         );
         assert_eq!(details.outbound.len(), 1);
         assert_eq!(details.outbound[0].relation, "specializes");
+    }
+
+    #[test]
+    fn library_tree_view_builds_namespaces_for_library_elements() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "type.Vehicle".to_string(),
+                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        })
+        .unwrap();
+
+        let tree = library_tree_view(&graph);
+
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].id, "SysML");
+        assert_eq!(tree[0].node_type, "namespace");
+        let systems = &tree[0].children[0];
+        assert_eq!(systems.id, "Systems");
+        assert_eq!(systems.child_count, 2);
+        assert!(systems.children.iter().any(|child| {
+            child.id == "PartDefinition"
+                && child.node_type == "element"
+                && child.element_id.as_deref() == Some("SysML::Systems::PartDefinition")
+        }));
     }
 }
