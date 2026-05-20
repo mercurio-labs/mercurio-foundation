@@ -154,6 +154,17 @@ fn build_kir_metadata(
             "library_root".to_string(),
             Value::String(metadata_path_string(&pilot_root.join("sysml.library"))),
         );
+        if let Some(commit) = git_stdout(pilot_root, ["rev-parse", "HEAD"]) {
+            metadata.insert("pilot_commit".to_string(), Value::String(commit));
+        }
+        if let Some(describe) =
+            git_stdout(pilot_root, ["describe", "--tags", "--always", "--dirty"])
+        {
+            metadata.insert("pilot_git_describe".to_string(), Value::String(describe));
+        }
+        if let Some(dirty) = git_dirty(pilot_root) {
+            metadata.insert("pilot_dirty".to_string(), Value::Bool(dirty));
+        }
     }
 
     if let Some(stdlib_version) = infer_stdlib_version(args, export) {
@@ -200,6 +211,35 @@ fn infer_stdlib_version(args: &Args, export: &PilotExportDocument) -> Option<Str
                 .and_then(|name| name.strip_suffix("-all.jar"))
                 .map(str::to_string)
         })
+}
+
+fn git_stdout<const N: usize>(repo: &Path, args: [&str; N]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn git_dirty(repo: &Path) -> Option<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(!output.stdout.is_empty())
 }
 
 fn kir_element_count(export: &PilotExportDocument) -> usize {
