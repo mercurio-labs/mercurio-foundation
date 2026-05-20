@@ -226,6 +226,96 @@ sum(self.parts.mass)
 
 New expression work should prefer `expression_ir` so expressions are data, not parser-specific strings. Expression IR is still evolving and should be documented in this file once its shape is stable enough to treat as a contract.
 
+### `expression_ir` Contract
+
+`expression_ir` is a JSON object with a required string `kind` field. Consumers must reject unknown kinds or malformed required fields with diagnostics rather than guessing at source syntax. Producers may preserve unsupported source expressions as legacy `expression` strings, but must only emit `expression_ir` for the supported forms below.
+
+Supported expression kinds:
+
+- `literal`: JSON scalar literal.
+
+  ```json
+  { "kind": "literal", "value": 42 }
+  ```
+
+- `self`: the runtime owner context.
+
+  ```json
+  { "kind": "self" }
+  ```
+
+- `path`: a feature path rooted at `self`. New frontends should emit each segment as an object with a required source `name` and optional resolved semantic `feature` id. Runtime consumers may also read legacy string segments such as `"parts"` for older KIR artifacts. When a segment cannot be resolved, frontends should report a diagnostic before KIR emission.
+
+  ```json
+  {
+    "kind": "path",
+    "root": "self",
+    "segments": [
+      { "name": "parts", "feature": "feature.Demo.vehicle.parts" },
+      { "name": "mass", "feature": "feature.Demo.Engine.mass" }
+    ]
+  }
+  ```
+
+- `tuple`: ordered expression items. Tuple runtime semantics are limited and consumers may reject tuple values where a scalar is required.
+
+  ```json
+  {
+    "kind": "tuple",
+    "items": [
+      { "kind": "literal", "value": 1 },
+      { "kind": "literal", "value": 2 }
+    ]
+  }
+  ```
+
+- `unary`: unary operator plus operand in `expr`. Supported operators are `negate` and `not`.
+
+  ```json
+  {
+    "kind": "unary",
+    "op": "not",
+    "expr": { "kind": "literal", "value": false }
+  }
+  ```
+
+- `binary`: binary operator plus `left` and `right` operands. Supported operators are `add`, `subtract`, `multiply`, `divide`, `power`, `equal`, `not_equal`, `less`, `less_equal`, `greater`, `greater_equal`, `and`, and `or`.
+
+  ```json
+  {
+    "kind": "binary",
+    "op": "greater",
+    "left": {
+      "kind": "binary",
+      "op": "multiply",
+      "left": { "kind": "literal", "value": 2 },
+      "right": { "kind": "literal", "value": 3 }
+    },
+    "right": { "kind": "literal", "value": 5 }
+  }
+  ```
+
+- `call`: pure function call with ordered `args`. The runtime currently supports `count` and `sum` for one argument. Other functions may be carried for inspection, but runtime consumers should reject unsupported functions explicitly.
+
+  ```json
+  {
+    "kind": "call",
+    "function": "sum",
+    "args": [
+      {
+        "kind": "path",
+        "root": "self",
+        "segments": [
+          { "name": "parts", "feature": "feature.Demo.vehicle.parts" },
+          { "name": "mass", "feature": "feature.Demo.Engine.mass" }
+        ]
+      }
+    ]
+  }
+  ```
+
+Runtime evaluation of `expression_ir` must be pure. It may read the graph and execution context, but it must not mutate model state.
+
 ## Frontend Responsibilities
 
 Frontends that emit KIR should:

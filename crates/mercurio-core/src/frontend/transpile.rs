@@ -4,6 +4,9 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use crate::expression::{
+    BinaryExpressionOp, ExpressionIr, ExpressionPathRoot, ExpressionPathSegment, UnaryExpressionOp,
+};
 use crate::frontend::ast::{BinaryOp, UnaryOp};
 use crate::frontend::diagnostics::Diagnostic;
 use crate::frontend::resolver::{
@@ -1610,77 +1613,75 @@ fn usage_source_span(usage: &ResolvedUsage) -> crate::frontend::ast::SourceSpan 
 }
 
 fn render_expression_ir(expr: &ResolvedExpr) -> Result<Value, Diagnostic> {
+    build_expression_ir(expr)?
+        .to_value()
+        .map_err(|err| Diagnostic::new(format!("failed to serialize expression_ir: {err}"), None))
+}
+
+fn build_expression_ir(expr: &ResolvedExpr) -> Result<ExpressionIr, Diagnostic> {
     match expr {
-        ResolvedExpr::Literal(value) => Ok(json!({
-            "kind": "literal",
-            "value": value,
-        })),
-        ResolvedExpr::Tuple { items } => Ok(json!({
-            "kind": "tuple",
-            "items": items
+        ResolvedExpr::Literal(value) => Ok(ExpressionIr::Literal {
+            value: value.clone(),
+        }),
+        ResolvedExpr::Tuple { items } => Ok(ExpressionIr::Tuple {
+            items: items
                 .iter()
-                .map(render_expression_ir)
+                .map(build_expression_ir)
                 .collect::<Result<Vec<_>, _>>()?,
-        })),
-        ResolvedExpr::SelfRef => Ok(json!({
-            "kind": "self",
-        })),
-        ResolvedExpr::Unary { op, expr } => Ok(json!({
-            "kind": "unary",
-            "op": unary_op_name(op),
-            "expr": render_expression_ir(expr)?,
-        })),
-        ResolvedExpr::Binary { left, op, right } => Ok(json!({
-            "kind": "binary",
-            "op": binary_op_name(op),
-            "left": render_expression_ir(left)?,
-            "right": render_expression_ir(right)?,
-        })),
-        ResolvedExpr::FeaturePath { segments } => Ok(json!({
-            "kind": "path",
-            "root": "self",
-            "segments": segments.iter().map(render_path_segment).collect::<Vec<_>>(),
-        })),
-        ResolvedExpr::Call { function, args } => Ok(json!({
-            "kind": "call",
-            "function": function,
-            "args": args
+        }),
+        ResolvedExpr::SelfRef => Ok(ExpressionIr::SelfRef),
+        ResolvedExpr::Unary { op, expr } => Ok(ExpressionIr::Unary {
+            op: unary_expression_op(op),
+            expr: Box::new(build_expression_ir(expr)?),
+        }),
+        ResolvedExpr::Binary { left, op, right } => Ok(ExpressionIr::Binary {
+            left: Box::new(build_expression_ir(left)?),
+            op: binary_expression_op(op),
+            right: Box::new(build_expression_ir(right)?),
+        }),
+        ResolvedExpr::FeaturePath { segments } => Ok(ExpressionIr::Path {
+            root: ExpressionPathRoot::SelfRef,
+            segments: segments.iter().map(expression_path_segment).collect(),
+        }),
+        ResolvedExpr::Call { function, args } => Ok(ExpressionIr::Call {
+            function: function.clone(),
+            args: args
                 .iter()
-                .map(render_expression_ir)
+                .map(build_expression_ir)
                 .collect::<Result<Vec<_>, _>>()?,
-        })),
+        }),
     }
 }
 
-fn render_path_segment(segment: &ResolvedPathSegment) -> Value {
-    json!({
-        "name": segment.name,
-        "feature": segment.feature_id,
-    })
-}
-
-fn unary_op_name(op: &UnaryOp) -> &'static str {
-    match op {
-        UnaryOp::Negate => "negate",
-        UnaryOp::Not => "not",
+fn expression_path_segment(segment: &ResolvedPathSegment) -> ExpressionPathSegment {
+    ExpressionPathSegment::Resolved {
+        name: segment.name.clone(),
+        feature: Some(segment.feature_id.clone()),
     }
 }
 
-fn binary_op_name(op: &BinaryOp) -> &'static str {
+fn unary_expression_op(op: &UnaryOp) -> UnaryExpressionOp {
     match op {
-        BinaryOp::Add => "add",
-        BinaryOp::Subtract => "subtract",
-        BinaryOp::Multiply => "multiply",
-        BinaryOp::Divide => "divide",
-        BinaryOp::Power => "power",
-        BinaryOp::Equal => "equal",
-        BinaryOp::NotEqual => "not_equal",
-        BinaryOp::Less => "less",
-        BinaryOp::LessEqual => "less_equal",
-        BinaryOp::Greater => "greater",
-        BinaryOp::GreaterEqual => "greater_equal",
-        BinaryOp::And => "and",
-        BinaryOp::Or => "or",
+        UnaryOp::Negate => UnaryExpressionOp::Negate,
+        UnaryOp::Not => UnaryExpressionOp::Not,
+    }
+}
+
+fn binary_expression_op(op: &BinaryOp) -> BinaryExpressionOp {
+    match op {
+        BinaryOp::Add => BinaryExpressionOp::Add,
+        BinaryOp::Subtract => BinaryExpressionOp::Subtract,
+        BinaryOp::Multiply => BinaryExpressionOp::Multiply,
+        BinaryOp::Divide => BinaryExpressionOp::Divide,
+        BinaryOp::Power => BinaryExpressionOp::Power,
+        BinaryOp::Equal => BinaryExpressionOp::Equal,
+        BinaryOp::NotEqual => BinaryExpressionOp::NotEqual,
+        BinaryOp::Less => BinaryExpressionOp::Less,
+        BinaryOp::LessEqual => BinaryExpressionOp::LessEqual,
+        BinaryOp::Greater => BinaryExpressionOp::Greater,
+        BinaryOp::GreaterEqual => BinaryExpressionOp::GreaterEqual,
+        BinaryOp::And => BinaryExpressionOp::And,
+        BinaryOp::Or => BinaryExpressionOp::Or,
     }
 }
 

@@ -4,6 +4,7 @@ pub mod constraints;
 pub mod datalog;
 pub mod derived;
 pub mod diagrams;
+pub mod expression;
 pub mod feasibility;
 pub mod frontend;
 pub mod goal;
@@ -54,6 +55,10 @@ pub use diagrams::{
     DiagramAttributeDto, DiagramDirectionDto, DiagramEdgeDto, DiagramKindDto,
     DiagramLayoutOptionsDto, DiagramNodeDto, DiagramQueryOptionsDto, DiagramRenderRequestDto,
     DiagramSpecDto, DiagramStyleOptionsDto, DiagramViewDto, list_diagram_kinds, render_diagram,
+};
+pub use expression::{
+    BinaryExpressionOp, ExpressionIr, ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment,
+    UnaryExpressionOp,
 };
 pub use feasibility::{
     AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,

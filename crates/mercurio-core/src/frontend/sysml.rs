@@ -5101,6 +5101,81 @@ mod tests {
     }
 
     #[test]
+    fn transpiles_expression_ir_for_arithmetic_boolean_and_comparison_ops() {
+        let module = parse_sysml(
+            "package Demo { part vehicle { derived attribute arithmeticCheck = (1 + 2 * 3) > 6 and not false; } }",
+        )
+        .unwrap();
+        let stdlib = fake_stdlib(["SysML::Systems::PartDefinition"]);
+        let mappings = MappingBundle::load().unwrap();
+        let resolved = resolve_module(&module, &stdlib, &mappings).unwrap();
+        let kir = transpile_module(&resolved, "inline.sysml", &mappings).unwrap();
+
+        let arithmetic_check = kir
+            .elements
+            .iter()
+            .find(|element| element.id == "feature.Demo.vehicle.arithmeticCheck")
+            .unwrap();
+        assert_eq!(
+            arithmetic_check.properties.get("expression_ir"),
+            Some(&serde_json::json!({
+                "kind": "binary",
+                "op": "and",
+                "left": {
+                    "kind": "binary",
+                    "op": "greater",
+                    "left": {
+                        "kind": "binary",
+                        "op": "add",
+                        "left": {"kind": "literal", "value": 1},
+                        "right": {
+                            "kind": "binary",
+                            "op": "multiply",
+                            "left": {"kind": "literal", "value": 2},
+                            "right": {"kind": "literal", "value": 3}
+                        }
+                    },
+                    "right": {"kind": "literal", "value": 6}
+                },
+                "right": {
+                    "kind": "unary",
+                    "op": "not",
+                    "expr": {"kind": "literal", "value": false}
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn transpiles_expression_ir_for_tuple_literals() {
+        let module = parse_sysml(
+            "package Demo { part vehicle { derived attribute tupleValue = (1, true, \"ready\"); } }",
+        )
+        .unwrap();
+        let stdlib = fake_stdlib(["SysML::Systems::PartDefinition"]);
+        let mappings = MappingBundle::load().unwrap();
+        let resolved = resolve_module(&module, &stdlib, &mappings).unwrap();
+        let kir = transpile_module(&resolved, "inline.sysml", &mappings).unwrap();
+
+        let tuple_value = kir
+            .elements
+            .iter()
+            .find(|element| element.id == "feature.Demo.vehicle.tupleValue")
+            .unwrap();
+        assert_eq!(
+            tuple_value.properties.get("expression_ir"),
+            Some(&serde_json::json!({
+                "kind": "tuple",
+                "items": [
+                    {"kind": "literal", "value": 1},
+                    {"kind": "literal", "value": true},
+                    {"kind": "literal", "value": "ready"}
+                ]
+            }))
+        );
+    }
+
+    #[test]
     fn initialized_attribute_usage_is_marked_derived_when_expression_is_present() {
         let module = parse_sysml(
             "package Demo { attribute def Mass; part vehicle { attribute totalMass : Mass = 42; } }",

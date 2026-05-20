@@ -6,6 +6,9 @@ use serde_json::{Number, Value};
 use crate::datalog::{
     DatalogError, DerivedIndexes, RulePack, load_default_rulepacks, materialize_core_indexes,
 };
+use crate::expression::{
+    BinaryExpressionOp, ExpressionIr, ExpressionPathRoot, ExpressionPathSegment, UnaryExpressionOp,
+};
 use crate::graph::{Graph, GraphError};
 use crate::ir::KirDocument;
 
@@ -253,86 +256,70 @@ impl Runtime {
         owner_id: &str,
         context: &ExecutionContext,
     ) -> Result<Value, RuntimeError> {
-        let kind = expression
-            .get("kind")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
+        let expression_ir = ExpressionIr::from_value(expression)
+            .map_err(|err| RuntimeError::InvalidExpression(format!("{err}: {expression}")))?;
+        self.evaluate_typed_expression_ir(&expression_ir, owner_id, context)
+    }
 
-        match kind {
-            "literal" => expression
-                .get("value")
-                .cloned()
-                .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string())),
-            "self" => Ok(Value::String(owner_id.to_string())),
-            "path" => {
+    fn evaluate_typed_expression_ir(
+        &self,
+        expression: &ExpressionIr,
+        owner_id: &str,
+        context: &ExecutionContext,
+    ) -> Result<Value, RuntimeError> {
+        match expression {
+            ExpressionIr::Literal { value } => Ok(value.clone()),
+            ExpressionIr::SelfRef => Ok(Value::String(owner_id.to_string())),
+            ExpressionIr::Tuple { items } => {
+                let values = items
+                    .iter()
+                    .map(|item| self.evaluate_typed_expression_ir(item, owner_id, context))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Value::Array(values))
+            }
+            ExpressionIr::Path { .. } => {
                 let values = self.resolve_path_expression(owner_id, expression, context)?;
                 match values.as_slice() {
                     [value] => Ok(value.clone()),
                     _ => Ok(Value::Array(values)),
                 }
             }
-            "unary" => {
-                let op = expression
-                    .get("op")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-                let inner = expression
-                    .get("expr")
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-                let value = self.evaluate_expression_ir(inner, owner_id, context)?;
+            ExpressionIr::Unary { op, expr } => {
+                let value = self.evaluate_typed_expression_ir(expr, owner_id, context)?;
                 match op {
-                    "negate" => {
-                        let number = value_as_f64(&value, expression.to_string())?;
+                    UnaryExpressionOp::Negate => {
+                        let number = value_as_f64(&value, format!("{expression:?}"))?;
                         Number::from_f64(-number).map(Value::Number).ok_or_else(|| {
-                            RuntimeError::UnsupportedAggregation(expression.to_string())
+                            RuntimeError::UnsupportedAggregation(format!("{expression:?}"))
                         })
                     }
-                    "not" => {
+                    UnaryExpressionOp::Not => {
                         let boolean = value.as_bool().ok_or_else(|| {
-                            RuntimeError::InvalidExpression(expression.to_string())
+                            RuntimeError::InvalidExpression(format!("{expression:?}"))
                         })?;
                         Ok(Value::Bool(!boolean))
                     }
-                    _ => Err(RuntimeError::InvalidExpression(expression.to_string())),
                 }
             }
-            "binary" => {
-                let op = expression
-                    .get("op")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-                let left = expression
-                    .get("left")
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-                let right = expression
-                    .get("right")
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-                let left = self.evaluate_expression_ir(left, owner_id, context)?;
-                let right = self.evaluate_expression_ir(right, owner_id, context)?;
-                evaluate_binary_expression(op, &left, &right, expression.to_string())
+            ExpressionIr::Binary { left, op, right } => {
+                let left = self.evaluate_typed_expression_ir(left, owner_id, context)?;
+                let right = self.evaluate_typed_expression_ir(right, owner_id, context)?;
+                evaluate_binary_expression(*op, &left, &right, format!("{expression:?}"))
             }
-            "call" => {
-                let function = expression
-                    .get("function")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-                let args = expression
-                    .get("args")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
+            ExpressionIr::Call { function, args } => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::InvalidExpression(expression.to_string()));
+                    return Err(RuntimeError::InvalidExpression(format!("{expression:?}")));
                 }
 
                 let values = match args.first() {
-                    Some(arg) if arg.get("kind").and_then(Value::as_str) == Some("path") => {
-                        self.resolve_path_expression(owner_id, arg, context)?
+                    Some(ExpressionIr::Path { .. }) => {
+                        self.resolve_path_expression(owner_id, args.first().unwrap(), context)?
                     }
-                    Some(arg) => vec![self.evaluate_expression_ir(arg, owner_id, context)?],
-                    None => return Err(RuntimeError::InvalidExpression(expression.to_string())),
+                    Some(arg) => vec![self.evaluate_typed_expression_ir(arg, owner_id, context)?],
+                    None => return Err(RuntimeError::InvalidExpression(format!("{expression:?}"))),
                 };
 
-                match function {
+                match function.as_str() {
                     "count" => Ok(Value::Number(Number::from(values.len() as u64))),
                     "sum" => {
                         let mut total = 0.0_f64;
@@ -340,26 +327,29 @@ impl Runtime {
                             match value {
                                 Value::Number(number) => {
                                     total += number.as_f64().ok_or_else(|| {
-                                        RuntimeError::UnsupportedAggregation(expression.to_string())
+                                        RuntimeError::UnsupportedAggregation(format!(
+                                            "{expression:?}"
+                                        ))
                                     })?;
                                 }
                                 _ => {
                                     return Err(RuntimeError::NonNumericValue {
                                         owner: owner_id.to_string(),
-                                        feature: expression.to_string(),
+                                        feature: format!("{expression:?}"),
                                     });
                                 }
                             }
                         }
                         let number = Number::from_f64(total).ok_or_else(|| {
-                            RuntimeError::UnsupportedAggregation(expression.to_string())
+                            RuntimeError::UnsupportedAggregation(format!("{expression:?}"))
                         })?;
                         Ok(Value::Number(number))
                     }
-                    _ => Err(RuntimeError::InvalidExpression(expression.to_string())),
+                    _ => Err(RuntimeError::InvalidExpression(format!(
+                        "unsupported expression_ir function `{function}`: {expression:?}"
+                    ))),
                 }
             }
-            _ => Err(RuntimeError::InvalidExpression(expression.to_string())),
         }
     }
 
@@ -380,33 +370,20 @@ impl Runtime {
     fn resolve_path_expression(
         &self,
         owner_id: &str,
-        expression: &Value,
+        expression: &ExpressionIr,
         context: &ExecutionContext,
     ) -> Result<Vec<Value>, RuntimeError> {
-        let root = expression
-            .get("root")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
-        if root != "self" {
-            return Err(RuntimeError::InvalidExpression(expression.to_string()));
+        let ExpressionIr::Path { root, segments } = expression else {
+            return Err(RuntimeError::InvalidExpression(format!("{expression:?}")));
+        };
+        if *root != ExpressionPathRoot::SelfRef {
+            return Err(RuntimeError::InvalidExpression(format!("{expression:?}")));
         }
-        let segments = expression
-            .get("segments")
-            .and_then(Value::as_array)
-            .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
         let owned = segments
             .iter()
-            .map(|segment| {
-                if let Some(name) = segment.as_str() {
-                    return Ok(name.to_string());
-                }
-                segment
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(ExpressionPathSegment::name)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
 
         let borrowed = owned.iter().map(String::as_str).collect::<Vec<_>>();
         self.resolve_path_segments(owner_id, &borrowed, context)
@@ -578,25 +555,25 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 }
 
 fn evaluate_binary_expression(
-    op: &str,
+    op: BinaryExpressionOp,
     left: &Value,
     right: &Value,
     expression: String,
 ) -> Result<Value, RuntimeError> {
     match op {
-        "add" => numeric_binary(left, right, expression, |a, b| a + b),
-        "subtract" => numeric_binary(left, right, expression, |a, b| a - b),
-        "multiply" => numeric_binary(left, right, expression, |a, b| a * b),
-        "divide" => numeric_binary(left, right, expression, |a, b| a / b),
-        "less" => numeric_compare(left, right, expression, |a, b| a < b),
-        "less_equal" => numeric_compare(left, right, expression, |a, b| a <= b),
-        "greater" => numeric_compare(left, right, expression, |a, b| a > b),
-        "greater_equal" => numeric_compare(left, right, expression, |a, b| a >= b),
-        "equal" => Ok(Value::Bool(left == right)),
-        "not_equal" => Ok(Value::Bool(left != right)),
-        "and" => boolean_binary(left, right, expression, |a, b| a && b),
-        "or" => boolean_binary(left, right, expression, |a, b| a || b),
-        _ => Err(RuntimeError::InvalidExpression(expression)),
+        BinaryExpressionOp::Add => numeric_binary(left, right, expression, |a, b| a + b),
+        BinaryExpressionOp::Subtract => numeric_binary(left, right, expression, |a, b| a - b),
+        BinaryExpressionOp::Multiply => numeric_binary(left, right, expression, |a, b| a * b),
+        BinaryExpressionOp::Divide => numeric_binary(left, right, expression, |a, b| a / b),
+        BinaryExpressionOp::Power => numeric_binary(left, right, expression, f64::powf),
+        BinaryExpressionOp::Less => numeric_compare(left, right, expression, |a, b| a < b),
+        BinaryExpressionOp::LessEqual => numeric_compare(left, right, expression, |a, b| a <= b),
+        BinaryExpressionOp::Greater => numeric_compare(left, right, expression, |a, b| a > b),
+        BinaryExpressionOp::GreaterEqual => numeric_compare(left, right, expression, |a, b| a >= b),
+        BinaryExpressionOp::Equal => Ok(Value::Bool(left == right)),
+        BinaryExpressionOp::NotEqual => Ok(Value::Bool(left != right)),
+        BinaryExpressionOp::And => boolean_binary(left, right, expression, |a, b| a && b),
+        BinaryExpressionOp::Or => boolean_binary(left, right, expression, |a, b| a || b),
     }
 }
 
@@ -790,6 +767,133 @@ mod tests {
             .evaluate("df.totalMass", "assembly.VehicleInstance", &context)
             .unwrap();
         assert_eq!(result.value, Value::from(250.5));
+    }
+
+    #[test]
+    fn evaluates_structured_tuple_expression_ir() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![
+                KirElement {
+                    id: "assembly.VehicleInstance".to_string(),
+                    kind: "type.Vehicle".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "df.tupleValue".to_string(),
+                    kind: "KerML::Core::Feature".to_string(),
+                    layer: 2,
+                    properties: [(
+                        "expression_ir".to_string(),
+                        json!({
+                            "kind": "tuple",
+                            "items": [
+                                {"kind": "literal", "value": 1},
+                                {"kind": "literal", "value": true},
+                                {"kind": "literal", "value": "ready"}
+                            ]
+                        }),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+            ],
+        };
+        let runtime = Runtime::from_document(document).unwrap();
+
+        let result = runtime
+            .evaluate(
+                "df.tupleValue",
+                "assembly.VehicleInstance",
+                &ExecutionContext::default(),
+            )
+            .unwrap();
+        assert_eq!(result.value, json!([1, true, "ready"]));
+    }
+
+    #[test]
+    fn reports_unsupported_expression_ir_kind() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![
+                KirElement {
+                    id: "assembly.VehicleInstance".to_string(),
+                    kind: "type.Vehicle".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "df.unsupported".to_string(),
+                    kind: "KerML::Core::Feature".to_string(),
+                    layer: 2,
+                    properties: [(
+                        "expression_ir".to_string(),
+                        json!({"kind": "select", "source": {"kind": "self"}}),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+            ],
+        };
+        let runtime = Runtime::from_document(document).unwrap();
+
+        let error = runtime
+            .evaluate(
+                "df.unsupported",
+                "assembly.VehicleInstance",
+                &ExecutionContext::default(),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported expression_ir kind `select`")
+        );
+    }
+
+    #[test]
+    fn reports_unsupported_expression_ir_function() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![
+                KirElement {
+                    id: "assembly.VehicleInstance".to_string(),
+                    kind: "type.Vehicle".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "df.unsupported".to_string(),
+                    kind: "KerML::Core::Feature".to_string(),
+                    layer: 2,
+                    properties: [(
+                        "expression_ir".to_string(),
+                        json!({
+                            "kind": "call",
+                            "function": "avg",
+                            "args": [{"kind": "literal", "value": 1}]
+                        }),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+            ],
+        };
+        let runtime = Runtime::from_document(document).unwrap();
+
+        let error = runtime
+            .evaluate(
+                "df.unsupported",
+                "assembly.VehicleInstance",
+                &ExecutionContext::default(),
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported expression_ir function `avg`")
+        );
     }
 
     #[test]
