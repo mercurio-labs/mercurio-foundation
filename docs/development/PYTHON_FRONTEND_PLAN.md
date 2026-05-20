@@ -1,5 +1,7 @@
 # Python Frontend Plan
 
+Status: active integration plan.
+
 ## Goal
 
 Provide a Python-facing interface for Mercurio that can drive parsing, linting, semantic compilation, graph inspection, editor previews, and project workflows without reimplementing SysML v2, KerML, KIR, or runtime semantics in Python.

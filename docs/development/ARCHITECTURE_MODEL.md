@@ -1,5 +1,7 @@
 # Mercurio Architecture Model
 
+Status: canonical architecture.
+
 ## Purpose
 
 This document summarizes the logical model that the rest of the planning docs should reinforce.
@@ -153,6 +155,8 @@ Proposal outcomes:
 
 Accepted source changes still flow through external Git commits and merges.
 
+The shared lifecycle for drafts, proposal overlays, and PR bindings is documented in [PROPOSAL_DRAFT_LIFECYCLE.md](PROPOSAL_DRAFT_LIFECYCLE.md).
+
 ## Pull Request Model
 
 A pull request is the source-control acceptance vehicle for a Mercurio proposal.
@@ -190,15 +194,18 @@ The server package registry is the local abstraction. A backing provider such as
 
 ## Documentation Map
 
-- [CENTAUR_STRATEGIC_PLAN.md](CENTAUR_STRATEGIC_PLAN.md): product identity and reasoning loop
 - [KIR_SPEC.md](KIR_SPEC.md): semantic IR contract
 - [SERVER_WORKSPACE_PLAN.md](SERVER_WORKSPACE_PLAN.md): server as semantic reasoner over source authorities
 - [SERVER_IMPLEMENTATION_PLAN.md](SERVER_IMPLEMENTATION_PLAN.md): project repository and semantic artifact implementation path
-- [DESKTOP_WORKSPACE_SYNC_PLAN.md](DESKTOP_WORKSPACE_SYNC_PLAN.md): desktop local authoring and server semantic-service integration
-- [MODEL_EDITOR_MODE.md](MODEL_EDITOR_MODE.md): desktop editor mode
 - [PROJECT_DESCRIPTOR_AND_MOUNT_PLAN.md](PROJECT_DESCRIPTOR_AND_MOUNT_PLAN.md): source/provider/cache separation
+- [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md): plugin packages, registries, WASM services, verification actions, loading, and caches
+- [SEMANTIC_ARTIFACT_KEYS.md](SEMANTIC_ARTIFACT_KEYS.md): cache and evidence identity for compiled and derived artifacts
+- [PROPOSAL_DRAFT_LIFECYCLE.md](PROPOSAL_DRAFT_LIFECYCLE.md): draft overlays, proposals, and PR bindings
 - [VIEWS_ARCHITECTURE.md](VIEWS_ARCHITECTURE.md): semantic projections for tables, diagrams, matrices, dashboards, and future runtime-defined views
 - [DATALOG_REASONING_ENGINE_PLAN.md](DATALOG_REASONING_ENGINE_PLAN.md): derived fact/rule reasoning layer over KIR graph state
+- [SIMULATION_ARCHITECTURE.md](SIMULATION_ARCHITECTURE.md): behavioral simulation over compiled KIR, runtime expressions, traces, and scenarios
+- [VERIFICATION_PIPELINE_ARCHITECTURE.md](VERIFICATION_PIPELINE_ARCHITECTURE.md): CI/CD verification actions, requirement compliance, behavioral simulation, and evidence
+- [DOCS_CORPUS_REVIEW.md](DOCS_CORPUS_REVIEW.md): corpus organization, overlap, gaps, and cleanup sequence
 
 ## Guiding Rule
 

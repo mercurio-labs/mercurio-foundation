@@ -1,8 +1,10 @@
 # Datalog Reasoning Engine Plan
 
+Status: partially implemented architecture and remaining work.
+
 ## Purpose
 
-This document captures the proposed role, integration point, rule-generation timing, and cost controls for introducing a Datalog-style reasoning engine into Mercurio.
+This document captures the role, integration point, rule-generation timing, cost controls, and remaining work for the Datalog-style reasoning layer in Mercurio.
 
 The engine should be a derived semantic query and validation layer over compiled KIR. It should not replace KIR as the semantic contract or the existing graph as the primary runtime representation.
 
@@ -24,6 +26,17 @@ SysML / KerML source
         v
  views / validation / impact analysis / explanations
 ```
+
+## Current Implementation Snapshot
+
+The core crate now exposes an initial Datalog and derived-index slice:
+
+- `crates/mercurio-core/src/datalog.rs`: rule packs, facts, evaluation, graph fact extraction, and materialized core indexes.
+- `resources/stdlib.rulepack.json`: bundled rule-pack artifact.
+- `Runtime`: loads default rule packs and carries derived indexes alongside graph state.
+- `assessment` and related semantic services can consume Datalog facts and rule evaluation.
+
+The remaining work is not "introduce Datalog" from scratch. It is to harden this layer as a bounded runtime service with stable rule-pack identity, cache invalidation, explanations, and benchmark-backed cost controls.
 
 ## Design Boundary
 
@@ -239,22 +252,9 @@ materialize derived indexes
 
 ## Semantic Artifact Keys
 
-Semantic artifact keys should include rule-related inputs so derived reasoning remains reproducible.
+Derived reasoning artifacts should use [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md).
 
-Add or retain:
-
-```text
-compiler_version_or_digest
-kir_schema_version
-stdlib_digest
-metamodel_rulepack_digest
-core_rulepack_digest
-validation_policy_digest
-dependency_package_digests
-mapping_rules_digest
-```
-
-This matches the existing server plan principle that semantic artifacts must vary when the compiler, stdlib, dependency set, or mapping files change.
+Datalog adds rule-related inputs to the base compile key: core rule-pack digest, metamodel rule-pack digest, optional validation/profile rule-pack digests, and any view or policy packs that participate in the derived result.
 
 ## Cost Controls
 
@@ -278,17 +278,16 @@ Required controls:
 
 The first rule packs should be small enough to benchmark against the existing compile performance data.
 
-## Initial Spike
+## Remaining Work
 
-The first implementation should be deliberately narrow.
+Treat the current implementation as a narrow spike until these items are closed.
 
-Scope:
+Scope to harden:
 
-- add a rule-pack artifact format
-- extend Pilot stdlib import to emit `resources/stdlib.rulepack.json`
-- extract facts from `Graph`
-- implement or wrap a minimal Datalog evaluation path
-- materialize:
+- keep the rule-pack artifact format stable enough for cache keys
+- keep Pilot stdlib import emitting `resources/stdlib.rulepack.json`
+- benchmark fact extraction and rule evaluation against representative workspaces
+- materialize and verify:
   - specialization closure
   - ownership closure
   - inherited features
@@ -298,7 +297,7 @@ Scope:
 
 Success criteria:
 
-- no project compile rule generation
+- no project compile rule generation on the hot path
 - rule output is deterministic
 - derived facts can explain their source facts and rule id
 - warm unchanged compile remains cache-friendly
@@ -317,7 +316,6 @@ Success criteria:
 
 ## Recommended Direction
 
-Adopt Datalog as an optional derived reasoning layer first.
+Keep Datalog as an optional derived reasoning layer first.
 
 The implementation should prove value in traceability, inherited semantics, validation, and proposal impact before expanding into runtime-defined views or project policy packs.
-

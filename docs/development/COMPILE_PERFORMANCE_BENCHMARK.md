@@ -1,5 +1,7 @@
 # Compile Performance Benchmark
 
+Status: benchmark snapshot. Refresh the date and command context when adding new measurements.
+
 Date: 2026-04-29
 
 Branch: `codex/performance-improv`

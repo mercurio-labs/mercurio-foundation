@@ -1,5 +1,7 @@
 # L2 Text Parser Plan
 
+Status: historical baseline. Prefer [Frontend To KIR Theory Of Operation](FRONTEND_TO_KIR_THEORY_OF_OPERATION.md) for the current compiler path.
+
 ## Goal
 
 Load user `.sysml` files as L2 models without depending on a Java subprocess at runtime.
@@ -120,7 +122,8 @@ mappings/
     pilot_constructs.seed.json
     kir_emission.seed.json
 docs/
-  L2_PARSER_PLAN.md
+  development/
+    L2_PARSER_PLAN.md
 fixtures/
   l2/
     minimal_vehicle.sysml
@@ -236,7 +239,7 @@ That avoids collisions and gives deterministic ids.
 ### Phase 3
 
 - Integrate `.sysml` loading into the existing server/runtime path
-- Allow `cargo run --bin server -- examples/foo.sysml`
+- Load parsed L2 through the public CLI, reusable library APIs, or a product-hosted backend.
 - Show parsed L2 in the graph UI
 
 ### Phase 4

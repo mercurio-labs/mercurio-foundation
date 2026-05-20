@@ -1,5 +1,7 @@
 # Robust KerML Support Plan
 
+Status: partially implemented plan.
+
 ## Goal
 
 Make `.kerml` a first-class Mercurio input format while preserving the existing architecture:
@@ -23,14 +25,14 @@ Robust KerML support should strengthen the shared foundation that SysML depends 
 
 The repo already has the pieces needed to evolve toward this:
 
-- `DESIGN.md` defines KIR as the semantic source of truth.
-- `docs/L2_PARSER_PLAN.md` defines the Rust-native text frontend approach.
+- `docs/development/KIR_SPEC.md` defines KIR as the semantic source of truth and records the current KIR contract.
+- `docs/development/L2_PARSER_PLAN.md` defines the Rust-native text frontend approach.
 - `mercurio-core/src/frontend/sysml.rs` parses a growing SysML subset.
 - `mercurio-core/src/frontend/ast.rs` contains generic declaration, feature, package, import, alias, and expression nodes.
 - `mercurio-core/src/frontend/resolver.rs` resolves local names, imports, aliases, stdlib references, and expression paths.
 - `mercurio-core/src/frontend/transpile.rs` emits KIR through mapping data.
 - `mappings/l2/` separates construct and KIR emission policy from parser code.
-- `docs/PROJECT_DESCRIPTOR_AND_MOUNT_PLAN.md` already treats KPARs, libraries, baseline libraries, and source providers as separate concerns.
+- `docs/development/PROJECT_DESCRIPTOR_AND_MOUNT_PLAN.md` already treats KPARs, libraries, baseline libraries, and source providers as separate concerns.
 
 The main gap is that the frontend is still organized as a SysML parser that happens to know some KerML-shaped concepts. Robust `.kerml` support requires making the KerML layer explicit and shared.
 

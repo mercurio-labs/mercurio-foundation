@@ -1,5 +1,7 @@
 # Views Architecture
 
+Status: partially implemented architecture.
+
 ## Purpose
 
 Mercurio views are semantic projections over compiled KIR, not independent model artifacts.
@@ -220,6 +222,8 @@ table cell edit
     -> apply / discard / commit
 ```
 
+The shared lifecycle for semantic view edits, draft overlays, proposals, and PR bindings is documented in [Proposal And Draft Overlay Lifecycle](PROPOSAL_DRAFT_LIFECYCLE.md).
+
 ## Draft And Proposal Support
 
 Every view API should eventually accept an explicit semantic context:
@@ -239,6 +243,8 @@ This enables:
 - compare before/after projections
 - reason over cumulative edits
 - validate table and diagram changes against the same overlay model
+
+View-result caching should use the shared key model in [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md), with the view spec digest and semantic context added to the base artifact key.
 
 ## API Direction
 

@@ -1,5 +1,7 @@
 # Frontend To KIR Theory Of Operation
 
+Status: current architecture and implementation guide.
+
 ## Purpose
 
 This document explains how Mercurio turns textual SysML/KerML source into KIR, and how the SysML/KerML metamodel participates in that flow.

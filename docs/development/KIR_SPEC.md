@@ -1,5 +1,7 @@
 # KIR Specification
 
+Status: canonical implementation contract.
+
 ## Purpose
 
 KIR is the KerML Intermediate Representation used by Mercurio as the canonical semantic JSON form.
@@ -317,3 +319,5 @@ The current implementation allows flexible JSON properties. The next specificati
 - recursive or typed reference fields, if needed
 - document-level schema/version metadata
 - validation rules for precompiled KIR artifacts
+
+The staged schema plan is tracked in [KIR Schema Roadmap](KIR_SCHEMA_ROADMAP.md).

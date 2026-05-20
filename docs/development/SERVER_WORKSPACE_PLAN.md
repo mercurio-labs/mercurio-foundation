@@ -1,5 +1,7 @@
 # Server Workspace Plan
 
+Status: active strategic architecture plan.
+
 ## Goal
 
 Define the Mercurio server as a semantic reasoning layer over source authorities.
@@ -133,17 +135,7 @@ Core services:
 
 ## Semantic Artifact Cache
 
-Git commits are immutable, so they are good cache anchors. A cache key should include more than the commit id:
-
-```text
-repository_id
-commit_sha
-compiler_version_or_digest
-kir_schema_version
-stdlib_digest
-dependency_package_digests
-mapping_rules_digest
-```
+Git commits are immutable, so they are good cache anchors, but a cache key must include more than the commit id. Use [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md) as the shared key contract for compile artifacts, derived reasoning artifacts, view artifacts, verification results, and package provenance.
 
 The cached value can include:
 
@@ -220,6 +212,8 @@ Proposal actions:
 - abandon
 
 Creating an external PR requires a provider integration. It may use a server-owned app credential, a user-delegated credential, or both depending on policy.
+
+The shared draft/proposal lifecycle is documented in [Proposal And Draft Overlay Lifecycle](PROPOSAL_DRAFT_LIFECYCLE.md).
 
 ## Provider Credentials
 

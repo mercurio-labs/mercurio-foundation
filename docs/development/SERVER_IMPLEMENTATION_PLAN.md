@@ -1,5 +1,7 @@
 # Server Implementation Plan
 
+Status: active implementation plan with product-repository boundary.
+
 Historical note: Mercurio Core is now library-only. The privileged HTTP/console API
 implementation lives in `mercurio-product/mercurio-console-api`. Keep reusable
 semantic and packaging logic in `mercurio-core`; keep deployment and HTTP route
@@ -91,19 +93,9 @@ Repository mirrors are caches of external Git state. They are not client workspa
 
 ## Semantic Artifact Keys
 
-A semantic artifact key should include:
+Use [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md) as the shared cache and evidence key contract.
 
-```text
-repository_id
-commit_sha
-compiler_version_or_digest
-kir_schema_version
-stdlib_digest
-dependency_package_digests
-mapping_rules_digest
-```
-
-The same commit may compile differently under a different compiler, stdlib, dependency set, or mapping file. The cache key must reflect that.
+The same commit may compile differently under a different compiler, stdlib, dependency set, mapping file, rule pack, validation policy, or proposal overlay. The cache key must reflect that.
 
 ## Core Services
 
@@ -167,6 +159,8 @@ Responsibilities:
 - compute proposal semantic diffs
 - export patches
 - submit external PRs through provider integration
+
+The proposal state model and PR binding lifecycle are documented in [Proposal And Draft Overlay Lifecycle](PROPOSAL_DRAFT_LIFECYCLE.md).
 
 ### Package Registry
 

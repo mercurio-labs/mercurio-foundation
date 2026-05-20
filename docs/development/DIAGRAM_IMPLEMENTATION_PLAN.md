@@ -1,5 +1,7 @@
 # Diagram Implementation Plan
 
+Status: partially implemented feature plan. Reconcile terminology and context handling with [Views Architecture](VIEWS_ARCHITECTURE.md) as diagram APIs mature.
+
 ## Goal
 
 Add a well-defined diagram system that supports:
@@ -27,6 +29,8 @@ Diagrams should render against an explicit semantic artifact:
 - future Mercurio-hosted workspace artifact
 
 The diagram system should not care which source authority produced the artifact.
+
+Diagram context should use the same semantic context and cache-key model as views. See [Views Architecture](VIEWS_ARCHITECTURE.md), [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md), and [Proposal And Draft Overlay Lifecycle](PROPOSAL_DRAFT_LIFECYCLE.md).
 
 ## Design Principles
 
@@ -141,7 +145,7 @@ Use structurally similar Rust structs in `mercurio-core`, with serde defaults fo
 
 ## Backend API
 
-Add these API endpoints to `mercurio-core/src/api.rs`:
+Expose these API endpoints from the product HTTP layer, backed by reusable DTOs and rendering functions in `mercurio-core`:
 
 - `GET /api/diagrams/kinds`
 - `POST /api/diagrams/render`
@@ -195,7 +199,7 @@ Add these API endpoints to `mercurio-core/src/api.rs`:
 
 ## Backend Implementation
 
-Add a new diagram module rather than growing `api.rs` directly:
+Add or keep reusable diagram code in core rather than putting diagram semantics in product route handlers:
 
 - `mercurio-core/src/diagrams.rs`
 - `mercurio-core/src/diagrams/metamodel_specialization.rs` if the module grows

@@ -1,5 +1,7 @@
 # Windows Installer Plan
 
+Status: active distribution plan.
+
 ## Goal
 
 Provide a Windows installation path that makes Mercurio usable from PowerShell, Python, VS Code, notebooks, and future desktop tooling without requiring users to manually copy binaries or configure environment variables.

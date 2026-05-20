@@ -1,5 +1,7 @@
 # Project Descriptor And Library Provider Plan
 
+Status: partially implemented architecture and remaining work.
+
 ## Goal
 
 Introduce a root-level project descriptor that defines:
