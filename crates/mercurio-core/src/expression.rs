@@ -189,7 +189,7 @@ impl ExpressionIr {
                 right.validate_runtime_supported()
             }
             Self::Call { function, args } => {
-                if !matches!(function.as_str(), "count" | "sum") {
+                if !matches!(function.as_str(), "count" | "sum" | "min" | "max" | "avg") {
                     return Err(ExpressionValidationError::UnsupportedFunction(
                         function.clone(),
                     ));
@@ -328,32 +328,10 @@ impl ExpressionIr {
 
                 match function.as_str() {
                     "count" => Ok(Value::Number(Number::from(values.len() as u64))),
-                    "sum" => {
-                        let mut total = 0.0_f64;
-                        for value in values {
-                            match value {
-                                Value::Number(number) => {
-                                    total += number.as_f64().ok_or_else(|| {
-                                        ExpressionEvaluationError::UnsupportedAggregation {
-                                            expression: format!("{self:?}"),
-                                        }
-                                    })?;
-                                }
-                                _ => {
-                                    return Err(ExpressionEvaluationError::NonNumericValue {
-                                        owner: context.owner_id().to_string(),
-                                        feature: format!("{self:?}"),
-                                    });
-                                }
-                            }
-                        }
-                        let number = Number::from_f64(total).ok_or_else(|| {
-                            ExpressionEvaluationError::UnsupportedAggregation {
-                                expression: format!("{self:?}"),
-                            }
-                        })?;
-                        Ok(Value::Number(number))
-                    }
+                    "sum" => number_from_f64(sum_numbers(values, context.owner_id(), self)?, self),
+                    "min" => number_from_f64(min_number(values, context.owner_id(), self)?, self),
+                    "max" => number_from_f64(max_number(values, context.owner_id(), self)?, self),
+                    "avg" => number_from_f64(avg_numbers(values, context.owner_id(), self)?, self),
                     _ => Err(ExpressionEvaluationError::UnsupportedFunction {
                         function: function.clone(),
                         expression: format!("{self:?}"),
@@ -510,6 +488,93 @@ fn evaluate_binary_expression(
         BinaryExpressionOp::And => boolean_binary(left, right, expression, |a, b| a && b),
         BinaryExpressionOp::Or => boolean_binary(left, right, expression, |a, b| a || b),
     }
+}
+
+fn sum_numbers(
+    values: Vec<Value>,
+    owner_id: &str,
+    expression: &ExpressionIr,
+) -> Result<f64, ExpressionEvaluationError> {
+    values.into_iter().try_fold(0.0_f64, |total, value| {
+        Ok(total + aggregation_value_as_f64(value, owner_id, expression)?)
+    })
+}
+
+fn min_number(
+    values: Vec<Value>,
+    owner_id: &str,
+    expression: &ExpressionIr,
+) -> Result<f64, ExpressionEvaluationError> {
+    let mut numbers = values
+        .into_iter()
+        .map(|value| aggregation_value_as_f64(value, owner_id, expression));
+    let Some(first) = numbers.next() else {
+        return Err(ExpressionEvaluationError::UnsupportedAggregation {
+            expression: format!("{expression:?}"),
+        });
+    };
+    numbers.try_fold(first?, |minimum, value| Ok(minimum.min(value?)))
+}
+
+fn max_number(
+    values: Vec<Value>,
+    owner_id: &str,
+    expression: &ExpressionIr,
+) -> Result<f64, ExpressionEvaluationError> {
+    let mut numbers = values
+        .into_iter()
+        .map(|value| aggregation_value_as_f64(value, owner_id, expression));
+    let Some(first) = numbers.next() else {
+        return Err(ExpressionEvaluationError::UnsupportedAggregation {
+            expression: format!("{expression:?}"),
+        });
+    };
+    numbers.try_fold(first?, |maximum, value| Ok(maximum.max(value?)))
+}
+
+fn avg_numbers(
+    values: Vec<Value>,
+    owner_id: &str,
+    expression: &ExpressionIr,
+) -> Result<f64, ExpressionEvaluationError> {
+    if values.is_empty() {
+        return Err(ExpressionEvaluationError::UnsupportedAggregation {
+            expression: format!("{expression:?}"),
+        });
+    }
+    let len = values.len() as f64;
+    Ok(sum_numbers(values, owner_id, expression)? / len)
+}
+
+fn aggregation_value_as_f64(
+    value: Value,
+    owner_id: &str,
+    expression: &ExpressionIr,
+) -> Result<f64, ExpressionEvaluationError> {
+    match value {
+        Value::Number(number) => {
+            number
+                .as_f64()
+                .ok_or_else(|| ExpressionEvaluationError::UnsupportedAggregation {
+                    expression: format!("{expression:?}"),
+                })
+        }
+        _ => Err(ExpressionEvaluationError::NonNumericValue {
+            owner: owner_id.to_string(),
+            feature: format!("{expression:?}"),
+        }),
+    }
+}
+
+fn number_from_f64(
+    value: f64,
+    expression: &ExpressionIr,
+) -> Result<Value, ExpressionEvaluationError> {
+    Number::from_f64(value).map(Value::Number).ok_or_else(|| {
+        ExpressionEvaluationError::UnsupportedAggregation {
+            expression: format!("{expression:?}"),
+        }
+    })
 }
 
 fn numeric_binary(
@@ -748,16 +813,49 @@ mod tests {
     }
 
     #[test]
+    fn evaluates_numeric_aggregate_functions() {
+        let mut context = TestEvaluationContext {
+            owner_id: "assembly.Vehicle".to_string(),
+            paths: [(
+                vec!["parts".to_string(), "mass".to_string()],
+                vec![json!(4.0), json!(6.0), json!(11.0)],
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let aggregate_arg = ExpressionIr::Path {
+            root: ExpressionPathRoot::SelfRef,
+            segments: vec![
+                ExpressionPathSegment::Name("parts".to_string()),
+                ExpressionPathSegment::Name("mass".to_string()),
+            ],
+        };
+
+        for (function, expected) in [
+            ("sum", json!(21.0)),
+            ("min", json!(4.0)),
+            ("max", json!(11.0)),
+            ("avg", json!(7.0)),
+        ] {
+            let expression = ExpressionIr::Call {
+                function: function.to_string(),
+                args: vec![aggregate_arg.clone()],
+            };
+            assert_eq!(expression.evaluate(&mut context).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn validates_runtime_supported_function_policy() {
         let expression = ExpressionIr::Call {
-            function: "avg".to_string(),
+            function: "median".to_string(),
             args: vec![ExpressionIr::Literal { value: json!(1) }],
         };
 
         let error = expression.validate_runtime_supported().unwrap_err();
         assert_eq!(
             error.to_string(),
-            "unsupported expression_ir function `avg`"
+            "unsupported expression_ir function `median`"
         );
     }
 

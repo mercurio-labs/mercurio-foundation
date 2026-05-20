@@ -295,7 +295,7 @@ Supported expression kinds:
   }
   ```
 
-- `call`: pure function call with ordered `args`. The runtime currently supports `count` and `sum` for one argument. Other functions may be carried for inspection, but runtime consumers should reject unsupported functions explicitly.
+- `call`: pure function call with ordered `args`. The runtime currently supports one-argument `count`, `sum`, `min`, `max`, and `avg`. Other functions may be carried for inspection, but runtime consumers should reject unsupported functions explicitly.
 
   ```json
   {

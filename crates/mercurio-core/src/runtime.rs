@@ -513,6 +513,28 @@ mod tests {
         Runtime::from_document(document).unwrap()
     }
 
+    fn aggregate_feature(id: &str, function: &str) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "KerML::Core::Feature".to_string(),
+            layer: 2,
+            properties: [(
+                "expression_ir".to_string(),
+                json!({
+                    "kind": "call",
+                    "function": function,
+                    "args": [{
+                        "kind": "path",
+                        "root": "self",
+                        "segments": ["parts", "mass"]
+                    }]
+                }),
+            )]
+            .into_iter()
+            .collect(),
+        }
+    }
+
     #[test]
     fn finds_transitive_subtypes() {
         let runtime = sample_runtime();
@@ -641,6 +663,87 @@ mod tests {
     }
 
     #[test]
+    fn evaluates_structured_numeric_aggregate_functions() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![
+                KirElement {
+                    id: "part.engine_left".to_string(),
+                    kind: "type.Engine".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "part.engine_center".to_string(),
+                    kind: "type.Engine".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "part.engine_right".to_string(),
+                    kind: "type.Engine".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "assembly.VehicleInstance".to_string(),
+                    kind: "type.Vehicle".to_string(),
+                    layer: 2,
+                    properties: [(
+                        "parts".to_string(),
+                        json!([
+                            "part.engine_left",
+                            "part.engine_center",
+                            "part.engine_right"
+                        ]),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+                aggregate_feature("df.minMass", "min"),
+                aggregate_feature("df.maxMass", "max"),
+                aggregate_feature("df.avgMass", "avg"),
+            ],
+        };
+        let runtime = Runtime::from_document(document).unwrap();
+        let mut context = ExecutionContext::default();
+        context.values.insert(
+            ("part.engine_left".to_string(), "mass".to_string()),
+            json!(100.0),
+        );
+        context.values.insert(
+            ("part.engine_center".to_string(), "mass".to_string()),
+            json!(125.0),
+        );
+        context.values.insert(
+            ("part.engine_right".to_string(), "mass".to_string()),
+            json!(150.0),
+        );
+
+        assert_eq!(
+            runtime
+                .evaluate("df.minMass", "assembly.VehicleInstance", &context)
+                .unwrap()
+                .value,
+            Value::from(100.0)
+        );
+        assert_eq!(
+            runtime
+                .evaluate("df.maxMass", "assembly.VehicleInstance", &context)
+                .unwrap()
+                .value,
+            Value::from(150.0)
+        );
+        assert_eq!(
+            runtime
+                .evaluate("df.avgMass", "assembly.VehicleInstance", &context)
+                .unwrap()
+                .value,
+            Value::from(125.0)
+        );
+    }
+
+    #[test]
     fn evaluates_structured_tuple_expression_ir() {
         let document = KirDocument {
             metadata: Default::default(),
@@ -742,7 +845,7 @@ mod tests {
                         "expression_ir".to_string(),
                         json!({
                             "kind": "call",
-                            "function": "avg",
+                            "function": "median",
                             "args": [{"kind": "literal", "value": 1}]
                         }),
                     )]
@@ -763,7 +866,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("unsupported expression_ir function `avg`")
+                .contains("unsupported expression_ir function `median`")
         );
     }
 
