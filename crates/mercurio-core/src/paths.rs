@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 
 const DEFAULT_STDLIB_RELATIVE_PATH: &str = "resources/stdlib.full.kir.json";
 const DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH: &str = "resources/stdlib.rulepack.json";
+const DEFAULT_LANGUAGE_PROFILE_ROOT_RELATIVE_PATH: &str = "resources/language-profiles";
 const REPO_SENTINELS: [&str; 3] = [
     "resources/stdlib.full.kir.json",
     "mappings/l2/pilot_constructs.seed.json",
@@ -23,6 +24,12 @@ pub fn default_stdlib_rulepack_path() -> PathBuf {
     }
 
     repo_path(DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH)
+}
+
+pub fn default_language_profile_path(profile_id: &str) -> PathBuf {
+    repo_path(DEFAULT_LANGUAGE_PROFILE_ROOT_RELATIVE_PATH)
+        .join(profile_id)
+        .join("profile.json")
 }
 
 pub fn repo_path(relative: &str) -> PathBuf {

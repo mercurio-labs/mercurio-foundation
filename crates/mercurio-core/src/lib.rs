@@ -10,6 +10,7 @@ pub mod frontend;
 pub mod goal;
 pub mod graph;
 pub mod ir;
+pub mod language;
 pub mod library;
 pub mod logging;
 pub mod metamodel;
@@ -91,6 +92,11 @@ pub use graph::{Edge, Graph, GraphError, NodeId};
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
     KirFieldSpec, load_model_stack,
+};
+pub use language::{
+    CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError, MetamodelConceptRegistry,
+    SemanticConcept, SourceLanguage as ProfileSourceLanguage, default_language_profile,
+    default_metamodel_registry, load_language_profile,
 };
 pub use library::{
     BaselineLibraryConfig, KparPackageBuild, KparPackageSource, LibraryCacheMetadata,
