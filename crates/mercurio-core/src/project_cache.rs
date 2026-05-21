@@ -238,7 +238,14 @@ impl PersistentProjectCache {
     ) -> Result<(), KirError> {
         let final_dir = self.artifact_dir(artifact_key);
         if final_dir.is_dir() {
-            return Ok(());
+            return self.write_compile_artifact_files(
+                &final_dir,
+                artifact_key,
+                key,
+                files,
+                document,
+                runtime_artifact,
+            );
         }
 
         let tmp_dir = self.root.join("tmp").join(format!(
@@ -248,38 +255,14 @@ impl PersistentProjectCache {
         ));
         std::fs::create_dir_all(&tmp_dir)?;
 
-        let manifest = ProjectCompileCacheManifest {
-            cache_schema_version: CACHE_SCHEMA_VERSION,
-            artifact_family: ARTIFACT_FAMILY_COMPILE.to_string(),
-            artifact_key: artifact_key.to_string(),
-            key: key.clone(),
-            files: files.to_vec(),
-            outputs: ProjectCompileCacheOutputs {
-                kir: DOCUMENT_FILE_NAME.to_string(),
-                runtime_artifact: RUNTIME_ARTIFACT_FILE_NAME.to_string(),
-            },
-        };
-        document.write_pretty_to_path(&tmp_dir.join(DOCUMENT_FILE_NAME))?;
-        std::fs::write(
-            tmp_dir.join(RUNTIME_ARTIFACT_FILE_NAME),
-            serde_json::to_string_pretty(runtime_artifact)?,
+        self.write_compile_artifact_files(
+            &tmp_dir,
+            artifact_key,
+            key,
+            files,
+            document,
+            runtime_artifact,
         )?;
-        std::fs::write(
-            tmp_dir.join(MANIFEST_FILE_NAME),
-            serde_json::to_string_pretty(&manifest)?,
-        )?;
-
-        let roundtrip_manifest: ProjectCompileCacheManifest =
-            serde_json::from_str(&std::fs::read_to_string(tmp_dir.join(MANIFEST_FILE_NAME))?)?;
-        if roundtrip_manifest != manifest {
-            return Err(KirError::Sysml(
-                "persistent cache manifest failed roundtrip validation".to_string(),
-            ));
-        }
-        KirDocument::from_path(&tmp_dir.join(DOCUMENT_FILE_NAME))?;
-        let _: RuntimeArtifact = serde_json::from_str(&std::fs::read_to_string(
-            tmp_dir.join(RUNTIME_ARTIFACT_FILE_NAME),
-        )?)?;
 
         if let Some(parent) = final_dir.parent() {
             std::fs::create_dir_all(parent)?;
@@ -296,6 +279,51 @@ impl PersistentProjectCache {
             }
             Err(err) => Err(KirError::Io(err)),
         }
+    }
+
+    fn write_compile_artifact_files(
+        &self,
+        dir: &Path,
+        artifact_key: &str,
+        key: &ProjectCompileArtifactKey,
+        files: &[ProjectSourceFileFingerprint],
+        document: &KirDocument,
+        runtime_artifact: &RuntimeArtifact,
+    ) -> Result<(), KirError> {
+        std::fs::create_dir_all(dir)?;
+        let manifest = ProjectCompileCacheManifest {
+            cache_schema_version: CACHE_SCHEMA_VERSION,
+            artifact_family: ARTIFACT_FAMILY_COMPILE.to_string(),
+            artifact_key: artifact_key.to_string(),
+            key: key.clone(),
+            files: files.to_vec(),
+            outputs: ProjectCompileCacheOutputs {
+                kir: DOCUMENT_FILE_NAME.to_string(),
+                runtime_artifact: RUNTIME_ARTIFACT_FILE_NAME.to_string(),
+            },
+        };
+        document.write_pretty_to_path(&dir.join(DOCUMENT_FILE_NAME))?;
+        std::fs::write(
+            dir.join(RUNTIME_ARTIFACT_FILE_NAME),
+            serde_json::to_string_pretty(runtime_artifact)?,
+        )?;
+        std::fs::write(
+            dir.join(MANIFEST_FILE_NAME),
+            serde_json::to_string_pretty(&manifest)?,
+        )?;
+
+        let roundtrip_manifest: ProjectCompileCacheManifest =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(MANIFEST_FILE_NAME))?)?;
+        if roundtrip_manifest != manifest {
+            return Err(KirError::Sysml(
+                "persistent cache manifest failed roundtrip validation".to_string(),
+            ));
+        }
+        KirDocument::from_path(&dir.join(DOCUMENT_FILE_NAME))?;
+        let _: RuntimeArtifact = serde_json::from_str(&std::fs::read_to_string(
+            dir.join(RUNTIME_ARTIFACT_FILE_NAME),
+        )?)?;
+        Ok(())
     }
 }
 
