@@ -60,13 +60,13 @@ pub struct Evaluation {
     explanations: BTreeMap<Fact, Explanation>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Explanation {
     pub rule_id: String,
     pub source_facts: Vec<Fact>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DerivedIndexes {
     pub subtypes: BTreeSet<(String, String)>,
     pub ownership: BTreeSet<(String, String)>,
@@ -74,6 +74,7 @@ pub struct DerivedIndexes {
     pub requirements: BTreeSet<String>,
     pub satisfied_by: BTreeMap<String, BTreeSet<String>>,
     pub verified_by: BTreeMap<String, BTreeSet<String>>,
+    #[serde(default, skip)]
     explanations: BTreeMap<Fact, Explanation>,
 }
 

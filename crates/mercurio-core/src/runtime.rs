@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 
 use crate::datalog::{
@@ -9,13 +10,19 @@ use crate::datalog::{
 use crate::expression::{
     ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionPathSegment,
 };
-use crate::graph::{Graph, GraphError};
+use crate::graph::{Graph, GraphArtifact, GraphError};
 use crate::ir::KirDocument;
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
     graph: Graph,
     derived: DerivedIndexes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeArtifact {
+    pub graph: GraphArtifact,
+    pub derived: DerivedIndexes,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -109,6 +116,27 @@ impl Runtime {
 
     pub fn from_document(document: KirDocument) -> Result<Self, RuntimeError> {
         Self::from_graph(Graph::from_document(document)?)
+    }
+
+    pub fn from_artifact(artifact: RuntimeArtifact) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            graph: Graph::from_artifact(artifact.graph)?,
+            derived: artifact.derived,
+        })
+    }
+
+    pub fn into_artifact(self) -> RuntimeArtifact {
+        RuntimeArtifact {
+            graph: self.graph.artifact(),
+            derived: self.derived,
+        }
+    }
+
+    pub fn artifact(&self) -> RuntimeArtifact {
+        RuntimeArtifact {
+            graph: self.graph.artifact(),
+            derived: self.derived.clone(),
+        }
     }
 
     pub fn graph(&self) -> &Graph {

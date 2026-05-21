@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ir::{KirDocument, KirElement, KirFieldRegistry};
@@ -16,7 +17,7 @@ pub struct Graph {
     incoming: HashMap<NodeId, Vec<Edge>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Element {
     pub id: NodeId,
     pub element_id: String,
@@ -25,11 +26,17 @@ pub struct Element {
     pub properties: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edge {
     pub source: NodeId,
     pub target: NodeId,
     pub relation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphArtifact {
+    pub elements: Vec<Element>,
+    pub edges: Vec<Edge>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +44,7 @@ pub enum GraphError {
     DuplicateId(String),
     UnknownElement(String),
     NodeOverflow,
+    InvalidArtifact(String),
 }
 
 impl fmt::Display for GraphError {
@@ -45,6 +53,7 @@ impl fmt::Display for GraphError {
             Self::DuplicateId(id) => write!(f, "duplicate element id: {id}"),
             Self::UnknownElement(id) => write!(f, "unknown element id: {id}"),
             Self::NodeOverflow => write!(f, "too many elements for u32 node ids"),
+            Self::InvalidArtifact(message) => write!(f, "invalid graph artifact: {message}"),
         }
     }
 }
@@ -75,6 +84,64 @@ impl Graph {
         };
         graph.build_edges()?;
         Ok(graph)
+    }
+
+    pub fn from_artifact(artifact: GraphArtifact) -> Result<Self, GraphError> {
+        let mut by_element_id = HashMap::new();
+        let mut elements = Vec::with_capacity(artifact.elements.len());
+
+        for raw in artifact.elements {
+            if by_element_id.contains_key(&raw.element_id) {
+                return Err(GraphError::DuplicateId(raw.element_id));
+            }
+
+            let id = NodeId::try_from(elements.len()).map_err(|_| GraphError::NodeOverflow)?;
+            by_element_id.insert(raw.element_id.clone(), id);
+            elements.push(Element {
+                id,
+                element_id: raw.element_id,
+                kind: raw.kind,
+                layer: raw.layer,
+                properties: raw.properties,
+            });
+        }
+
+        let mut graph = Self {
+            elements,
+            by_element_id,
+            edges: Vec::new(),
+            outgoing: HashMap::new(),
+            incoming: HashMap::new(),
+        };
+
+        for edge in artifact.edges {
+            if graph.element(edge.source).is_none() || graph.element(edge.target).is_none() {
+                return Err(GraphError::InvalidArtifact(format!(
+                    "edge references missing node {} -> {}",
+                    edge.source, edge.target
+                )));
+            }
+            graph
+                .outgoing
+                .entry(edge.source)
+                .or_default()
+                .push(edge.clone());
+            graph
+                .incoming
+                .entry(edge.target)
+                .or_default()
+                .push(edge.clone());
+            graph.edges.push(edge);
+        }
+
+        Ok(graph)
+    }
+
+    pub fn artifact(&self) -> GraphArtifact {
+        GraphArtifact {
+            elements: self.elements.clone(),
+            edges: self.edges.clone(),
+        }
     }
 
     fn build_edges(&mut self) -> Result<(), GraphError> {

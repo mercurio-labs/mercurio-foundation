@@ -18,6 +18,7 @@ pub mod mutation;
 pub mod outline;
 pub mod paths;
 pub mod project;
+pub mod project_cache;
 pub mod proposal;
 pub mod query;
 pub mod runtime;
@@ -132,6 +133,11 @@ pub use project::{
     ResolvedProjectContext, ResolvedProjectLibrary, discover_project_descriptor_path,
     resolve_project_context,
 };
+pub use project_cache::{
+    PersistentCacheStatus, PersistentCompileResult, PersistentProjectCache,
+    ProjectCompileArtifactKey, ProjectCompileCacheManifest, ProjectCompileCacheOutputs,
+    ProjectSourceFileFingerprint, project_compile_artifact_key, source_file_fingerprints,
+};
 pub use proposal::{
     Proposal, ProposalStatus, PullRequestBinding, PullRequestState, SemanticImpact,
     SemanticImpactStatus, SemanticImpactSummary,
@@ -140,7 +146,7 @@ pub use query::{
     FilterExpr, OrderBy, Projection, Query, QueryEngine, QueryError, QueryResultSet, QuerySource,
     SortDirection, TermPattern, TriplePattern, parse_query,
 };
-pub use runtime::{ExecutionContext, QueryResult, Runtime, RuntimeError};
+pub use runtime::{ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError};
 pub use semantic_compare::{
     SemanticCompareError, SemanticComparisonReport, SemanticElementMismatch, SemanticSnapshot,
     SemanticSnapshotAttribute, SemanticSnapshotElement, SemanticSourceSpan, SemanticValueMismatch,
