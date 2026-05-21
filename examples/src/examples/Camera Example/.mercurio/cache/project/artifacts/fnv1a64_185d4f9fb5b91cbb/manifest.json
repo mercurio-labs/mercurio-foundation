@@ -1,0 +1,38 @@
+{
+  "cache_schema_version": 1,
+  "artifact_family": "compile",
+  "artifact_key": "fnv1a64:185d4f9fb5b91cbb",
+  "key": {
+    "source_authority": "local_files",
+    "source_tree_digest": "fnv1a64:678f8c51d29ea693",
+    "compiler_digest": "fnv1a64:5feeb4407b82b976",
+    "kir_schema_version": "0.2",
+    "library_context_digest": "fnv1a64:498dae18a3bda3c9",
+    "mapping_rules_digest": "fnv1a64:04ca714431d520ec"
+  },
+  "files": [
+    {
+      "path": "Camera.sysml",
+      "size_bytes": 258,
+      "content_digest": "fnv1a64:4cb7dacc2a4f1a54"
+    },
+    {
+      "path": "PictureTaking.sysml",
+      "size_bytes": 287,
+      "content_digest": "fnv1a64:d87285a778d25a52"
+    },
+    {
+      "path": "new_model.sysml",
+      "size_bytes": 344,
+      "content_digest": "fnv1a64:491dd6b5dadf14a3"
+    },
+    {
+      "path": "requirements.sysml",
+      "size_bytes": 394,
+      "content_digest": "fnv1a64:8a6db21aa075b5d6"
+    }
+  ],
+  "outputs": {
+    "kir": "document.kir.json"
+  }
+}

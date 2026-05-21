@@ -92,6 +92,9 @@ The package should be content-addressable and reproducible. The manifest declare
     "views/contract_table.view.json",
     "views/contract_graph.view.json"
   ],
+  "uiContributions": [
+    "ui/contract-ui.json"
+  ],
   "services": [
     {
       "id": "contract.compose",
@@ -411,6 +414,91 @@ contract_guarantee(Component, Constraint)
 
 Views declare renderer-neutral projections over KIR, graph facts, derived indexes, and plugin service outputs. Saved views describe intent and presentation state; they are not source authority.
 
+### UI Contributions
+
+Plugins may contribute UI affordances, but the host UI should render them. A plugin should not ship arbitrary desktop or web UI code as its default integration model.
+
+Supported contribution types should include:
+
+- commands
+- context menu actions
+- explorer or inspector panels
+- table, graph, matrix, tree, and form views
+- verification result renderers
+- diagnostic render hints
+- icons and labels from declared assets
+
+Example contribution file:
+
+```json
+{
+  "commands": [
+    {
+      "id": "contract.compose",
+      "label": "Compose Contract",
+      "appliesTo": {
+        "metatype": "SysML::PartUsage",
+        "requiresFact": "contract_component"
+      },
+      "service": "contract.compose",
+      "inputSchema": "schemas/compose.schema.json"
+    }
+  ],
+  "panels": [
+    {
+      "id": "contract.inspector",
+      "label": "Contract",
+      "slot": "elementInspector",
+      "appliesTo": {
+        "requiresFact": "contract_component"
+      },
+      "view": "contract_table"
+    }
+  ],
+  "views": [
+    {
+      "id": "contract_graph",
+      "label": "Contract Graph",
+      "kind": "graph",
+      "service": "contract.graph"
+    },
+    {
+      "id": "contract_table",
+      "label": "Contracts",
+      "kind": "table",
+      "service": "contract.table"
+    }
+  ]
+}
+```
+
+The desktop or web UI should ask the host which contributions apply to the current project, view, selection, or semantic artifact. The host evaluates project pins, plugin policy, semantic facts, and applicability predicates before returning enabled contributions.
+
+```text
+UI selection
+        |
+        v
+host capability registry
+        |
+        v
+applicable plugin contributions
+        |
+        v
+host-rendered command / panel / view
+        |
+        v
+host-mediated service invocation
+```
+
+UI plugins should follow this boundary:
+
+```text
+Plugin owns capability declarations, schemas, and data services.
+Mercurio UI owns rendering, layout, accessibility, permissions, and source mutation flows.
+```
+
+Arbitrary React components, native desktop widgets, or plugin-owned browser code should be a later trusted-plugin capability, not the default plugin model. If added, they should run in a sandboxed frame or equivalent isolation boundary and communicate through the same host service APIs.
+
 ### Verification Actions
 
 Verification actions bind plugin services into Mercurio verification plans. A plugin-provided action should declare stable action type, expected inputs, resource policy, output evidence shape, and pass/fail status mapping.
@@ -494,4 +582,3 @@ diagnostics + evidence link back to KIR element IDs
 - Should WASM modules use WASI component model interfaces from the start or a simpler JSON function ABI first?
 - How should plugin state migration work for project-specific extension caches?
 - What is the minimum signing model for local development, internal company registries, and public registries?
-

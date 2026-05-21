@@ -228,12 +228,6 @@ fn render_structure_diagram(
     let mut timings = Vec::new();
     let mut warnings = Vec::new();
 
-    let root_start = Instant::now();
-    let root = spec.root.as_deref().ok_or(DiagramError::MissingRoot)?;
-    let root =
-        resolve_root(graph, root).ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?;
-    timings.push(("root", root_start.elapsed()));
-
     let relation_start = Instant::now();
     let relations = if spec.query.relations.is_empty() {
         default_diagram_relations()
@@ -243,7 +237,16 @@ fn render_structure_diagram(
     timings.push(("relations", relation_start.elapsed()));
 
     let traversal_start = Instant::now();
-    let traversal = collect_structure_ids(graph, root.id, &spec.query, &relations);
+    let traversal = if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty())
+    {
+        let root_start = Instant::now();
+        let root = resolve_root(graph, root)
+            .ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?;
+        timings.push(("root", root_start.elapsed()));
+        collect_structure_ids(graph, root.id, &spec.query, &relations)
+    } else {
+        collect_unrooted_structure_ids(graph, &spec.query)
+    };
     timings.push(("traversal", traversal_start.elapsed()));
     warnings.extend(traversal.warnings);
 
@@ -410,6 +413,126 @@ fn collect_structure_ids(
         visible_ids: visited,
         warnings,
     }
+}
+
+fn collect_unrooted_structure_ids(
+    graph: &Graph,
+    query: &DiagramQueryOptionsDto,
+) -> StructureTraversal {
+    let max_nodes = effective_max_nodes(query);
+    let matching_elements = graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, query))
+        .collect::<Vec<_>>();
+    let mut visible_ids = matching_elements
+        .iter()
+        .copied()
+        .filter(|element| is_top_level_package(graph, element))
+        .take(max_nodes)
+        .map(|element| element.id)
+        .collect::<BTreeSet<_>>();
+    if !visible_ids.is_empty() {
+        collect_owned_descendant_ids(graph, query, &mut visible_ids, max_nodes);
+    }
+    if visible_ids.is_empty() {
+        visible_ids = matching_elements
+            .iter()
+            .copied()
+            .take(max_nodes)
+            .map(|element| element.id)
+            .collect::<BTreeSet<_>>();
+    }
+    let mut warnings = Vec::new();
+    if matching_elements.len() > visible_ids.len() {
+        warnings.push(format!(
+            "Diagram node limit reached; showing first {} matching nodes.",
+            visible_ids.len()
+        ));
+    }
+
+    StructureTraversal {
+        visible_ids,
+        warnings,
+    }
+}
+
+fn collect_owned_descendant_ids(
+    graph: &Graph,
+    query: &DiagramQueryOptionsDto,
+    visible_ids: &mut BTreeSet<NodeId>,
+    max_nodes: usize,
+) {
+    let max_depth = query.depth.min(DEFAULT_MAX_DEPTH);
+    let ownership_relations = ["owner", "ownedElement", "ownedMember"];
+    let mut queue = visible_ids
+        .iter()
+        .copied()
+        .map(|node_id| (node_id, 0usize))
+        .collect::<VecDeque<_>>();
+
+    while let Some((node_id, depth)) = queue.pop_front() {
+        if visible_ids.len() >= max_nodes || depth >= max_depth {
+            continue;
+        }
+
+        for relation in ownership_relations {
+            for edge in graph
+                .incoming(node_id, relation)
+                .take(MAX_RELATION_FANOUT_PER_NODE)
+            {
+                let child_id = edge.source;
+                if visible_ids.len() >= max_nodes {
+                    return;
+                }
+                if graph
+                    .element(child_id)
+                    .is_some_and(|element| include_element(element, query))
+                    && visible_ids.insert(child_id)
+                {
+                    queue.push_back((child_id, depth + 1));
+                }
+            }
+            for edge in graph
+                .outgoing(node_id, relation)
+                .take(MAX_RELATION_FANOUT_PER_NODE)
+            {
+                let child_id = edge.target;
+                if visible_ids.len() >= max_nodes {
+                    return;
+                }
+                if graph
+                    .element(child_id)
+                    .is_some_and(|element| include_element(element, query))
+                    && visible_ids.insert(child_id)
+                {
+                    queue.push_back((child_id, depth + 1));
+                }
+            }
+        }
+    }
+}
+
+fn is_top_level_package(graph: &Graph, element: &Element) -> bool {
+    if !element.kind.to_ascii_lowercase().contains("package") {
+        return false;
+    }
+    owner_ids(element).all(|owner| graph.element_by_element_id(owner).is_none())
+}
+
+fn owner_ids(element: &Element) -> impl Iterator<Item = &str> {
+    element
+        .properties
+        .get("owner")
+        .into_iter()
+        .flat_map(|value| match value {
+            Value::String(owner) => vec![owner.as_str()],
+            Value::Array(values) => values
+                .iter()
+                .filter_map(|entry| entry.as_str())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
 }
 
 fn resolve_root<'a>(graph: &'a Graph, root: &str) -> Option<&'a Element> {

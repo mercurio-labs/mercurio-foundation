@@ -1327,9 +1327,7 @@ impl Parser {
             ));
             force_implicit_name = true;
             Some("AcceptActionUsage".to_string())
-        } else if keyword == "accept"
-            && matches!(self.peek_kind(), TokenKind::Identifier(_))
-        {
+        } else if keyword == "accept" && matches!(self.peek_kind(), TokenKind::Identifier(_)) {
             let payload = self.parse_qualified_name()?;
             synthetic_body_members.push(synthetic_reference_usage(
                 "payload",
@@ -1355,18 +1353,20 @@ impl Parser {
             && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "flow")
         {
             self.expect_identifier_named("flow", "expected `flow` after `succession`")?;
-            let explicit_flow_name =
-                if matches!(self.peek_kind(), TokenKind::Identifier(_))
-                    && matches!(self.next_kind(), Some(TokenKind::Identifier(value)) if value == "from")
-                {
-                    let name = self.expect_identifier("expected succession flow name")?;
-                    self.expect_identifier_named("from", "expected `from` after succession flow name")?;
-                    Some(name)
-                } else {
-                    None
-                };
+            let explicit_flow_name = if matches!(self.peek_kind(), TokenKind::Identifier(_))
+                && matches!(self.next_kind(), Some(TokenKind::Identifier(value)) if value == "from")
+            {
+                let name = self.expect_identifier("expected succession flow name")?;
+                self.expect_identifier_named("from", "expected `from` after succession flow name")?;
+                Some(name)
+            } else {
+                None
+            };
             if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "from") {
-                self.expect_identifier_named("from", "expected `from` before succession flow source")?;
+                self.expect_identifier_named(
+                    "from",
+                    "expected `from` before succession flow source",
+                )?;
             }
             let source = self.parse_qualified_name()?;
             self.expect_identifier_named("to", "expected `to` between succession flow ends")?;
@@ -2660,10 +2660,16 @@ impl Parser {
     }
 
     fn starts_connection_end_reference_arrow(&self, offset: usize) -> bool {
-        match self.tokens.get(self.index + offset).map(|token| &token.kind) {
+        match self
+            .tokens
+            .get(self.index + offset)
+            .map(|token| &token.kind)
+        {
             Some(TokenKind::Specializes) => true,
             Some(TokenKind::ScopeSep) => matches!(
-                self.tokens.get(self.index + offset + 1).map(|token| &token.kind),
+                self.tokens
+                    .get(self.index + offset + 1)
+                    .map(|token| &token.kind),
                 Some(TokenKind::RAngle)
             ),
             _ => false,
@@ -2691,7 +2697,9 @@ impl Parser {
             }
         }
         if !matches!(
-            self.tokens.get(self.index + offset).map(|token| &token.kind),
+            self.tokens
+                .get(self.index + offset)
+                .map(|token| &token.kind),
             Some(TokenKind::Identifier(_))
         ) {
             return false;
@@ -4455,15 +4463,21 @@ mod tests {
 
     #[test]
     fn resolves_send_payload_redefinition_against_send_action() {
-        let module =
-            parse_sysml("package Demo { action a { in s; action snd send { in :>> payload = s; } } }")
-                .unwrap();
+        let module = parse_sysml(
+            "package Demo { action a { in s; action snd send { in :>> payload = s; } } }",
+        )
+        .unwrap();
         let stdlib = fake_stdlib(["Actions::SendAction", "Actions::SendAction::payload"]);
         let mappings = MappingBundle::load().unwrap();
         let resolved = resolve_module(&module, &stdlib, &mappings).unwrap();
 
         let snd = find_resolved_usage(&resolved.usages, "Demo.a")
-            .and_then(|action| action.members.iter().find(|member| member.declared_name == "snd"))
+            .and_then(|action| {
+                action
+                    .members
+                    .iter()
+                    .find(|member| member.declared_name == "snd")
+            })
             .unwrap();
         let payload = snd
             .members

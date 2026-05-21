@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use mercurio_core::{
     AuthoringProject, ContainerSelector, KirDocument, Mutation, QualifiedName, WriteBackMode,
@@ -9,6 +10,8 @@ use mercurio_core::{
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyType;
+
+static DEFAULT_STDLIB_DOCUMENT: OnceLock<Result<KirDocument, String>> = OnceLock::new();
 
 #[pyclass(name = "WriteBackResult")]
 #[derive(Debug, Clone)]
@@ -40,24 +43,38 @@ impl PyWriteBackResult {
 #[pyclass(name = "ModelBuilder")]
 struct PyModelBuilder {
     project: AuthoringProject,
+    validate_each_mutation: bool,
+    pending_changed_files: BTreeSet<String>,
+    pending_changed_declarations: BTreeSet<String>,
 }
 
 #[pymethods]
 impl PyModelBuilder {
     #[new]
-    fn new() -> Self {
+    #[pyo3(signature = (validate_each_mutation=true))]
+    fn new(validate_each_mutation: bool) -> Self {
         Self {
             project: create_empty_model(),
+            validate_each_mutation,
+            pending_changed_files: BTreeSet::new(),
+            pending_changed_declarations: BTreeSet::new(),
         }
     }
 
     #[classmethod]
+    #[pyo3(signature = (files, validate_each_mutation=true))]
     fn from_sysml_files(
         _cls: &Bound<'_, PyType>,
         files: BTreeMap<String, String>,
+        validate_each_mutation: bool,
     ) -> PyResult<Self> {
         let project = load_authoring_project_from_sysml(files).map_err(authoring_error)?;
-        Ok(Self { project })
+        Ok(Self {
+            project,
+            validate_each_mutation,
+            pending_changed_files: BTreeSet::new(),
+            pending_changed_declarations: BTreeSet::new(),
+        })
     }
 
     fn add_package(&mut self, target_file: String, name: String) -> PyResult<PyWriteBackResult> {
@@ -173,6 +190,33 @@ impl PyModelBuilder {
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
+    fn validate(&mut self) -> PyResult<PyWriteBackResult> {
+        let changed_files = if self.pending_changed_files.is_empty() {
+            self.project
+                .files()
+                .map(|(path, _)| path.to_string())
+                .collect::<BTreeSet<_>>()
+        } else {
+            self.pending_changed_files.clone()
+        };
+        let changed_declarations = self
+            .pending_changed_declarations
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let write_back = self
+            .project
+            .write_back_changed_files_and_update(&changed_files)
+            .map_err(authoring_error)?;
+        self.pending_changed_files.clear();
+        self.pending_changed_declarations.clear();
+        Ok(py_write_back_result(
+            write_back,
+            changed_files.into_iter().collect(),
+            changed_declarations,
+        ))
+    }
+
     #[pyo3(signature = (directory, result_name=None))]
     fn write_handoff(&self, directory: PathBuf, result_name: Option<String>) -> PyResult<PathBuf> {
         let rendered = self.rendered_files()?;
@@ -205,7 +249,11 @@ impl PyModelBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("ModelBuilder(files={:?})", self.files())
+        format!(
+            "ModelBuilder(files={:?}, validate_each_mutation={})",
+            self.files(),
+            self.validate_each_mutation
+        )
     }
 }
 
@@ -221,6 +269,13 @@ impl PyModelBuilder {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
+        if !self.validate_each_mutation {
+            self.pending_changed_files
+                .extend(result.changed_files.iter().cloned());
+            self.pending_changed_declarations
+                .extend(result.changed_declarations.iter().cloned());
+            return self.deferred_write_back_result(changed_files, changed_declarations);
+        }
         let write_back = self
             .project
             .write_back_mutation(&result)
@@ -234,17 +289,51 @@ impl PyModelBuilder {
 
     fn compile_document(&self) -> PyResult<KirDocument> {
         let rendered = self.rendered_files()?;
-        let stdlib = KirDocument::from_path(&default_stdlib_path())
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let stdlib = default_stdlib_document()?;
         let mut documents = Vec::new();
         for (path, content) in rendered {
             documents.push(
-                compile_sysml_text(&content, &path, &stdlib)
+                compile_sysml_text(&content, &path, stdlib)
                     .map_err(|err| PyValueError::new_err(err.to_string()))?,
             );
         }
         KirDocument::merge(documents).map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
+
+    fn deferred_write_back_result(
+        &self,
+        changed_files: Vec<String>,
+        changed_declarations: Vec<String>,
+    ) -> PyResult<PyWriteBackResult> {
+        let mut edited_files = BTreeMap::new();
+        for path in &changed_files {
+            edited_files.insert(
+                path.clone(),
+                self.project
+                    .render_new_file(path)
+                    .map_err(authoring_error)?,
+            );
+        }
+        Ok(PyWriteBackResult {
+            edited_files,
+            changed_files,
+            changed_declarations,
+            mode: "deferred".to_string(),
+            validation_ok: true,
+            validation_message: Some(
+                "validation deferred; call validate() to compile and round-trip check".to_string(),
+            ),
+        })
+    }
+}
+
+fn default_stdlib_document() -> PyResult<&'static KirDocument> {
+    DEFAULT_STDLIB_DOCUMENT
+        .get_or_init(|| {
+            KirDocument::from_path(&default_stdlib_path()).map_err(|err| err.to_string())
+        })
+        .as_ref()
+        .map_err(|err| PyRuntimeError::new_err(err.clone()))
 }
 
 #[pymodule]
@@ -328,7 +417,7 @@ mod tests {
 
     #[test]
     fn builder_creates_renders_and_compiles_model() {
-        let mut builder = PyModelBuilder::new();
+        let mut builder = PyModelBuilder::new(true);
 
         builder
             .add_package("model.sysml".to_string(), "Demo".to_string())
@@ -367,5 +456,32 @@ mod tests {
         let compiled = builder.compile_json().unwrap();
         assert!(compiled.contains("type.Demo.Vehicle"));
         assert!(compiled.contains("feature.Demo.Vehicle.engine"));
+    }
+
+    #[test]
+    fn builder_can_defer_validation_until_requested() {
+        let mut builder = PyModelBuilder::new(false);
+
+        let package_result = builder
+            .add_package("model.sysml".to_string(), "Demo".to_string())
+            .unwrap();
+        assert_eq!(package_result.mode, "deferred");
+
+        builder
+            .add_definition(
+                "Demo".to_string(),
+                "part".to_string(),
+                "Vehicle".to_string(),
+                None,
+            )
+            .unwrap();
+
+        let rendered = builder.rendered_files().unwrap();
+        assert!(rendered["model.sysml"].contains("part def Vehicle"));
+
+        let validation = builder.validate().unwrap();
+        assert_eq!(validation.mode, "canonical_rewrite");
+        assert!(validation.validation_ok);
+        assert_eq!(validation.changed_files, vec!["model.sysml"]);
     }
 }

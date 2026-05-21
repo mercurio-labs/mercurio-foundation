@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use serde_json::Value;
 
@@ -12,6 +13,8 @@ use crate::frontend::diagnostics::Diagnostic;
 use crate::frontend::sysml::{compile_sysml_text, parse_sysml};
 use crate::ir::{KirDocument, KirElement, KirError};
 use crate::paths::default_stdlib_path;
+
+static DEFAULT_STDLIB_DOCUMENT: OnceLock<Result<KirDocument, String>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AuthoringProject {
@@ -960,13 +963,7 @@ impl AuthoringProject {
             }
         };
 
-        for (path, content) in &edited_files {
-            let parsed = parse_sysml(content)?;
-            let source_map = FileSourceMap::from_ast(&parsed);
-            let file = self.ensure_file_mut(path);
-            file.original_text = Some(content.clone());
-            file.source_map = Some(source_map);
-        }
+        self.accept_write_back_files(&edited_files)?;
 
         Ok(WriteBackResult {
             edited_files,
@@ -990,11 +987,34 @@ impl AuthoringProject {
         })
     }
 
+    pub fn write_back_changed_files_and_update(
+        &mut self,
+        changed_files: &BTreeSet<String>,
+    ) -> Result<WriteBackResult, AuthoringError> {
+        let write_back = self.write_back_changed_files(changed_files)?;
+        self.accept_write_back_files(&write_back.edited_files)?;
+        Ok(write_back)
+    }
+
     pub fn validate_rendered_sysml(
         &self,
         rendered: &BTreeMap<String, String>,
     ) -> Result<ValidationReport, AuthoringError> {
         self.validate_rendered_files(rendered)
+    }
+
+    fn accept_write_back_files(
+        &mut self,
+        edited_files: &BTreeMap<String, String>,
+    ) -> Result<(), AuthoringError> {
+        for (path, content) in edited_files {
+            let parsed = parse_sysml(content)?;
+            let source_map = FileSourceMap::from_ast(&parsed);
+            let file = self.ensure_file_mut(path);
+            file.original_text = Some(content.clone());
+            file.source_map = Some(source_map);
+        }
+        Ok(())
     }
 
     fn try_localized_writeback(
@@ -3668,12 +3688,21 @@ fn rendered_span_for_text(text: &str) -> RenderedSpan {
 fn compile_user_kir_from_texts(
     texts: &BTreeMap<String, String>,
 ) -> Result<KirDocument, AuthoringError> {
-    let stdlib = KirDocument::from_path(Path::new(&default_stdlib_path()))?;
+    let stdlib = default_stdlib_document()?;
     let mut documents = Vec::new();
     for (path, content) in texts {
-        documents.push(compile_sysml_text(content, path, &stdlib)?);
+        documents.push(compile_sysml_text(content, path, stdlib)?);
     }
     KirDocument::merge(documents).map_err(Into::into)
+}
+
+fn default_stdlib_document() -> Result<&'static KirDocument, AuthoringError> {
+    DEFAULT_STDLIB_DOCUMENT
+        .get_or_init(|| {
+            KirDocument::from_path(Path::new(&default_stdlib_path())).map_err(|err| err.to_string())
+        })
+        .as_ref()
+        .map_err(|err| AuthoringError::Kir(KirError::Frontend(err.clone())))
 }
 
 fn diff_element_ids(before: &KirDocument, after: &KirDocument) -> BTreeSet<String> {

@@ -35,7 +35,11 @@ fn dump_decl(declaration: &Declaration, depth: usize) {
             }
         }
         Declaration::PartUsage(usage) => {
-            println!("{pad}part {}{}", usage.name, display_type(usage.ty.as_ref()));
+            println!(
+                "{pad}part {}{}",
+                usage.name,
+                display_type(usage.ty.as_ref())
+            );
             for member in &usage.body_members {
                 dump_decl(member, depth + 1);
             }
@@ -58,7 +62,11 @@ fn dump_decl(declaration: &Declaration, depth: usize) {
             }
         }
         Declaration::Alias(alias) => {
-            println!("{pad}alias {} for {}", alias.name, display_name(&alias.target));
+            println!(
+                "{pad}alias {} for {}",
+                alias.name,
+                display_name(&alias.target)
+            );
         }
     }
 }

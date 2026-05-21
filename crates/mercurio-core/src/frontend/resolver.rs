@@ -506,12 +506,7 @@ fn collect_module(
         &mut aliases,
         mappings,
     )?;
-    collect_nested_aliases(
-        &root_members,
-        &[],
-        None,
-        &mut aliases,
-    );
+    collect_nested_aliases(&root_members, &[], None, &mut aliases);
 
     Ok((packages, imports, definitions, usages, aliases))
 }
@@ -1090,7 +1085,8 @@ fn collect_nested_aliases(
     for declaration in declarations {
         match declaration {
             Declaration::Package(package) => {
-                let package_segments = qualify_segments(owner_package_segments, &package.name.segments);
+                let package_segments =
+                    qualify_segments(owner_package_segments, &package.name.segments);
                 let package_qualified_name = package_segments.join(".");
                 collect_nested_aliases(
                     &package.members,
@@ -1129,7 +1125,9 @@ fn collect_nested_member_aliases(
 ) {
     for declaration in declarations {
         match declaration {
-            Declaration::Alias(alias) => aliases.push(collect_alias_in_owner(alias, owner_qualified_name)),
+            Declaration::Alias(alias) => {
+                aliases.push(collect_alias_in_owner(alias, owner_qualified_name))
+            }
             Declaration::PartUsage(usage) => {
                 let qualified_name = usage_qualified_name(owner_qualified_name, &usage.name);
                 collect_nested_member_aliases(&usage.body_members, &qualified_name, aliases);
@@ -1147,7 +1145,8 @@ fn collect_nested_member_aliases(
                 collect_nested_member_aliases(&definition.members, &qualified_name, aliases);
             }
             Declaration::Package(package) => {
-                let qualified_name = usage_qualified_name(owner_qualified_name, &package.name.as_dot_string());
+                let qualified_name =
+                    usage_qualified_name(owner_qualified_name, &package.name.as_dot_string());
                 collect_nested_member_aliases(&package.members, &qualified_name, aliases);
             }
             Declaration::Import(_) => {}
@@ -2492,7 +2491,10 @@ fn resolve_expression_path(
             })
             .ok_or_else(|| {
                 Diagnostic::new(
-                    format!("unresolved expression cast type `{}`", name.as_colon_string()),
+                    format!(
+                        "unresolved expression cast type `{}`",
+                        name.as_colon_string()
+                    ),
                     Some(name.span.clone()),
                 )
             })?;
