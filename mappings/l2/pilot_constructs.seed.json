@@ -174,6 +174,9 @@
       "EnumerationDefinition": [
         "Base::DataValue"
       ],
+      "FlowDefinition": [
+        "Flows::Flow"
+      ],
       "ItemDefinition": [
         "Items::Item"
       ],
@@ -235,16 +238,30 @@
         "ISQ::DurationValue": "ISQBase::DurationValue",
         "ISQ::TimeValue": "ISQBase::DurationValue",
         "ISQ::LengthValue": "ISQBase::LengthValue",
+        "ISQ::SpeedValue": "ISQSpaceTime::SpeedValue",
+        "ISQ::AccelerationValue": "ISQSpaceTime::AccelerationValue",
+        "DerivedUnit": "MeasurementReferences::DerivedUnit",
+        "MeasurementReferences::DerivedUnit": "MeasurementReferences::DerivedUnit",
+        "SysML::Usage": "kerml.Feature",
+        "SysML::ItemDefinition": "sysml.ItemDefinition",
+        "SysML::ItemUsage": "kerml.Feature",
+        "SysML::ConnectionUsage": "kerml.Feature",
+        "SysML::RequirementUsage": "kerml.Feature",
         "length": "ISQBase::length",
         "ISQ::length": "ISQBase::length",
         "ISQ::distance": "ISQSpaceTime::distance",
+        "ISQ::radius": "ISQSpaceTime::radius",
         "ISQ::speed": "ISQSpaceTime::speed",
         "ISQ::acceleration": "ISQSpaceTime::acceleration",
         "ISQ::angularMeasure": "ISQSpaceTime::angularMeasure",
+        "ISQ::planeAngle": "ISQSpaceTime::angularMeasure",
         "distance": "ISQSpaceTime::distance",
+        "radius": "ISQSpaceTime::radius",
         "speed": "ISQSpaceTime::speed",
         "acceleration": "ISQSpaceTime::acceleration",
         "angularMeasure": "ISQSpaceTime::angularMeasure",
+        "planeAngle": "ISQSpaceTime::angularMeasure",
+        "PlaneAngleValue": "ISQSpaceTime::AngularMeasureValue",
         "ISQ::volume": "ISQSpaceTime::volume",
         "volume": "ISQSpaceTime::volume",
         "ISQ::time": "ISQBase::duration",
@@ -256,6 +273,7 @@
         "ISQ::mass": "ISQBase::mass",
         "ISQ::PowerValue": "ISQMechanics::PowerValue",
         "ISQ::TorqueValue": "ISQMechanics::TorqueValue",
+        "Torque": "ISQMechanics::TorqueValue",
         "power": "ISQMechanics::power",
         "force": "ISQMechanics::force",
         "momentOfInertia": "ISQMechanics::momentOfInertia",

@@ -2082,12 +2082,21 @@ fn disambiguate_duplicate_source_position_usage_ids(elements: &mut [KirElement])
             continue;
         }
         let disambiguate_by_source_position = element.id.ends_with(".end")
+            || element.id.ends_with(".annotatedElement")
+            || element.id.ends_with(".snapshot")
+            || element.id.contains(".snapshot.")
             || element.kind == "AcceptActionUsage"
             || element.id.ends_with(".AcceptActionUsage")
             || element.id.starts_with("assert.")
             || element.id.starts_with("assume.")
+            || element.id.starts_with("binding.")
+            || element.id.starts_with("feature.")
+            || element.id.starts_with("interface.")
+            || element.id.starts_with("message.")
+            || element.id.starts_with("reference.")
             || element.id.starts_with("require.")
-            || element.id.starts_with("transition.");
+            || element.id.starts_with("transition.")
+            || element.id.starts_with("until.");
         if !disambiguate_by_source_position {
             continue;
         }
