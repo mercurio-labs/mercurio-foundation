@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use mercurio_core::graph::Element;
 use mercurio_core::runtime::Runtime;
@@ -12,11 +12,13 @@ use serde_json::{Value, json};
 
 pub const REQUIREMENT_COVERAGE_CAPABILITY_ID: &str = "mercurio.requirement.coverage";
 pub const SEMANTIC_IMPACT_CAPABILITY_ID: &str = "mercurio.semantic.impact";
+pub const STATE_MACHINE_SIMULATION_CAPABILITY_ID: &str = "mercurio.simulation.state_machine";
 
 pub fn builtin_reasoning_capabilities() -> Vec<CapabilityDescriptor> {
     vec![
         requirement_coverage_capability_descriptor(),
         semantic_impact_capability_descriptor(),
+        state_machine_simulation_capability_descriptor(),
     ]
 }
 
@@ -53,6 +55,24 @@ pub fn semantic_impact_capability_descriptor() -> CapabilityDescriptor {
             "finding".to_string(),
             "evidence_graph".to_string(),
             "semantic_impact_summary".to_string(),
+        ],
+    }
+}
+
+pub fn state_machine_simulation_capability_descriptor() -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        id: STATE_MACHINE_SIMULATION_CAPABILITY_ID.to_string(),
+        kind: CapabilityKind::Simulation,
+        name: "State Machine Simulation".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        api_version: REASONING_API_VERSION.to_string(),
+        deterministic: true,
+        input_artifact_kinds: vec!["runtime_artifact".to_string(), "semantic_graph".to_string()],
+        output_artifact_kinds: vec![
+            "finding".to_string(),
+            "evidence_graph".to_string(),
+            "state_machine_summary".to_string(),
+            "state_machine_trace".to_string(),
         ],
     }
 }
@@ -276,6 +296,241 @@ pub fn analyze_semantic_impact(
     }
 }
 
+pub fn analyze_state_machine_simulation(
+    runtime: &Runtime,
+    context: SemanticContextRef,
+    request_id: impl Into<String>,
+) -> ReasoningReport {
+    let machines = extract_state_machines(runtime);
+    let mut findings = Vec::new();
+    let mut evidence_nodes = Vec::new();
+
+    if machines.is_empty() {
+        findings.push(ReasoningFinding {
+            id: "finding.state_machine.no_state_machines".to_string(),
+            title: "No state machines found".to_string(),
+            severity: FindingSeverity::Warning,
+            message: "No KIR state usage elements were found for structural simulation."
+                .to_string(),
+            elements: Vec::new(),
+            source_spans: Vec::new(),
+            evidence_ids: Vec::new(),
+            properties: BTreeMap::new(),
+        });
+    }
+
+    let mut trace_payload = Vec::new();
+    for machine in &machines {
+        evidence_nodes.push(EvidenceNode {
+            id: format!("evidence.state_machine.{}", machine.id),
+            kind: EvidenceNodeKind::Fact,
+            label: machine.label.clone(),
+            element_refs: Vec::new(),
+            source_spans: Vec::new(),
+            properties: BTreeMap::from([
+                ("stateCount".to_string(), json!(machine.states.len())),
+                (
+                    "transitionCount".to_string(),
+                    json!(machine.transitions.len()),
+                ),
+            ]),
+        });
+
+        for state in &machine.states {
+            evidence_nodes.push(EvidenceNode {
+                id: state_evidence_id(state),
+                kind: EvidenceNodeKind::KirElement,
+                label: state.label.clone(),
+                element_refs: vec![SemanticElementRef {
+                    element_id: state.id.clone(),
+                    qualified_name: None,
+                    label: Some(state.label.clone()),
+                }],
+                source_spans: Vec::new(),
+                properties: BTreeMap::from([
+                    ("machineId".to_string(), json!(machine.id)),
+                    ("isInitial".to_string(), json!(state.is_initial)),
+                    ("isFinal".to_string(), json!(state.is_final)),
+                ]),
+            });
+        }
+
+        let initial_states = machine
+            .states
+            .iter()
+            .filter(|state| state.is_initial)
+            .collect::<Vec<_>>();
+        if machine.states.is_empty() {
+            findings.push(machine_finding(
+                machine,
+                "no_states",
+                "State machine has no states",
+                "The state machine candidate has no owned states to simulate.",
+                FindingSeverity::Warning,
+            ));
+        }
+        if initial_states.is_empty() && !machine.states.is_empty() {
+            findings.push(machine_finding(
+                machine,
+                "no_initial_state",
+                "State machine has no initial state",
+                "Structural simulation needs one initial state. No state is marked initial.",
+                FindingSeverity::Error,
+            ));
+        }
+        if initial_states.len() > 1 {
+            findings.push(machine_finding(
+                machine,
+                "multiple_initial_states",
+                "State machine has multiple initial states",
+                "Structural simulation found more than one state marked initial.",
+                FindingSeverity::Error,
+            ));
+        }
+
+        let reachable = reachable_states(machine);
+        for state in &machine.states {
+            if !reachable.is_empty() && !reachable.contains(&state.id) {
+                findings.push(state_finding(
+                    machine,
+                    state,
+                    "unreachable_state",
+                    "State is unreachable",
+                    "No transition path reaches this state from the initial state.",
+                    FindingSeverity::Warning,
+                ));
+            }
+            let has_outgoing = machine
+                .transitions
+                .iter()
+                .any(|transition| transition.source == state.id);
+            if !state.is_final && !has_outgoing {
+                findings.push(state_finding(
+                    machine,
+                    state,
+                    "dead_end_state",
+                    "State has no outgoing transition",
+                    "The state is not final and has no outgoing transition.",
+                    FindingSeverity::Warning,
+                ));
+            }
+        }
+
+        for (source, trigger, count) in ambiguous_transition_keys(machine) {
+            findings.push(ReasoningFinding {
+                id: format!(
+                    "finding.state_machine.ambiguous_transition.{}.{}",
+                    machine.id,
+                    sanitize_identifier(&source)
+                ),
+                title: "State has ambiguous triggered transitions".to_string(),
+                severity: FindingSeverity::Warning,
+                message: format!(
+                    "State `{source}` has {count} outgoing transitions for trigger `{trigger}`."
+                ),
+                elements: machine
+                    .states
+                    .iter()
+                    .find(|state| state.id == source)
+                    .map(|state| vec![state_ref(state)])
+                    .unwrap_or_default(),
+                source_spans: Vec::new(),
+                evidence_ids: vec![format!("evidence.state_machine.{}", machine.id)],
+                properties: BTreeMap::from([
+                    ("machineId".to_string(), json!(machine.id)),
+                    ("sourceState".to_string(), json!(source)),
+                    ("trigger".to_string(), json!(trigger)),
+                    ("transitionCount".to_string(), json!(count)),
+                ]),
+            });
+        }
+
+        trace_payload.push(json!({
+            "machineId": machine.id,
+            "label": machine.label,
+            "initialStates": initial_states.iter().map(|state| state.id.clone()).collect::<Vec<_>>(),
+            "reachableStates": reachable.iter().cloned().collect::<Vec<_>>(),
+            "states": machine.states.iter().map(|state| json!({
+                "id": state.id,
+                "label": state.label,
+                "isInitial": state.is_initial,
+                "isFinal": state.is_final,
+            })).collect::<Vec<_>>(),
+            "transitions": machine.transitions.iter().map(|transition| json!({
+                "id": transition.id,
+                "source": transition.source,
+                "target": transition.target,
+                "trigger": transition.trigger,
+            })).collect::<Vec<_>>(),
+        }));
+    }
+
+    let status = if findings.iter().any(|finding| {
+        matches!(
+            finding.severity,
+            FindingSeverity::Error | FindingSeverity::Critical
+        )
+    }) {
+        ReasoningStatus::Failed
+    } else if findings.is_empty() {
+        ReasoningStatus::Passed
+    } else {
+        ReasoningStatus::Inconclusive
+    };
+
+    let state_count = machines
+        .iter()
+        .map(|machine| machine.states.len())
+        .sum::<usize>();
+    let transition_count = machines
+        .iter()
+        .map(|machine| machine.transitions.len())
+        .sum::<usize>();
+    let summary_payload = json!({
+        "machineCount": machines.len(),
+        "stateCount": state_count,
+        "transitionCount": transition_count,
+        "findingCount": findings.len(),
+    });
+    let trace_payload = json!({
+        "schema": "mercurio.state_machine_trace.v1",
+        "machines": trace_payload,
+    });
+
+    ReasoningReport {
+        request_id: request_id.into(),
+        capability: state_machine_simulation_capability_descriptor(),
+        context,
+        status,
+        findings,
+        artifacts: vec![
+            ReasoningArtifact {
+                id: "artifact.state_machine.summary".to_string(),
+                kind: "state_machine_summary".to_string(),
+                schema: "mercurio.state_machine_summary.v1".to_string(),
+                digest: summary_digest(&summary_payload),
+                element_refs: machines
+                    .iter()
+                    .flat_map(|machine| machine.states.iter().map(state_ref))
+                    .collect(),
+                payload: summary_payload,
+            },
+            ReasoningArtifact {
+                id: "artifact.state_machine.trace".to_string(),
+                kind: "state_machine_trace".to_string(),
+                schema: "mercurio.state_machine_trace.v1".to_string(),
+                digest: summary_digest(&trace_payload),
+                element_refs: Vec::new(),
+                payload: trace_payload,
+            },
+        ],
+        evidence: EvidenceGraph {
+            nodes: evidence_nodes,
+            edges: Vec::new(),
+        },
+    }
+}
+
 fn impact_evidence_node(
     element: &Element,
     incoming_count: usize,
@@ -292,6 +547,226 @@ fn impact_evidence_node(
             ("outgoingCount".to_string(), json!(outgoing_count)),
         ]),
     }
+}
+
+#[derive(Debug, Clone)]
+struct StateMachineModel {
+    id: String,
+    label: String,
+    states: Vec<StateNode>,
+    transitions: Vec<TransitionNode>,
+}
+
+#[derive(Debug, Clone)]
+struct StateNode {
+    id: String,
+    label: String,
+    is_initial: bool,
+    is_final: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TransitionNode {
+    id: String,
+    source: String,
+    target: String,
+    trigger: Option<String>,
+}
+
+fn extract_state_machines(runtime: &Runtime) -> Vec<StateMachineModel> {
+    let graph = runtime.graph();
+    let mut states_by_owner = BTreeMap::<String, Vec<StateNode>>::new();
+    let mut transitions_by_owner = BTreeMap::<String, Vec<TransitionNode>>::new();
+
+    for element in graph.elements() {
+        if is_state_element(element) {
+            let owner = owner_id(element).unwrap_or_else(|| "state_machine.root".to_string());
+            states_by_owner
+                .entry(owner.clone())
+                .or_default()
+                .push(StateNode {
+                    id: element.element_id.clone(),
+                    label: element_label(element),
+                    is_initial: bool_property(element, &["is_initial", "initial"])
+                        || string_property_any(element, &["purpose", "state_kind", "kind_role"])
+                            .is_some_and(|value| value.eq_ignore_ascii_case("initial")),
+                    is_final: bool_property(element, &["is_final", "final"])
+                        || string_property_any(element, &["purpose", "state_kind", "kind_role"])
+                            .is_some_and(|value| value.eq_ignore_ascii_case("final")),
+                });
+            continue;
+        }
+
+        if is_transition_element(element)
+            && let (Some(source), Some(target)) = (
+                string_property_any(element, &["source", "source_state", "from"]),
+                string_property_any(element, &["target", "target_state", "to"]),
+            )
+        {
+            let owner = owner_id(element).unwrap_or_else(|| {
+                source
+                    .rsplit_once(['.', ':', '/'])
+                    .map(|(prefix, _)| prefix.to_string())
+                    .unwrap_or_else(|| "state_machine.root".to_string())
+            });
+            transitions_by_owner
+                .entry(owner.clone())
+                .or_default()
+                .push(TransitionNode {
+                    id: element.element_id.clone(),
+                    source,
+                    target,
+                    trigger: string_property_any(element, &["trigger", "event", "guard"]),
+                });
+        }
+    }
+
+    let mut owners = states_by_owner.keys().cloned().collect::<BTreeSet<_>>();
+    owners.extend(transitions_by_owner.keys().cloned());
+
+    owners
+        .into_iter()
+        .map(|owner| {
+            let mut states = states_by_owner.remove(&owner).unwrap_or_default();
+            states.sort_by(|left, right| left.id.cmp(&right.id));
+            let mut transitions = transitions_by_owner.remove(&owner).unwrap_or_default();
+            transitions.sort_by(|left, right| left.id.cmp(&right.id));
+            StateMachineModel {
+                label: owner
+                    .rsplit(['.', ':', '/'])
+                    .find(|part| !part.is_empty())
+                    .unwrap_or(&owner)
+                    .to_string(),
+                id: owner,
+                states,
+                transitions,
+            }
+        })
+        .collect()
+}
+
+fn is_state_element(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    kind.contains("stateusage")
+        || kind.contains("stateaction")
+        || string_property_any(element, &["type", "definition"])
+            .is_some_and(|value| value.contains("States::StateAction"))
+}
+
+fn is_transition_element(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    kind.contains("transition")
+        || kind.contains("succession")
+        || element.element_id.starts_with("transition.")
+}
+
+fn owner_id(element: &Element) -> Option<String> {
+    string_property_any(
+        element,
+        &[
+            "owner",
+            "owning_type",
+            "owning_definition",
+            "owning_namespace",
+        ],
+    )
+}
+
+fn reachable_states(machine: &StateMachineModel) -> BTreeSet<String> {
+    let mut reachable = BTreeSet::new();
+    let mut queue = VecDeque::new();
+    for state in machine.states.iter().filter(|state| state.is_initial) {
+        reachable.insert(state.id.clone());
+        queue.push_back(state.id.clone());
+    }
+
+    while let Some(state_id) = queue.pop_front() {
+        for transition in machine
+            .transitions
+            .iter()
+            .filter(|transition| transition.source == state_id)
+        {
+            if reachable.insert(transition.target.clone()) {
+                queue.push_back(transition.target.clone());
+            }
+        }
+    }
+
+    reachable
+}
+
+fn ambiguous_transition_keys(machine: &StateMachineModel) -> Vec<(String, String, usize)> {
+    let mut counts = BTreeMap::<(String, String), usize>::new();
+    for transition in &machine.transitions {
+        let trigger = transition
+            .trigger
+            .clone()
+            .unwrap_or_else(|| "<untriggered>".to_string());
+        *counts
+            .entry((transition.source.clone(), trigger))
+            .or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .filter_map(|((source, trigger), count)| (count > 1).then_some((source, trigger, count)))
+        .collect()
+}
+
+fn machine_finding(
+    machine: &StateMachineModel,
+    code: &str,
+    title: &str,
+    message: &str,
+    severity: FindingSeverity,
+) -> ReasoningFinding {
+    ReasoningFinding {
+        id: format!("finding.state_machine.{code}.{}", machine.id),
+        title: title.to_string(),
+        severity,
+        message: message.to_string(),
+        elements: Vec::new(),
+        source_spans: Vec::new(),
+        evidence_ids: vec![format!("evidence.state_machine.{}", machine.id)],
+        properties: BTreeMap::from([("machineId".to_string(), json!(machine.id))]),
+    }
+}
+
+fn state_finding(
+    machine: &StateMachineModel,
+    state: &StateNode,
+    code: &str,
+    title: &str,
+    message: &str,
+    severity: FindingSeverity,
+) -> ReasoningFinding {
+    ReasoningFinding {
+        id: format!("finding.state_machine.{code}.{}", state.id),
+        title: title.to_string(),
+        severity,
+        message: message.to_string(),
+        elements: vec![state_ref(state)],
+        source_spans: Vec::new(),
+        evidence_ids: vec![
+            format!("evidence.state_machine.{}", machine.id),
+            state_evidence_id(state),
+        ],
+        properties: BTreeMap::from([
+            ("machineId".to_string(), json!(machine.id)),
+            ("stateId".to_string(), json!(state.id)),
+        ]),
+    }
+}
+
+fn state_ref(state: &StateNode) -> SemanticElementRef {
+    SemanticElementRef {
+        element_id: state.id.clone(),
+        qualified_name: None,
+        label: Some(state.label.clone()),
+    }
+}
+
+fn state_evidence_id(state: &StateNode) -> String {
+    format!("evidence.state.{}", state.id)
 }
 
 fn impact_evidence_id(element: &Element) -> String {
@@ -314,6 +789,41 @@ fn element_label(element: &Element) -> String {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| element.element_id.clone())
+}
+
+fn string_property_any(element: &Element, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        element
+            .properties
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn bool_property(element: &Element, keys: &[&str]) -> bool {
+    keys.iter().any(|key| {
+        element
+            .properties
+            .get(*key)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    })
+}
+
+fn sanitize_identifier(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn missing_trace_finding(
@@ -427,8 +937,11 @@ fn summary_digest(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use mercurio_core::{KirDocument, Runtime, repo_path};
+    use std::collections::BTreeMap;
+
+    use mercurio_core::{KirDocument, KirElement, Runtime, repo_path};
     use mercurio_reasoner_api::{SemanticArtifactRef, SemanticContextKind, SemanticContextRef};
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -481,6 +994,79 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn state_machine_simulation_reports_unreachable_and_dead_end_states() {
+        let runtime = Runtime::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                state("state.ControllerMode.Off", "ControllerMode", true, false),
+                state("state.ControllerMode.On", "ControllerMode", false, false),
+                state(
+                    "state.ControllerMode.Faulted",
+                    "ControllerMode",
+                    false,
+                    false,
+                ),
+                transition(
+                    "transition.ControllerMode.start",
+                    "ControllerMode",
+                    "state.ControllerMode.Off",
+                    "state.ControllerMode.On",
+                    "start",
+                ),
+            ],
+        })
+        .unwrap();
+
+        let report =
+            analyze_state_machine_simulation(&runtime, test_context(), "state-machine-test");
+
+        assert_eq!(report.capability.id, STATE_MACHINE_SIMULATION_CAPABILITY_ID);
+        assert_eq!(report.capability.kind, CapabilityKind::Simulation);
+        assert_eq!(report.status, ReasoningStatus::Inconclusive);
+        assert_eq!(
+            report.artifacts[0].payload["machineCount"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report.artifacts[1].schema,
+            "mercurio.state_machine_trace.v1"
+        );
+        assert!(report.findings.iter().any(|finding| {
+            finding
+                .id
+                .contains("unreachable_state.state.ControllerMode.Faulted")
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding
+                .id
+                .contains("dead_end_state.state.ControllerMode.On")
+        }));
+    }
+
+    #[test]
+    fn state_machine_simulation_reports_missing_initial_state() {
+        let runtime = Runtime::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                state("state.ControllerMode.Off", "ControllerMode", false, false),
+                state("state.ControllerMode.On", "ControllerMode", false, false),
+            ],
+        })
+        .unwrap();
+
+        let report =
+            analyze_state_machine_simulation(&runtime, test_context(), "state-machine-test");
+
+        assert_eq!(report.status, ReasoningStatus::Failed);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.id.contains("no_initial_state.ControllerMode"))
+        );
+    }
+
     fn test_context() -> SemanticContextRef {
         SemanticContextRef {
             context_id: "ctx.test".to_string(),
@@ -491,6 +1077,40 @@ mod tests {
                 source_authority: Some("test_fixture".to_string()),
                 source_revision: None,
             },
+        }
+    }
+
+    fn state(id: &str, owner: &str, initial: bool, final_state: bool) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "StateUsage".to_string(),
+            layer: 0,
+            properties: BTreeMap::from([
+                ("declared_name".to_string(), Value::String(id.to_string())),
+                ("owning_type".to_string(), Value::String(owner.to_string())),
+                ("is_initial".to_string(), Value::Bool(initial)),
+                ("is_final".to_string(), Value::Bool(final_state)),
+            ]),
+        }
+    }
+
+    fn transition(id: &str, owner: &str, source: &str, target: &str, trigger: &str) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "TransitionUsage".to_string(),
+            layer: 0,
+            properties: BTreeMap::from([
+                ("owning_type".to_string(), Value::String(owner.to_string())),
+                ("source".to_string(), Value::String(source.to_string())),
+                ("target".to_string(), Value::String(target.to_string())),
+                ("trigger".to_string(), Value::String(trigger.to_string())),
+                (
+                    "metadata".to_string(),
+                    json!({
+                        "source": "test"
+                    }),
+                ),
+            ]),
         }
     }
 }
