@@ -1143,6 +1143,41 @@ fn enrich_usage_semantics(element: &mut KirElement, usage: &ResolvedUsage, owner
             Value::String(owner_id.to_string()),
         );
     }
+    if usage.construct == "AcceptActionUsage" {
+        element
+            .properties
+            .insert("source".to_string(), Value::String(owner_id.to_string()));
+        if let Some(trigger) = modifier_value(&usage.modifiers, "trigger") {
+            element
+                .properties
+                .insert("trigger".to_string(), Value::String(trigger.to_string()));
+        }
+        if let Some(trigger_kind) = modifier_value(&usage.modifiers, "trigger_kind") {
+            element.properties.insert(
+                "trigger_kind".to_string(),
+                Value::String(trigger_kind.to_string()),
+            );
+        }
+        if let Some(target) = modifier_value(&usage.modifiers, "transition_target") {
+            if let Some(target_id) = sibling_state_id(&usage.owner_qualified_name, target) {
+                element
+                    .properties
+                    .insert("target".to_string(), Value::String(target_id));
+            }
+        }
+    }
+    if usage.construct == "SuccessionUsage"
+        && usage.modifiers.iter().any(|modifier| modifier == "then")
+    {
+        element.properties.insert(
+            "target".to_string(),
+            Value::String(format!("state.{}", usage.qualified_name)),
+        );
+        element.properties.insert(
+            "trigger_kind".to_string(),
+            Value::String("completion".to_string()),
+        );
+    }
 
     if usage.construct == "PartUsage"
         && usage.owner_construct == "ItemDefinition"
@@ -1244,6 +1279,22 @@ fn usage_display_name(usage: &ResolvedUsage) -> Option<String> {
     (!usage.declared_name.is_empty()).then(|| usage.declared_name.clone())
 }
 
+fn modifier_value<'a>(modifiers: &'a [String], key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    modifiers
+        .iter()
+        .find_map(|modifier| modifier.strip_prefix(&prefix))
+}
+
+fn sibling_state_id(owner_qualified_name: &str, target: &str) -> Option<String> {
+    let target_qualified = if target.contains('.') {
+        target.to_string()
+    } else {
+        format!("{owner_qualified_name}.{target}")
+    };
+    Some(format!("state.{target_qualified}"))
+}
+
 fn display_name_for_ref(value: &str) -> String {
     value
         .rsplit("::")
@@ -1293,15 +1344,24 @@ fn transpile_usage_tree(
             .map(|usage| render_usage_id(usage, owner_id, mappings))
             .collect::<Result<Vec<_>, _>>()?
     };
+    let mut previous_state_id = None::<String>;
     for (usage, usage_id) in usages.iter().zip(rendered_ids) {
-        elements.push(transpile_usage(
+        let mut element = transpile_usage(
             usage,
             &usage_id,
             owner_id,
             source_file,
             source_language,
             mappings,
-        )?);
+        )?;
+        if usage.construct == "AcceptActionUsage"
+            && let Some(source_id) = &previous_state_id
+        {
+            element
+                .properties
+                .insert("source".to_string(), Value::String(source_id.clone()));
+        }
+        elements.push(element);
         transpile_usage_tree(
             &usage.members,
             &usage_id,
@@ -1310,6 +1370,9 @@ fn transpile_usage_tree(
             mappings,
             elements,
         )?;
+        if usage.construct == "StateUsage" {
+            previous_state_id = Some(usage_id);
+        }
     }
     Ok(())
 }

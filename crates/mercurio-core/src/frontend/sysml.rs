@@ -1264,7 +1264,7 @@ impl Parser {
         keyword: &str,
         start: Token,
         docs: Vec<String>,
-        modifiers: Vec<String>,
+        mut modifiers: Vec<String>,
     ) -> Result<Declaration, Diagnostic> {
         self.consume_angle_adornments()?;
         if keyword == "comment" {
@@ -1279,14 +1279,18 @@ impl Parser {
         let mut leading_specialization = None;
 
         let explicit_name = if keyword == "accept"
-            && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "at" || value == "when")
+            && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "at" || value == "when" || value == "after")
         {
-            self.advance();
-            while !matches!(
-                self.peek_kind(),
-                TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof
-            ) {
-                self.advance();
+            let trigger_kind = self.expect_identifier("expected accept trigger kind")?;
+            modifiers.push(format!("trigger_kind={trigger_kind}"));
+            let trigger = self.collect_behavior_text_until_then_or_end();
+            if !trigger.is_empty() {
+                modifiers.push(format!("trigger={trigger_kind} {trigger}"));
+            }
+            if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "then") {
+                self.expect_identifier_named("then", "expected `then` after accept trigger")?;
+                let target = self.parse_qualified_name()?;
+                modifiers.push(format!("transition_target={}", target.as_dot_string()));
             }
             force_implicit_name = true;
             Some("AcceptActionUsage".to_string())
@@ -1295,6 +1299,8 @@ impl Parser {
             && matches!(self.next_kind(), Some(TokenKind::Identifier(value)) if value == "after")
         {
             let payload_name = self.expect_identifier("expected accept payload name")?;
+            modifiers.push(format!("trigger={payload_name}"));
+            modifiers.push("trigger_kind=event".to_string());
             synthetic_body_members.push(synthetic_reference_usage(
                 &payload_name,
                 None,
@@ -1303,11 +1309,14 @@ impl Parser {
                 &start.span,
             ));
             self.expect_identifier_named("after", "expected `after` after accept payload")?;
-            while !matches!(
-                self.peek_kind(),
-                TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof
-            ) {
-                self.advance();
+            let trigger = self.collect_behavior_text_until_then_or_end();
+            if !trigger.is_empty() {
+                modifiers.push(format!("trigger_after={trigger}"));
+            }
+            if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "then") {
+                self.expect_identifier_named("then", "expected `then` after accept trigger")?;
+                let target = self.parse_qualified_name()?;
+                modifiers.push(format!("transition_target={}", target.as_dot_string()));
             }
             force_implicit_name = true;
             Some("AcceptActionUsage".to_string())
@@ -1316,6 +1325,8 @@ impl Parser {
             && matches!(self.next_kind(), Some(TokenKind::Colon))
         {
             let payload_name = self.expect_identifier("expected accept payload name")?;
+            modifiers.push(format!("trigger={payload_name}"));
+            modifiers.push("trigger_kind=event".to_string());
             self.expect(TokenKind::Colon, "expected `:` after accept payload name")?;
             let payload_type = self.parse_qualified_name()?;
             synthetic_body_members.push(synthetic_reference_usage(
@@ -1325,10 +1336,21 @@ impl Parser {
                 &["payload", "in"],
                 &start.span,
             ));
+            if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "via") {
+                self.expect_identifier_named("via", "expected `via` after accept payload")?;
+                let _receiver = self.parse_qualified_name()?;
+            }
+            if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "then") {
+                self.expect_identifier_named("then", "expected `then` after accept payload")?;
+                let target = self.parse_qualified_name()?;
+                modifiers.push(format!("transition_target={}", target.as_dot_string()));
+            }
             force_implicit_name = true;
             Some("AcceptActionUsage".to_string())
         } else if keyword == "accept" && matches!(self.peek_kind(), TokenKind::Identifier(_)) {
             let payload = self.parse_qualified_name()?;
+            modifiers.push(format!("trigger={}", payload.as_dot_string()));
+            modifiers.push("trigger_kind=event".to_string());
             synthetic_body_members.push(synthetic_reference_usage(
                 "payload",
                 Some(payload),
@@ -1346,6 +1368,11 @@ impl Parser {
                     &["receiver", "in"],
                     &start.span,
                 ));
+            }
+            if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "then") {
+                self.expect_identifier_named("then", "expected `then` after accept payload")?;
+                let target = self.parse_qualified_name()?;
+                modifiers.push(format!("transition_target={}", target.as_dot_string()));
             }
             force_implicit_name = true;
             Some("AcceptActionUsage".to_string())
@@ -1900,6 +1927,21 @@ impl Parser {
         })
     }
 
+    fn collect_behavior_text_until_then_or_end(&mut self) -> String {
+        let mut parts = Vec::new();
+        while !matches!(
+            self.peek_kind(),
+            TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof
+        ) {
+            if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "then") {
+                break;
+            }
+            parts.push(token_text(self.peek_kind()));
+            self.advance();
+        }
+        parts.join(" ").trim().to_string()
+    }
+
     fn parse_expression(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_or_expression()
     }
@@ -2374,11 +2416,6 @@ impl Parser {
     fn parse_declaration_block_contents_after_open(
         &mut self,
     ) -> Result<(Vec<Declaration>, Token), Diagnostic> {
-        if !self.block_starts_with_declaration() {
-            let end = self.consume_opaque_block_contents()?;
-            return Ok((Vec::new(), end));
-        }
-
         let mut members = Vec::new();
 
         while !matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
@@ -2894,6 +2931,28 @@ fn segment_text(kind: &TokenKind) -> String {
     }
 }
 
+fn token_text(kind: &TokenKind) -> String {
+    match kind {
+        TokenKind::Identifier(value) => value.clone(),
+        TokenKind::String(value) => format!("\"{value}\""),
+        TokenKind::Number(value) => value.clone(),
+        TokenKind::Colon => ":".to_string(),
+        TokenKind::ScopeSep => "::".to_string(),
+        TokenKind::Dot => ".".to_string(),
+        TokenKind::Comma => ",".to_string(),
+        TokenKind::LParen => "(".to_string(),
+        TokenKind::RParen => ")".to_string(),
+        TokenKind::LBracket => "[".to_string(),
+        TokenKind::RBracket => "]".to_string(),
+        TokenKind::Specializes => ":>".to_string(),
+        TokenKind::Redefines => ":>>".to_string(),
+        TokenKind::Equals => "=".to_string(),
+        TokenKind::Star => "*".to_string(),
+        TokenKind::DoubleStar => "**".to_string(),
+        _ => String::new(),
+    }
+}
+
 fn is_declaration_modifier(value: &str) -> bool {
     matches!(
         value,
@@ -3115,6 +3174,7 @@ mod tests {
     use crate::frontend::resolver::{resolve_module, resolve_module_with_context};
     use crate::frontend::transpile::{MappingBundle, transpile_module};
     use crate::ir::{KirDocument, load_model_stack};
+    use crate::project_state_machines;
     use crate::runtime::Runtime;
 
     fn write_sample_model() -> PathBuf {
@@ -4416,6 +4476,12 @@ mod tests {
             other => panic!("expected accept usage, got {other:?}"),
         };
         assert_eq!(accept.keyword, "accept");
+        assert!(
+            accept
+                .modifiers
+                .iter()
+                .any(|modifier| modifier == "transition_target=Wait")
+        );
         assert!(matches!(
             &accept.body_members[0],
             Declaration::GenericUsage(payload)
@@ -4423,6 +4489,63 @@ mod tests {
                     && payload.ty.as_ref().map(|ty| ty.as_dot_string()).as_deref()
                         == Some("ResultGiveItems")
         ));
+    }
+
+    #[test]
+    fn compiles_state_body_members_and_accept_transitions_for_projection() {
+        let stdlib = load_model_stack(&crate::paths::default_stdlib_path()).unwrap();
+        let report = compile_sysml_text_with_context_report(
+            "package Demo {
+                    item def Start;
+                    item def Request;
+                    part def Server {
+                        state ServerBehavior {
+                            entry; then off;
+                            state off;
+                            accept Start then waiting;
+                            state waiting;
+                            accept request : Request then responding;
+                            state responding;
+                            accept after 5 [SI::min] then waiting;
+                        }
+                    }
+                }",
+            "demo.sysml",
+            &[],
+            &stdlib,
+        );
+        assert_eq!(report.status, SemanticCompileStatus::Ok);
+        let document = report.document.unwrap();
+
+        let runtime = Runtime::from_document(document).unwrap();
+        let machines = project_state_machines(&runtime);
+        let machine = machines
+            .iter()
+            .find(|machine| machine.label == "ServerBehavior")
+            .unwrap();
+
+        assert!(machine.states.iter().any(|state| {
+            state.id == "state.Demo.Server.ServerBehavior.off" && state.is_initial
+        }));
+        assert!(machine.states.iter().any(|state| {
+            state.id == "state.Demo.Server.ServerBehavior.waiting"
+                && state.parent_state_id.as_deref() == Some("state.Demo.Server.ServerBehavior")
+        }));
+        assert!(machine.transitions.iter().any(|transition| {
+            transition.source == "state.Demo.Server.ServerBehavior.off"
+                && transition.target == "state.Demo.Server.ServerBehavior.waiting"
+                && transition.trigger.as_deref() == Some("Start")
+        }));
+        assert!(machine.transitions.iter().any(|transition| {
+            transition.source == "state.Demo.Server.ServerBehavior.waiting"
+                && transition.target == "state.Demo.Server.ServerBehavior.responding"
+                && transition.trigger.as_deref() == Some("request")
+        }));
+        assert!(machine.transitions.iter().any(|transition| {
+            transition.source == "state.Demo.Server.ServerBehavior.responding"
+                && transition.target == "state.Demo.Server.ServerBehavior.waiting"
+                && transition.trigger_kind == crate::StateTransitionTriggerKind::After
+        }));
     }
 
     #[test]

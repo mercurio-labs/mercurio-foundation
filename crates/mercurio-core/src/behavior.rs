@@ -467,27 +467,31 @@ pub fn project_state_machines(runtime: &Runtime) -> Vec<StateMachineModel> {
 }
 
 pub fn project_state_machines_from_graph(graph: &Graph) -> Vec<StateMachineModel> {
-    let mut states_by_owner = BTreeMap::<String, Vec<StateNode>>::new();
-    let mut transitions_by_owner = BTreeMap::<String, Vec<TransitionNode>>::new();
+    let mut states = Vec::<StateNode>::new();
+    let mut transitions = Vec::<TransitionNode>::new();
+    let initial_state_ids = graph
+        .elements()
+        .iter()
+        .filter(|element| is_initial_transition_marker(element))
+        .filter_map(|element| string_property_any(element, &["target", "target_state", "to"]))
+        .collect::<BTreeSet<_>>();
 
     for element in graph.elements() {
         if is_state_element(element) {
             let owner = owner_id(element).unwrap_or_else(|| "state_machine.root".to_string());
-            states_by_owner
-                .entry(owner.clone())
-                .or_default()
-                .push(StateNode {
-                    id: element.element_id.clone(),
-                    label: element_label(element),
-                    owner_id: owner,
-                    parent_state_id: parent_state_id(element),
-                    is_initial: bool_property(element, &["is_initial", "initial"])
-                        || string_property_any(element, &["purpose", "state_kind", "kind_role"])
-                            .is_some_and(|value| value.eq_ignore_ascii_case("initial")),
-                    is_final: bool_property(element, &["is_final", "final"])
-                        || string_property_any(element, &["purpose", "state_kind", "kind_role"])
-                            .is_some_and(|value| value.eq_ignore_ascii_case("final")),
-                });
+            states.push(StateNode {
+                id: element.element_id.clone(),
+                label: element_label(element),
+                owner_id: owner,
+                parent_state_id: parent_state_id(element),
+                is_initial: initial_state_ids.contains(&element.element_id)
+                    || bool_property(element, &["is_initial", "initial"])
+                    || string_property_any(element, &["purpose", "state_kind", "kind_role"])
+                        .is_some_and(|value| value.eq_ignore_ascii_case("initial")),
+                is_final: bool_property(element, &["is_final", "final"])
+                    || string_property_any(element, &["purpose", "state_kind", "kind_role"])
+                        .is_some_and(|value| value.eq_ignore_ascii_case("final")),
+            });
             continue;
         }
 
@@ -503,20 +507,44 @@ pub fn project_state_machines_from_graph(graph: &Graph) -> Vec<StateMachineModel
                     .map(|(prefix, _)| prefix.to_string())
                     .unwrap_or_else(|| "state_machine.root".to_string())
             });
-            transitions_by_owner
-                .entry(owner.clone())
-                .or_default()
-                .push(TransitionNode {
-                    id: element.element_id.clone(),
-                    owner_id: owner,
-                    source,
-                    target,
-                    trigger: string_property_any(element, &["trigger", "event", "guard"]),
-                    trigger_kind: transition_trigger_kind(element),
-                    guard: element.properties.get("guard").cloned(),
-                    effect: string_property_any(element, &["effect", "effect_action"]),
-                });
+            transitions.push(TransitionNode {
+                id: element.element_id.clone(),
+                owner_id: owner,
+                source,
+                target,
+                trigger: string_property_any(element, &["trigger", "event", "guard"]),
+                trigger_kind: transition_trigger_kind(element),
+                guard: element.properties.get("guard").cloned(),
+                effect: string_property_any(element, &["effect", "effect_action"]),
+            });
         }
+    }
+
+    let state_index = states
+        .iter()
+        .map(|state| (state.id.clone(), state.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let parent_state_ids = states
+        .iter()
+        .filter_map(|state| state.parent_state_id.clone())
+        .collect::<BTreeSet<_>>();
+
+    let mut states_by_owner = BTreeMap::<String, Vec<StateNode>>::new();
+    for state in states {
+        let owner = state_machine_owner_for_state(&state, &state_index, &parent_state_ids);
+        states_by_owner.entry(owner).or_default().push(state);
+    }
+
+    let mut transitions_by_owner = BTreeMap::<String, Vec<TransitionNode>>::new();
+    for transition in transitions {
+        let owner = state_index
+            .get(&transition.source)
+            .map(|state| state_machine_owner_for_state(state, &state_index, &parent_state_ids))
+            .unwrap_or_else(|| transition.owner_id.clone());
+        transitions_by_owner
+            .entry(owner)
+            .or_default()
+            .push(transition);
     }
 
     let mut owners = states_by_owner.keys().cloned().collect::<BTreeSet<_>>();
@@ -543,19 +571,59 @@ pub fn project_state_machines_from_graph(graph: &Graph) -> Vec<StateMachineModel
         .collect()
 }
 
+fn state_machine_owner_for_state(
+    state: &StateNode,
+    state_index: &BTreeMap<String, StateNode>,
+    parent_state_ids: &BTreeSet<String>,
+) -> String {
+    let mut cursor = state;
+    while let Some(parent_id) = &cursor.parent_state_id {
+        let Some(parent) = state_index.get(parent_id) else {
+            break;
+        };
+        cursor = parent;
+    }
+
+    if cursor.parent_state_id.is_none()
+        && parent_state_ids.contains(&cursor.id)
+        && (cursor.owner_id.starts_with("type.") || cursor.owner_id.starts_with("feature."))
+    {
+        cursor.id.clone()
+    } else {
+        cursor.owner_id.clone()
+    }
+}
+
 fn is_state_element(element: &Element) -> bool {
     let kind = element.kind.to_ascii_lowercase();
     kind.contains("stateusage")
         || kind.contains("stateaction")
         || string_property_any(element, &["type", "definition"])
             .is_some_and(|value| value.contains("States::StateAction"))
+        || string_property_any(element, &["metatype"])
+            .is_some_and(|value| value.contains("StateUsage"))
 }
 
 fn is_transition_element(element: &Element) -> bool {
     let kind = element.kind.to_ascii_lowercase();
     kind.contains("transition")
         || kind.contains("succession")
+        || (kind.contains("acceptaction") && element.properties.contains_key("target"))
+        || (string_property_any(element, &["metatype", "type", "definition"]).is_some_and(
+            |value| value.contains("AcceptAction") || value.contains("SuccessionFlow"),
+        ) && element.properties.contains_key("target"))
         || element.element_id.starts_with("transition.")
+}
+
+fn is_initial_transition_marker(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    (kind.contains("succession")
+        || string_property_any(element, &["metatype", "type", "definition"])
+            .is_some_and(|value| value.contains("SuccessionFlow")))
+        && string_property_any(element, &["trigger_kind", "triggerKind"])
+            .is_some_and(|value| value.eq_ignore_ascii_case("completion"))
+        && string_property_any(element, &["source", "source_state", "from"]).is_none()
+        && string_property_any(element, &["target", "target_state", "to"]).is_some()
 }
 
 fn owner_id(element: &Element) -> Option<String> {
