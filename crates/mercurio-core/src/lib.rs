@@ -1,5 +1,6 @@
 pub mod assessment;
 pub mod authoring;
+pub mod behavior;
 pub mod constraints;
 pub mod datalog;
 pub mod derived;
@@ -40,6 +41,10 @@ pub use authoring::{
     QualifiedName, RenderedSpan, SemanticAttribute, SemanticEdit, Usage, ValidationReport,
     WriteBackMode, WriteBackResult, create_empty_model, load_authoring_project_from_kir,
     load_authoring_project_from_sysml,
+};
+pub use behavior::{
+    StateMachineModel, StateNode, TransitionNode, project_state_machines,
+    project_state_machines_from_graph,
 };
 pub use constraints::{
     ConstraintDiagnosticDto, ConstraintExplanationDto, ConstraintGraphEdgeDto,

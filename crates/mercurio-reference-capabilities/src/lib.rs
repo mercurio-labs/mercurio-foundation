@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::BTreeMap;
 
+use mercurio_core::behavior::{StateMachineModel, StateNode};
 use mercurio_core::graph::Element;
+use mercurio_core::project_state_machines;
 use mercurio_core::runtime::Runtime;
 use mercurio_core::views::{RequirementSourceDto, RequirementTableRowDto, requirements_table_view};
 use mercurio_reasoner_api::{
@@ -301,7 +303,7 @@ pub fn analyze_state_machine_simulation(
     context: SemanticContextRef,
     request_id: impl Into<String>,
 ) -> ReasoningReport {
-    let machines = extract_state_machines(runtime);
+    let machines = project_state_machines(runtime);
     let mut findings = Vec::new();
     let mut evidence_nodes = Vec::new();
 
@@ -388,7 +390,7 @@ pub fn analyze_state_machine_simulation(
             ));
         }
 
-        let reachable = reachable_states(machine);
+        let reachable = machine.reachable_state_ids();
         for state in &machine.states {
             if !reachable.is_empty() && !reachable.contains(&state.id) {
                 findings.push(state_finding(
@@ -416,7 +418,7 @@ pub fn analyze_state_machine_simulation(
             }
         }
 
-        for (source, trigger, count) in ambiguous_transition_keys(machine) {
+        for (source, trigger, count) in machine.ambiguous_transition_keys() {
             findings.push(ReasoningFinding {
                 id: format!(
                     "finding.state_machine.ambiguous_transition.{}.{}",
@@ -455,6 +457,7 @@ pub fn analyze_state_machine_simulation(
                 "label": state.label,
                 "isInitial": state.is_initial,
                 "isFinal": state.is_final,
+                "parentState": state.parent_state_id,
             })).collect::<Vec<_>>(),
             "transitions": machine.transitions.iter().map(|transition| json!({
                 "id": transition.id,
@@ -549,169 +552,6 @@ fn impact_evidence_node(
     }
 }
 
-#[derive(Debug, Clone)]
-struct StateMachineModel {
-    id: String,
-    label: String,
-    states: Vec<StateNode>,
-    transitions: Vec<TransitionNode>,
-}
-
-#[derive(Debug, Clone)]
-struct StateNode {
-    id: String,
-    label: String,
-    is_initial: bool,
-    is_final: bool,
-}
-
-#[derive(Debug, Clone)]
-struct TransitionNode {
-    id: String,
-    source: String,
-    target: String,
-    trigger: Option<String>,
-}
-
-fn extract_state_machines(runtime: &Runtime) -> Vec<StateMachineModel> {
-    let graph = runtime.graph();
-    let mut states_by_owner = BTreeMap::<String, Vec<StateNode>>::new();
-    let mut transitions_by_owner = BTreeMap::<String, Vec<TransitionNode>>::new();
-
-    for element in graph.elements() {
-        if is_state_element(element) {
-            let owner = owner_id(element).unwrap_or_else(|| "state_machine.root".to_string());
-            states_by_owner
-                .entry(owner.clone())
-                .or_default()
-                .push(StateNode {
-                    id: element.element_id.clone(),
-                    label: element_label(element),
-                    is_initial: bool_property(element, &["is_initial", "initial"])
-                        || string_property_any(element, &["purpose", "state_kind", "kind_role"])
-                            .is_some_and(|value| value.eq_ignore_ascii_case("initial")),
-                    is_final: bool_property(element, &["is_final", "final"])
-                        || string_property_any(element, &["purpose", "state_kind", "kind_role"])
-                            .is_some_and(|value| value.eq_ignore_ascii_case("final")),
-                });
-            continue;
-        }
-
-        if is_transition_element(element)
-            && let (Some(source), Some(target)) = (
-                string_property_any(element, &["source", "source_state", "from"]),
-                string_property_any(element, &["target", "target_state", "to"]),
-            )
-        {
-            let owner = owner_id(element).unwrap_or_else(|| {
-                source
-                    .rsplit_once(['.', ':', '/'])
-                    .map(|(prefix, _)| prefix.to_string())
-                    .unwrap_or_else(|| "state_machine.root".to_string())
-            });
-            transitions_by_owner
-                .entry(owner.clone())
-                .or_default()
-                .push(TransitionNode {
-                    id: element.element_id.clone(),
-                    source,
-                    target,
-                    trigger: string_property_any(element, &["trigger", "event", "guard"]),
-                });
-        }
-    }
-
-    let mut owners = states_by_owner.keys().cloned().collect::<BTreeSet<_>>();
-    owners.extend(transitions_by_owner.keys().cloned());
-
-    owners
-        .into_iter()
-        .map(|owner| {
-            let mut states = states_by_owner.remove(&owner).unwrap_or_default();
-            states.sort_by(|left, right| left.id.cmp(&right.id));
-            let mut transitions = transitions_by_owner.remove(&owner).unwrap_or_default();
-            transitions.sort_by(|left, right| left.id.cmp(&right.id));
-            StateMachineModel {
-                label: owner
-                    .rsplit(['.', ':', '/'])
-                    .find(|part| !part.is_empty())
-                    .unwrap_or(&owner)
-                    .to_string(),
-                id: owner,
-                states,
-                transitions,
-            }
-        })
-        .collect()
-}
-
-fn is_state_element(element: &Element) -> bool {
-    let kind = element.kind.to_ascii_lowercase();
-    kind.contains("stateusage")
-        || kind.contains("stateaction")
-        || string_property_any(element, &["type", "definition"])
-            .is_some_and(|value| value.contains("States::StateAction"))
-}
-
-fn is_transition_element(element: &Element) -> bool {
-    let kind = element.kind.to_ascii_lowercase();
-    kind.contains("transition")
-        || kind.contains("succession")
-        || element.element_id.starts_with("transition.")
-}
-
-fn owner_id(element: &Element) -> Option<String> {
-    string_property_any(
-        element,
-        &[
-            "owner",
-            "owning_type",
-            "owning_definition",
-            "owning_namespace",
-        ],
-    )
-}
-
-fn reachable_states(machine: &StateMachineModel) -> BTreeSet<String> {
-    let mut reachable = BTreeSet::new();
-    let mut queue = VecDeque::new();
-    for state in machine.states.iter().filter(|state| state.is_initial) {
-        reachable.insert(state.id.clone());
-        queue.push_back(state.id.clone());
-    }
-
-    while let Some(state_id) = queue.pop_front() {
-        for transition in machine
-            .transitions
-            .iter()
-            .filter(|transition| transition.source == state_id)
-        {
-            if reachable.insert(transition.target.clone()) {
-                queue.push_back(transition.target.clone());
-            }
-        }
-    }
-
-    reachable
-}
-
-fn ambiguous_transition_keys(machine: &StateMachineModel) -> Vec<(String, String, usize)> {
-    let mut counts = BTreeMap::<(String, String), usize>::new();
-    for transition in &machine.transitions {
-        let trigger = transition
-            .trigger
-            .clone()
-            .unwrap_or_else(|| "<untriggered>".to_string());
-        *counts
-            .entry((transition.source.clone(), trigger))
-            .or_default() += 1;
-    }
-    counts
-        .into_iter()
-        .filter_map(|((source, trigger), count)| (count > 1).then_some((source, trigger, count)))
-        .collect()
-}
-
 fn machine_finding(
     machine: &StateMachineModel,
     code: &str,
@@ -789,28 +629,6 @@ fn element_label(element: &Element) -> String {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| element.element_id.clone())
-}
-
-fn string_property_any(element: &Element, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        element
-            .properties
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn bool_property(element: &Element, keys: &[&str]) -> bool {
-    keys.iter().any(|key| {
-        element
-            .properties
-            .get(*key)
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    })
 }
 
 fn sanitize_identifier(value: &str) -> String {
