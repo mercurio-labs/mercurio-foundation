@@ -2,6 +2,7 @@
   "allowed_core_crates": [
     "mercurio-cli",
     "mercurio-core",
+    "mercurio-kir",
     "mercurio-python",
     "mercurio-tools",
     "mercurio-wasm"

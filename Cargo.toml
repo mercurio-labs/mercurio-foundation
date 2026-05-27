@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/mercurio-kir",
     "crates/mercurio-core",
     "crates/mercurio-cli",
     "crates/mercurio-python",

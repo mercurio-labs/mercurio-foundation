@@ -1,12 +1,9 @@
 [package]
-name = "mercurio-core"
+name = "mercurio-kir"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-
 [dependencies]
-mercurio-kir = { path = "../mercurio-kir" }
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-zip.workspace = true

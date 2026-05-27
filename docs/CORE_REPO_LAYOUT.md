@@ -347,9 +347,10 @@ Some of these contain useful deterministic substrate. The rule is:
 
 ### Phase 2: Extract KIR Crate
 
-- Create `mercurio-kir`.
-- Move KIR document/element/field/metadata/validation APIs.
-- Re-export from existing `mercurio-core` temporarily for compatibility.
+- Created `mercurio-kir`.
+- Moved KIR document/element/field/validation APIs.
+- Re-exported from existing `mercurio-core` temporarily for compatibility.
+- Kept core-specific model-stack loading in `mercurio-core::ir`.
 
 ### Phase 3: Extract Language and Compiler
 

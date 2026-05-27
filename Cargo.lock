@@ -822,9 +822,18 @@ dependencies = [
 name = "mercurio-core"
 version = "0.1.0"
 dependencies = [
+ "mercurio-kir",
  "serde",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "mercurio-kir"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
