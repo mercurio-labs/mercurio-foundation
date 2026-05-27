@@ -34,6 +34,16 @@ Run graph subtype queries, feature queries, and a derived value calculation agai
 cargo run -p mercurio-tools --bin runtime_demo
 ```
 
+## Check Repository Boundaries
+
+Check that crates and root directories are classified by the core repository boundary manifest:
+
+```powershell
+cargo run -p mercurio-tools --bin check_repo_boundaries
+```
+
+Use `--strict` after the known migration crates have moved out of `mercurio-core`.
+
 ## Diagnose Example Corpus
 
 Compile the default example corpus and emit a JSON diagnostic summary:

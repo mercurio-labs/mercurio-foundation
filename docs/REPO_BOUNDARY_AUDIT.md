@@ -69,6 +69,25 @@ KIR + parser + compiler + stdlib + deterministic graph/query/runtime
 4. Product UI must consume artifacts and reports; it must not implement semantic analysis.
 5. Every major capability must be runnable headlessly before receiving a custom UI.
 
+## Boundary Check
+
+The mechanical boundary manifest lives at `repo-boundaries.json`.
+
+Run the non-strict check during the transition:
+
+```powershell
+cargo run -p mercurio-tools --bin check_repo_boundaries
+```
+
+This permits known migration crates while failing on unclassified crates or root
+directories that belong in peer repositories.
+
+Run the strict check once the reasoning/API/plugin/AI crates have moved:
+
+```powershell
+cargo run -p mercurio-tools --bin check_repo_boundaries -- --strict
+```
+
 ## Restructure Order
 
 1. Clean working trees and ignore generated cache outputs.

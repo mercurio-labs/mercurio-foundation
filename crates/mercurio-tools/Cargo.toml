@@ -25,6 +25,10 @@ name = "compare_pilot_semantics"
 path = "src/bin/compare_pilot_semantics.rs"
 
 [[bin]]
+name = "check_repo_boundaries"
+path = "src/bin/check_repo_boundaries.rs"
+
+[[bin]]
 name = "import_pilot_stdlib"
 path = "src/bin/import_pilot_stdlib.rs"
 
