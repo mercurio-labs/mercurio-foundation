@@ -49,8 +49,8 @@ Examples from the pilot:
 
 Those come from:
 
-- `../SysML-v2-Pilot-Implementation/org.omg.sysml.xtext/src/org/omg/sysml/xtext/SysML.xtext`
-- `../SysML-v2-Pilot-Implementation/org.omg.kerml.xtext/src/org/omg/kerml/xtext/KerML.xtext`
+- `../external/SysML-v2-Pilot-Implementation/org.omg.sysml.xtext/src/org/omg/sysml/xtext/SysML.xtext`
+- `../external/SysML-v2-Pilot-Implementation/org.omg.kerml.xtext/src/org/omg/kerml/xtext/KerML.xtext`
 
 2. The Ecore metamodel defines supertypes, structural features, and documentation.
 
@@ -64,8 +64,8 @@ Examples from the pilot:
 
 Those come from:
 
-- `../SysML-v2-Pilot-Implementation/org.omg.sysml/model/SysML.ecore`
-- `../SysML-v2-Pilot-Implementation/org.omg.sysml/model/kerml.ecore`
+- `../external/SysML-v2-Pilot-Implementation/org.omg.sysml/model/SysML.ecore`
+- `../external/SysML-v2-Pilot-Implementation/org.omg.sysml/model/kerml.ecore`
 
 ## What We Cannot Pull Directly From The Pilot
 

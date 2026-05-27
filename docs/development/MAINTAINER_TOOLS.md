@@ -12,7 +12,7 @@ Peer repository roots can be supplied either by command-line flags or environmen
 
 ```powershell
 $env:MERCURIO_WORKSPACE_ROOT = "C:\dev\git\mercurio"
-$env:MERCURIO_PILOT_ROOT = "C:\dev\git\mercurio\SysML-v2-Pilot-Implementation"
+$env:MERCURIO_PILOT_ROOT = "C:\dev\git\mercurio\external\SysML-v2-Pilot-Implementation"
 $env:MERCURIO_EXAMPLES_ROOT = "C:\dev\git\mercurio\mercurio-examples"
 ```
 

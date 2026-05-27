@@ -14,14 +14,18 @@ The current local workspace is:
 ```text
 C:\dev\git\mercurio\
   mercurio-core\
+  mercurio-examples\
   mercurio-product\
-  SysML-v2-Pilot-Implementation\
-  SysMLv2Example\
-  sysml-project-test1\
+  mercurio-reasoning\
+
+  external\
+    SysML-v2-Pilot-Implementation\
+    SysMLv2Example\
+    sysml-project-test1\
 ```
 
-This is already close to the desired peer layout. `SysML-v2-Pilot-Implementation`
-should remain a sibling checkout, not a vendored subtree inside `mercurio-core`.
+Upstream/reference checkouts live under `external/`, not as vendored subtrees
+inside `mercurio-core`.
 
 ## Recommended Target Workspace
 
@@ -130,7 +134,7 @@ Recommended placement:
 C:\dev\git\mercurio\external\SysML-v2-Pilot-Implementation\
 ```
 
-Current accepted placement:
+Legacy accepted placement:
 
 ```text
 C:\dev\git\mercurio\SysML-v2-Pilot-Implementation\
@@ -152,7 +156,7 @@ Preferred environment variables:
 
 ```powershell
 $env:MERCURIO_WORKSPACE_ROOT = "C:\dev\git\mercurio"
-$env:MERCURIO_PILOT_ROOT = "C:\dev\git\mercurio\SysML-v2-Pilot-Implementation"
+$env:MERCURIO_PILOT_ROOT = "C:\dev\git\mercurio\external\SysML-v2-Pilot-Implementation"
 $env:MERCURIO_EXAMPLES_ROOT = "C:\dev\git\mercurio\mercurio-examples"
 ```
 
@@ -170,8 +174,8 @@ The `mercurio-tools` Pilot-facing binaries now honor these variables. If
 3. `../external/SysML-v2-Pilot-Implementation`
 4. `../SysML-v2-Pilot-Implementation`
 
-This preserves the current sibling checkout while allowing the cleaner
-`external/` placement later.
+This preserves legacy sibling checkouts while preferring the cleaner
+`external/` placement.
 
 Local project config may also point to peers:
 
@@ -180,7 +184,7 @@ Local project config may also point to peers:
 root = ".."
 
 [pilot]
-root = "../SysML-v2-Pilot-Implementation"
+root = "../external/SysML-v2-Pilot-Implementation"
 
 [examples]
 root = "../mercurio-examples"
@@ -203,7 +207,7 @@ root = "../mercurio-examples"
 3. Create `mercurio-examples` when the example corpus becomes too large or noisy for core.
 4. Move large examples and expected outputs from core to `mercurio-examples`.
 5. Keep a minimal smoke-test set in `mercurio-core/examples`.
-6. Optionally move upstream checkouts under `external/` once all tools use configured paths.
+6. Keep upstream checkouts under `external/` once all tools use configured paths.
 
 ## Dependency Direction
 
