@@ -6,11 +6,11 @@ use mercurio_core::frontend::resolver::resolve_module;
 use mercurio_core::frontend::sysml::parse_sysml;
 use mercurio_core::frontend::transpile::{MappingBundle, transpile_module};
 use mercurio_core::{KirDocument, default_stdlib_path, repo_path};
+use mercurio_tools::default_pilot_root;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-const DEFAULT_PILOT_ROOT: &str = "../SysML-v2-Pilot-Implementation";
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
     let stdlib = KirDocument::from_path(&default_stdlib_path())?;
@@ -167,7 +167,7 @@ impl AuditCorpus {
 }
 
 fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
-    let mut pilot_root = PathBuf::from(DEFAULT_PILOT_ROOT);
+    let mut pilot_root = default_pilot_root();
     let mut corpus = AuditCorpus::Small;
     let mut output_path = None;
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -549,7 +549,7 @@ enum FeatureTagRuleMode {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use mercurio_tools::default_pilot_root;
 
     use super::{AuditStatus, PilotCorpusSeed, classify_transpile_error, detect_feature_tags};
 
@@ -637,14 +637,14 @@ mod tests {
 
     #[test]
     fn discovers_training_corpus_from_pilot_root() {
-        let pilot_root = Path::new("../SysML-v2-Pilot-Implementation");
+        let pilot_root = default_pilot_root();
         if !pilot_root.exists() {
             return;
         }
 
         let seed = PilotCorpusSeed::load().unwrap();
         let paths = super::AuditCorpus::Training
-            .paths(&seed, pilot_root)
+            .paths(&seed, &pilot_root)
             .unwrap();
 
         assert!(paths.len() >= 100);

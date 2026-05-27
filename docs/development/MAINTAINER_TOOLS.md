@@ -8,6 +8,16 @@ The `mercurio-tools` crate contains diagnostics, benchmark, demo, and Pilot comp
 
 Pilot comparison tools expect a Pilot checkout or exported Pilot artifacts. Java is required only for the Pilot helper under `tools/pilot-exporter`.
 
+Peer repository roots can be supplied either by command-line flags or environment variables:
+
+```powershell
+$env:MERCURIO_WORKSPACE_ROOT = "C:\dev\git\mercurio"
+$env:MERCURIO_PILOT_ROOT = "C:\dev\git\mercurio\SysML-v2-Pilot-Implementation"
+$env:MERCURIO_EXAMPLES_ROOT = "C:\dev\git\mercurio\mercurio-examples"
+```
+
+If `MERCURIO_PILOT_ROOT` is unset, Pilot-facing tools look under `MERCURIO_WORKSPACE_ROOT\SysML-v2-Pilot-Implementation`, then `MERCURIO_WORKSPACE_ROOT\external\SysML-v2-Pilot-Implementation`. Without `MERCURIO_WORKSPACE_ROOT`, they fall back to `../external/SysML-v2-Pilot-Implementation` and then `../SysML-v2-Pilot-Implementation`.
+
 ## Inspect Connection Resolution
 
 Dump parsed connection declarations and resolved usages for a SysML file:
@@ -66,11 +76,19 @@ Audit a Pilot corpus:
 cargo run -p mercurio-tools --bin audit_pilot_corpus -- --corpus small --pilot-root path/to/pilot --out target/pilot-audit.json
 ```
 
+With `MERCURIO_PILOT_ROOT` configured, `--pilot-root` may be omitted:
+
+```powershell
+cargo run -p mercurio-tools --bin audit_pilot_corpus -- --corpus small --out target/pilot-audit.json
+```
+
 Compare one KerML example:
 
 ```powershell
 cargo run -p mercurio-tools --bin compare_kerml_examples -- --examples-root examples/kerml/examples --relative-path "Vehicle Example/VehicleDefinitions.kerml" --pilot-root path/to/pilot --out target/kerml-compare.json
 ```
+
+`compare_kerml_examples` also honors `MERCURIO_EXAMPLES_ROOT`. If that variable points at the `mercurio-examples` repository root, the tool uses its `kerml/examples` folder.
 
 Compare Pilot AST, compile diagnostics, or semantics for one case:
 

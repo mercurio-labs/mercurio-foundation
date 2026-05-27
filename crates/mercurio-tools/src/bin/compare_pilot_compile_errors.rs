@@ -9,11 +9,10 @@ use mercurio_core::source_set::{
     SourceCompileContext, SourceDocument, compile_source_document_with_context,
 };
 use mercurio_core::{KirDocument, default_stdlib_path, repo_path};
+use mercurio_tools::default_pilot_root;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-
-const DEFAULT_PILOT_ROOT: &str = "../SysML-v2-Pilot-Implementation";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
@@ -535,7 +534,7 @@ struct PilotCorpusSpecCase<'a> {
 }
 
 fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
-    let mut pilot_root = PathBuf::from(DEFAULT_PILOT_ROOT);
+    let mut pilot_root = default_pilot_root();
     let mut relative_path = None;
     let mut corpus_name = None;
     let mut paths_file = None;

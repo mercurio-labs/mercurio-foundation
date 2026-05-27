@@ -162,6 +162,17 @@ If an `external/` folder is adopted:
 $env:MERCURIO_PILOT_ROOT = "C:\dev\git\mercurio\external\SysML-v2-Pilot-Implementation"
 ```
 
+The `mercurio-tools` Pilot-facing binaries now honor these variables. If
+`MERCURIO_PILOT_ROOT` is not set, they resolve the Pilot checkout in this order:
+
+1. `MERCURIO_WORKSPACE_ROOT\SysML-v2-Pilot-Implementation`
+2. `MERCURIO_WORKSPACE_ROOT\external\SysML-v2-Pilot-Implementation`
+3. `../external/SysML-v2-Pilot-Implementation`
+4. `../SysML-v2-Pilot-Implementation`
+
+This preserves the current sibling checkout while allowing the cleaner
+`external/` placement later.
+
 Local project config may also point to peers:
 
 ```toml
@@ -188,7 +199,7 @@ root = "../mercurio-examples"
 ## Migration Steps
 
 1. Keep current sibling Pilot checkout working.
-2. Add or document `MERCURIO_PILOT_ROOT` for tools that compare against Pilot.
+2. Use `MERCURIO_PILOT_ROOT` or `MERCURIO_WORKSPACE_ROOT` for tools that compare against Pilot.
 3. Create `mercurio-examples` when the example corpus becomes too large or noisy for core.
 4. Move large examples and expected outputs from core to `mercurio-examples`.
 5. Keep a minimal smoke-test set in `mercurio-core/examples`.

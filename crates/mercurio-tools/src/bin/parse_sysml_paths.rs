@@ -2,11 +2,10 @@ use std::env;
 use std::path::PathBuf;
 
 use mercurio_core::frontend::sysml::parse_sysml;
-
-const DEFAULT_PILOT_ROOT: &str = "../SysML-v2-Pilot-Implementation";
+use mercurio_tools::default_pilot_root;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut pilot_root = PathBuf::from(DEFAULT_PILOT_ROOT);
+    let mut pilot_root = default_pilot_root();
     let mut paths_file = None;
     let args = env::args().skip(1).collect::<Vec<_>>();
     let mut index = 0;
