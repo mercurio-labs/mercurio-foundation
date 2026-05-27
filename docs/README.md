@@ -10,6 +10,7 @@ UI and desktop/web product docs live in the sibling repo at `../../mercurio-ui/d
 - [Development Docs](development/README.md): architecture notes, implementation plans, runtime design, and engineering references.
 - [Core Repo Layout](CORE_REPO_LAYOUT.md): target open-core repository structure and migration boundaries.
 - [Repo Boundary Audit](REPO_BOUNDARY_AUDIT.md): current crate/module classification before the physical split.
+- [Peer Repository Layout](PEER_REPOSITORY_LAYOUT.md): placement rules for Pilot, examples, and sibling Mercurio repos.
 
 ## User Guides
 
