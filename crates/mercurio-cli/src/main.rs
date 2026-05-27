@@ -11,8 +11,10 @@ use mercurio_core::frontend::sysml::{compile_sysml_text_with_context_report, par
 use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
     LintSeverity, PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet,
-    Runtime, SemanticCompileStatus, SourceLanguage, StateMachineModel, default_stdlib_path,
-    lint_text, parse_query, project_state_machines, resolve_project_context, write_kpar_package,
+    Runtime, SemanticCompileStatus, SourceLanguage, StateMachineExecutionReport,
+    StateMachineExecutionStatus, StateMachineModel, StateMachineScenario,
+    StateMachineScenarioEvent, default_stdlib_path, lint_text, parse_query, project_state_machines,
+    resolve_project_context, write_kpar_package,
 };
 use mercurio_reasoner_api::{
     CapabilityDescriptor, ReasoningReport, ReasoningStatus, SemanticArtifactRef,
@@ -21,7 +23,7 @@ use mercurio_reasoner_api::{
 use mercurio_reference_capabilities::{
     analyze_requirement_coverage, builtin_reasoning_capabilities,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Parser)]
@@ -146,6 +148,7 @@ enum ReasonSubcommand {
     Capabilities(ReasonCapabilitiesCommand),
     RequirementCoverage(RequirementCoverageCommand),
     StateMachineProjection(StateMachineProjectionCommand),
+    StateMachineRun(StateMachineRunCommand),
 }
 
 #[derive(Debug, Args)]
@@ -184,6 +187,32 @@ struct StateMachineProjectionCommand {
     format: OutputFormat,
     #[arg(long)]
     stdlib: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct StateMachineRunCommand {
+    #[command(flatten)]
+    input: SingleInput,
+    #[arg(long)]
+    kir: Option<PathBuf>,
+    #[arg(long)]
+    kpar: Option<PathBuf>,
+    #[arg(long, value_enum)]
+    language: Option<LanguageArg>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+    #[arg(long)]
+    stdlib: Option<PathBuf>,
+    #[arg(long)]
+    machine: Option<String>,
+    #[arg(long = "event")]
+    events: Vec<String>,
+    #[arg(long)]
+    scenario: Option<PathBuf>,
+    #[arg(long)]
+    initial_state: Option<String>,
+    #[arg(long, default_value_t = 64)]
+    max_steps: usize,
 }
 
 #[derive(Debug, Args)]
@@ -550,6 +579,7 @@ fn run_reason(command: ReasonCommand) -> Result<RunResult, CliError> {
         ReasonSubcommand::Capabilities(command) => run_reason_capabilities(command),
         ReasonSubcommand::RequirementCoverage(command) => run_requirement_coverage(command),
         ReasonSubcommand::StateMachineProjection(command) => run_state_machine_projection(command),
+        ReasonSubcommand::StateMachineRun(command) => run_state_machine_run(command),
     }
 }
 
@@ -598,6 +628,28 @@ fn run_state_machine_projection(
 
     Ok(RunResult {
         exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_state_machine_run(command: StateMachineRunCommand) -> Result<RunResult, CliError> {
+    let model = read_state_machine_run_model_input(&command)?;
+    let runtime = Runtime::from_document(model.document)
+        .map_err(|err| CliError::execution(format!("failed to build runtime: {err}")))?;
+    let machines = project_state_machines(&runtime);
+    let machine = select_state_machine(&machines, command.machine.as_deref())?;
+    let scenario = read_state_machine_scenario(&command)?;
+    let report = machine.execute_scenario(&scenario);
+    let stdout = match command.format {
+        OutputFormat::Json => to_pretty_json(&report)?,
+        OutputFormat::Text => format_state_machine_execution_text(&report),
+    };
+
+    Ok(RunResult {
+        exit_code: match report.status {
+            StateMachineExecutionStatus::Completed => 0,
+            StateMachineExecutionStatus::Blocked | StateMachineExecutionStatus::Failed => 1,
+        },
         stdout,
     })
 }
@@ -1023,6 +1075,148 @@ fn read_state_machine_projection_model_input(
         stdlib: command.stdlib.clone(),
     };
     read_query_model_input(&query_command)
+}
+
+fn read_state_machine_run_model_input(
+    command: &StateMachineRunCommand,
+) -> Result<QueryModelInput, CliError> {
+    let query_command = QueryCommand {
+        input: command.input.clone(),
+        kir: command.kir.clone(),
+        kpar: command.kpar.clone(),
+        query: Some("from elements select id limit 1".to_string()),
+        query_file: None,
+        language: command.language,
+        format: command.format,
+        stdlib: command.stdlib.clone(),
+    };
+    read_query_model_input(&query_command)
+}
+
+fn select_state_machine<'a>(
+    machines: &'a [StateMachineModel],
+    selector: Option<&str>,
+) -> Result<&'a StateMachineModel, CliError> {
+    if machines.is_empty() {
+        return Err(CliError::execution("no state machines found"));
+    }
+    if let Some(selector) = selector {
+        let matches = machines
+            .iter()
+            .filter(|machine| {
+                machine.id == selector
+                    || machine.label == selector
+                    || machine.id.ends_with(selector)
+                    || machine.label.ends_with(selector)
+            })
+            .collect::<Vec<_>>();
+        return match matches.as_slice() {
+            [machine] => Ok(*machine),
+            [] => Err(CliError::execution(format!(
+                "no state machine matched `{selector}`"
+            ))),
+            _ => Err(CliError::execution(format!(
+                "state machine selector `{selector}` matched multiple machines"
+            ))),
+        };
+    }
+    if machines.len() == 1 {
+        Ok(&machines[0])
+    } else {
+        Err(CliError::usage(
+            "multiple state machines found; provide --machine",
+        ))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ScenarioFile {
+    id: Option<String>,
+    initial_state_id: Option<String>,
+    #[serde(alias = "initialStateId")]
+    initial_state_id_camel: Option<String>,
+    events: Vec<ScenarioFileEvent>,
+    max_steps: Option<usize>,
+    #[serde(alias = "maxSteps")]
+    max_steps_camel: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ScenarioFileEvent {
+    Trigger(String),
+    Object { id: Option<String>, trigger: String },
+}
+
+fn read_state_machine_scenario(
+    command: &StateMachineRunCommand,
+) -> Result<StateMachineScenario, CliError> {
+    if let Some(path) = &command.scenario {
+        if !command.events.is_empty() {
+            return Err(CliError::usage(
+                "provide either --scenario or repeated --event values, not both",
+            ));
+        }
+        let content = std::fs::read_to_string(path).map_err(|err| {
+            CliError::execution(format!(
+                "failed to read scenario file {}: {err}",
+                path.display()
+            ))
+        })?;
+        let parsed: ScenarioFile = serde_json::from_str(&content).map_err(|err| {
+            CliError::execution(format!(
+                "failed to parse scenario file {}: {err}",
+                path.display()
+            ))
+        })?;
+        let initial_state_id = parsed
+            .initial_state_id
+            .or(parsed.initial_state_id_camel)
+            .or_else(|| command.initial_state.clone());
+        return Ok(StateMachineScenario {
+            id: parsed.id.unwrap_or_else(|| "cli.scenario".to_string()),
+            initial_state_id,
+            events: parsed
+                .events
+                .into_iter()
+                .enumerate()
+                .map(|(index, event)| match event {
+                    ScenarioFileEvent::Trigger(trigger) => StateMachineScenarioEvent {
+                        id: format!("event.{}", index + 1),
+                        trigger,
+                    },
+                    ScenarioFileEvent::Object { id, trigger } => StateMachineScenarioEvent {
+                        id: id.unwrap_or_else(|| format!("event.{}", index + 1)),
+                        trigger,
+                    },
+                })
+                .collect(),
+            max_steps: parsed
+                .max_steps
+                .or(parsed.max_steps_camel)
+                .unwrap_or(command.max_steps),
+        });
+    }
+
+    if command.events.is_empty() {
+        return Err(CliError::usage(
+            "provide at least one --event or a --scenario file",
+        ));
+    }
+    Ok(StateMachineScenario {
+        id: "cli.scenario".to_string(),
+        initial_state_id: command.initial_state.clone(),
+        events: command
+            .events
+            .iter()
+            .enumerate()
+            .map(|(index, trigger)| StateMachineScenarioEvent {
+                id: format!("event.{}", index + 1),
+                trigger: trigger.clone(),
+            })
+            .collect(),
+        max_steps: command.max_steps,
+    })
 }
 
 fn cli_semantic_context(source: &str, operation: &str, runtime: &Runtime) -> SemanticContextRef {
@@ -1966,6 +2160,39 @@ fn format_state_machine_projection_text(machines: &[StateMachineModel]) -> Strin
     output
 }
 
+fn format_state_machine_execution_text(report: &StateMachineExecutionReport) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("machine: {}\n", report.machine_id));
+    output.push_str(&format!("status: {:?}\n", report.status));
+    output.push_str("active_configuration:\n");
+    for state_id in &report.active_configuration {
+        output.push_str(&format!("- {state_id}\n"));
+    }
+    output.push_str(&format!("steps: {}\n", report.steps.len()));
+    for step in &report.steps {
+        output.push_str(&format!(
+            "- step {} event={} trigger={} transition={}\n",
+            step.step,
+            step.event_id.as_deref().unwrap_or("-"),
+            step.trigger.as_deref().unwrap_or("-"),
+            step.transition_id.as_deref().unwrap_or("-")
+        ));
+        output.push_str(&format!("  before: {}\n", step.before.join(", ")));
+        output.push_str(&format!("  after: {}\n", step.after.join(", ")));
+        output.push_str(&format!("  {}\n", step.explanation));
+    }
+    if !report.diagnostics.is_empty() {
+        output.push_str(&format!("diagnostics: {}\n", report.diagnostics.len()));
+        for diagnostic in &report.diagnostics {
+            output.push_str(&format!(
+                "- {:?}: {} ({})\n",
+                diagnostic.severity, diagnostic.message, diagnostic.code
+            ));
+        }
+    }
+    output
+}
+
 fn format_reason_capabilities_text(capabilities: &[CapabilityDescriptor]) -> String {
     let mut output = String::new();
     for capability in capabilities {
@@ -2841,6 +3068,39 @@ mod tests {
                     transition["id"] == "transition.ServerBehavior.timeout"
                         && transition["trigger_kind"] == "after"
                 })
+        );
+    }
+
+    #[test]
+    fn reason_state_machine_run_executes_local_clock_events() {
+        let path = mercurio_core::repo_path(
+            "examples/src/training/25. Transitions/Local Clock Example.sysml",
+        );
+        let result = run_args(&[
+            "reason",
+            "state-machine-run",
+            "--file",
+            path.to_str().unwrap(),
+            "--machine",
+            "ServerBehavior",
+            "--event",
+            "Start",
+            "--event",
+            "request",
+            "--event",
+            "after 5 [ SI :: min ]",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(json["status"], "completed");
+        assert_eq!(json["steps"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            json["active_configuration"][1],
+            "state.Local Clock Example.Server.ServerBehavior.waiting"
         );
     }
 

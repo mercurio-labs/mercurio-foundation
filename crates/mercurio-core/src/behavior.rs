@@ -170,11 +170,14 @@ impl StateMachineModel {
             .iter()
             .filter(|state| state.parent_state_id.is_none() && state.is_initial)
             .collect::<Vec<_>>();
-        if top_initial_states.is_empty() && !self.states.is_empty() {
+        if top_initial_states.is_empty()
+            && !self.states.is_empty()
+            && self.default_root_state_id().is_none()
+        {
             findings.push(self.machine_finding(
                 "no_initial_state",
                 StateMachineValidationSeverity::Error,
-                "Structural simulation needs one top-level initial state.",
+                "Structural simulation needs one top-level initial state or one compound root with an initial child.",
             ));
         }
         if top_initial_states.len() > 1 {
@@ -274,6 +277,7 @@ impl StateMachineModel {
                     .find(|state| state.parent_state_id.is_none() && state.is_initial)
                     .map(|state| &state.id)
             })
+            .or_else(|| self.default_root_state_id())
             .and_then(|state_id| self.enter_state_configuration(state_id))
         {
             Some(configuration) => configuration,
@@ -381,6 +385,24 @@ impl StateMachineModel {
             };
             configuration.push(initial_child.id.clone());
             current = initial_child.id.clone();
+        }
+    }
+
+    fn default_root_state_id(&self) -> Option<&String> {
+        let roots = self
+            .states
+            .iter()
+            .filter(|state| state.parent_state_id.is_none())
+            .collect::<Vec<_>>();
+        match roots.as_slice() {
+            [root]
+                if self.states.iter().any(|state| {
+                    state.parent_state_id.as_deref() == Some(root.id.as_str()) && state.is_initial
+                }) =>
+            {
+                Some(&root.id)
+            }
+            _ => None,
         }
     }
 
