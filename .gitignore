@@ -8,5 +8,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+**/.mercurio/cache/
+**/.mercurio/cache/**
 
 /.idea/
