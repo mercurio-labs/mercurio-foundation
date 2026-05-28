@@ -25,6 +25,7 @@ pub mod proposal;
 pub mod query;
 pub mod runtime;
 pub mod semantic_compare;
+pub mod simulation;
 pub mod source_set;
 pub mod syntax_compare;
 pub mod views;
