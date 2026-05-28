@@ -40,8 +40,13 @@ path = "src/bin/inspect_connection.rs"
 name = "runtime_demo"
 path = "src/bin/runtime_demo.rs"
 
+[[bin]]
+name = "generate_sample_views"
+path = "src/bin/generate_sample_views.rs"
+
 [dependencies]
 mercurio-core = { path = "../mercurio-core" }
+mercurio-views = { path = "../mercurio-views" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true

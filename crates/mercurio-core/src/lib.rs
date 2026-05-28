@@ -4,7 +4,6 @@ pub mod behavior;
 pub mod constraints;
 pub mod datalog;
 pub mod derived;
-pub mod diagrams;
 pub mod expression;
 pub mod feasibility;
 pub mod frontend;
@@ -63,11 +62,6 @@ pub use datalog::{
     materialize_core_indexes,
 };
 pub use derived::{DerivedPropertySource, DerivedPropertyValue, derived_properties};
-pub use diagrams::{
-    DiagramAttributeDto, DiagramDirectionDto, DiagramEdgeDto, DiagramKindDto,
-    DiagramLayoutOptionsDto, DiagramNodeDto, DiagramQueryOptionsDto, DiagramRenderRequestDto,
-    DiagramSpecDto, DiagramStyleOptionsDto, DiagramViewDto, list_diagram_kinds, render_diagram,
-};
 pub use expression::{
     BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
     ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,

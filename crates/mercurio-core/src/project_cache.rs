@@ -655,7 +655,7 @@ mod tests {
         let root = temp_dir("persistent_changed_descriptor");
         let cache = PersistentProjectCache::for_workspace_root(&root);
         let library_context = test_library_context();
-        let descriptor_path = root.join("mercurio-project.json");
+        let descriptor_path = root.join(".mercurio-project.json");
         let sources = vec![SourceDocument::new(
             "demo.sysml",
             "package Demo { part def Thing; }",

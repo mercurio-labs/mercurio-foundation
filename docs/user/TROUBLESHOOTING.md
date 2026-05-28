@@ -28,11 +28,11 @@ mercurio compile --text "package Demo { classifier Vehicle; }" --language kerml
 
 ## Descriptor Not Found Or Wrong Libraries
 
-Semantic commands discover `mercurio-project.json` by walking upward from the input path. If a command appears to use the wrong libraries:
+Semantic commands discover `.mercurio-project.json` by walking upward from the input path. If a command appears to use the wrong libraries:
 
 - run the command from the expected project root
 - check which file path is used as the command input
-- verify relative provider paths are relative to `mercurio-project.json`
+- verify relative provider paths are relative to `.mercurio-project.json`
 - pass `--stdlib PATH` when you deliberately want to skip descriptor discovery
 
 See [Project Descriptors](PROJECTS.md).

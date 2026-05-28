@@ -1,16 +1,15 @@
 use std::collections::BTreeMap;
 
-use mercurio_core::diagrams::DiagramError;
 use mercurio_core::frontend::ast::{Declaration, PartUsageDecl, SourceSpan};
 use mercurio_core::frontend::sysml::parse_sysml_recovering;
 use mercurio_core::{
-    AssessmentSpec, AssessmentStatus, DiagramRenderRequestDto, ExecutionContext, Fact, Graph,
-    KirDocument, MetamodelAttributeRegistry, RulePack, Runtime, RuntimeAssessmentRequest,
-    SourceLanguage, compile_kerml_text, compile_sysml_text_with_context_report, format_text,
-    lint_text, list_diagram_kinds, load_default_rulepacks, parse_kerml, render_diagram,
-    requirements_table_view, run_graph_assessment, run_runtime_assessment,
-    sysml_module_assessment_facts,
+    AssessmentSpec, AssessmentStatus, ExecutionContext, Fact, Graph, KirDocument,
+    MetamodelAttributeRegistry, RulePack, Runtime, RuntimeAssessmentRequest, SourceLanguage,
+    compile_kerml_text, compile_sysml_text_with_context_report, format_text, lint_text,
+    load_default_rulepacks, parse_kerml, requirements_table_view, run_graph_assessment,
+    run_runtime_assessment, sysml_module_assessment_facts,
 };
+use mercurio_views::{DiagramError, DiagramRenderRequestDto, list_diagram_kinds, render_diagram};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;

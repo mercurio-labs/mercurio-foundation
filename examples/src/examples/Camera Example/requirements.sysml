@@ -15,4 +15,23 @@ package PictureTakingRequirements {
     text = "The system shall save the taken picture.";
   }
 
+  part def PowerControlUnit;
+  part def InternalCombustionEngine;
+
+
+  action def ProvidePower {
+    action a1;
+    action a2;
+  }
+
+  allocation a1_to_pcu allocate ProvidePower::a1 to PowerControlUnit;
+  allocation a2_to_ice allocate ProvidePower::a2 to InternalCombustionEngine;
+
+
+  analysis def ThermalAnalysis {
+
+  }
+
+  analysis x1 : ThermalAnalysis;
+
 }

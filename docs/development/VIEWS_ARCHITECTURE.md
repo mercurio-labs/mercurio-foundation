@@ -113,6 +113,7 @@ The first concrete non-diagram view is the requirements table projection:
 - implementation: `mercurio-core/src/views.rs`
 - example KIR: `examples/requirements_table_model.json`
 - exported API: `requirements_table_view(graph)`
+- persisted view kind: `table`, with the specific preset in `table.kind` such as `requirements`
 
 The current DTO includes:
 
@@ -272,7 +273,11 @@ Example evaluate request:
 {
   "view": {
     "version": 1,
-    "kind": "requirements_table"
+    "kind": "table",
+    "table": {
+      "version": 1,
+      "kind": "requirements"
+    }
   },
   "context": {
     "artifactId": "current"
@@ -300,18 +305,26 @@ Possible `.view` shape:
 
 ```json
 {
+  "schema": "mercurio.view.v1",
   "version": 1,
-  "kind": "requirements_table",
-  "title": "Safety Requirements",
-  "query": {
-    "root": "pkg.VehicleSafety",
-    "includeLibraries": false
-  },
-  "presentation": {
-    "columns": ["id", "name", "text", "satisfied_by", "verified_by"],
-    "sort": [{"column": "id", "direction": "asc"}]
-  },
-  "renderer": "table"
+  "kind": "table",
+  "mode": "visualization",
+  "table": {
+    "version": 1,
+    "kind": "requirements",
+    "title": "Safety Requirements",
+    "query": {
+      "root": "pkg.VehicleSafety",
+      "includeLibraries": false
+    },
+    "columns": [
+      {"key": "id", "label": "ID"},
+      {"key": "name", "label": "Name"},
+      {"key": "text", "label": "Text"},
+      {"key": "satisfied_by", "label": "Satisfied By"},
+      {"key": "verified_by", "label": "Verified By"}
+    ]
+  }
 }
 ```
 

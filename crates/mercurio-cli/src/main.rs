@@ -1188,6 +1188,10 @@ fn collect_package_sources(
     path: &Path,
     sources: &mut Vec<KparPackageSource>,
 ) -> Result<(), CliError> {
+    if path_has_mercurio_component(path) {
+        return Ok(());
+    }
+
     if path.is_file() {
         if SourceLanguage::from_path(path).is_none() {
             return Err(CliError::usage(format!(
@@ -1229,6 +1233,11 @@ fn collect_package_sources(
         "input does not exist: {}",
         path.display()
     )))
+}
+
+fn path_has_mercurio_component(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str().to_str() == Some(".mercurio"))
 }
 
 fn package_entry_path(root: &Path, path: &Path) -> Result<String, CliError> {
@@ -2685,6 +2694,54 @@ mod tests {
                 .elements
                 .iter()
                 .any(|element| element.id == "type.Demo.Vehicle")
+        );
+    }
+
+    #[test]
+    fn package_build_directory_excludes_mercurio_contents() {
+        let root = temp_dir("mercurio-cli-package-excludes-mercurio");
+        std::fs::create_dir_all(root.join(".mercurio").join("cache")).unwrap();
+        let out_path = root.join("model.kpar");
+        std::fs::write(
+            root.join("model.sysml"),
+            "package Demo { part def Vehicle; }",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".mercurio").join("cache").join("generated.sysml"),
+            "package Hidden { part def CacheOnly; }",
+        )
+        .unwrap();
+
+        let result = run_args(&[
+            "package",
+            "build",
+            "--file",
+            root.to_str().unwrap(),
+            "--out",
+            out_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let artifact = LibraryProviderConfig::KparFile {
+            path: out_path.display().to_string(),
+        }
+        .resolve("demo")
+        .unwrap();
+        assert!(
+            artifact
+                .document
+                .elements
+                .iter()
+                .any(|element| element.id == "type.Demo.Vehicle")
+        );
+        assert!(
+            !artifact
+                .document
+                .elements
+                .iter()
+                .any(|element| element.id == "type.Hidden.CacheOnly")
         );
     }
 

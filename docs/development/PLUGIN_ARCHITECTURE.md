@@ -182,7 +182,7 @@ mercurio plugin install ../plugins/contracts/extension.json
 
 ## Resolution And Project Pinning
 
-Projects should pin plugin identity, version, and digest in `mercurio-project.json`.
+Projects should pin plugin identity, version, and digest in `.mercurio-project.json`.
 
 ```json
 {
@@ -577,7 +577,7 @@ diagnostics + evidence link back to KIR element IDs
 
 ## Open Questions
 
-- Should plugin lock files be separate from `mercurio-project.json` or embedded in the resolved project descriptor?
+- Should plugin lock files be separate from `.mercurio-project.json` or embedded in the resolved project descriptor?
 - Should service schemas be JSON Schema, a compact custom schema, or generated from Rust DTOs?
 - Should WASM modules use WASI component model interfaces from the start or a simpler JSON function ABI first?
 - How should plugin state migration work for project-specific extension caches?

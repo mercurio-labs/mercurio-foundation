@@ -66,7 +66,7 @@ mercurio parse --text "package Demo { part def Vehicle; }"
 ## User Documentation
 
 - [CLI Guide](docs/user/CLI.md): public `mercurio` command examples for parse, compile, lint, completions, and common input forms.
-- [Project Descriptors](docs/user/PROJECTS.md): `mercurio-project.json`, provider kinds, and descriptor discovery.
+- [Project Descriptors](docs/user/PROJECTS.md): `.mercurio-project.json`, provider kinds, and descriptor discovery.
 - [KIR User Guide](docs/user/KIR.md): compiled semantic JSON, ids, provenance, validation, and low-level workflows.
 - [Querying And Evaluation](docs/user/QUERY_EVALUATE.md): model queries, derived values, runtime context, and explanations.
 - [KPAR Packages](docs/user/KPAR.md): building and consuming `.kpar` model packages.

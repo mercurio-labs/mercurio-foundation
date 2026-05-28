@@ -93,6 +93,8 @@ impl KirFieldRegistry {
             | "metatype"
             | "source"
             | "target"
+            | "allocated"
+            | "allocated_to"
             | "parent_state"
             | "payload"
             | "result"

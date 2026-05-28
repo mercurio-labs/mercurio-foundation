@@ -55,7 +55,7 @@ mercurio evaluate --kpar model.kpar --feature totalMass --owner Demo.Vehicle
 
 ## Use A KPAR As A Library
 
-Add a KPAR dependency in `mercurio-project.json`:
+Add a KPAR dependency in `.mercurio-project.json`:
 
 ```json
 {

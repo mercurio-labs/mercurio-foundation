@@ -10,14 +10,14 @@ mercurio project new my-model --name "My Model"
 
 This writes:
 
-- `my-model/mercurio-project.json`
+- `my-model/.mercurio-project.json`
 - `my-model/src/main.sysml`
 
 Use `--force` to write the scaffold files into an existing non-empty directory, and `--quiet` to suppress the creation summary.
 
 ## Descriptor Shape
 
-The project descriptor is the root-level `mercurio-project.json` file.
+The project descriptor is the root-level `.mercurio-project.json` file.
 
 The generated descriptor is intentionally small:
 
@@ -59,13 +59,13 @@ Supported provider `kind` values:
 - `kpar_file`: load one `.kpar` package file from `path`.
 - `package_set_directory`: load a package from a local package-set directory using `path` and `entry`.
 
-Relative provider paths are resolved from the directory containing `mercurio-project.json`.
+Relative provider paths are resolved from the directory containing `.mercurio-project.json`.
 
 ## Descriptor Discovery
 
 Semantic CLI commands discover this descriptor automatically:
 
-- `compile --file PATH` looks for `mercurio-project.json` from `PATH` upward.
+- `compile --file PATH` looks for `.mercurio-project.json` from `PATH` upward.
 - `lint --file PATH` uses the first input path as the project anchor.
 - `package build --file PATH` validates the package against the descriptor discovered from the first input path.
 - Inline `--text` commands use the current working directory as the project anchor.

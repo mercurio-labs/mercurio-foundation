@@ -7,7 +7,7 @@ use crate::library::{
     BaselineLibraryConfig, LibraryCacheMetadata, LibrarySourceFingerprint, ResolvedLibraryArtifact,
 };
 
-pub const PROJECT_DESCRIPTOR_FILE_NAME: &str = "mercurio-project.json";
+pub const PROJECT_DESCRIPTOR_FILE_NAME: &str = ".mercurio-project.json";
 
 fn is_model_source_file(path: &Path) -> bool {
     matches!(

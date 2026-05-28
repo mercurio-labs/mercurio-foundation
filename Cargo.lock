@@ -850,9 +850,19 @@ name = "mercurio-tools"
 version = "0.1.0"
 dependencies = [
  "mercurio-core",
+ "mercurio-views",
  "serde",
  "serde_json",
  "time",
+]
+
+[[package]]
+name = "mercurio-views"
+version = "0.1.0"
+dependencies = [
+ "mercurio-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -861,6 +871,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "mercurio-core",
+ "mercurio-views",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

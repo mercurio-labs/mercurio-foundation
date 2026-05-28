@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 console_error_panic_hook.workspace = true
 mercurio-core = { path = "../mercurio-core", default-features = false }
+mercurio-views = { path = "../mercurio-views" }
 serde = { workspace = true }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
