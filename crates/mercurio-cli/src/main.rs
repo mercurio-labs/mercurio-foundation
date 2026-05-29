@@ -12,10 +12,10 @@ use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
     LintSeverity, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet, Runtime,
-    SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
-    resolve_project_context, write_kpar_package,
+    SemanticCompileStatus, SourceLanguage, default_stdlib_path, default_user_config_path,
+    lint_text, parse_query, resolve_project_context, write_kpar_package,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Parser)]
@@ -34,6 +34,7 @@ enum Command {
     Query(QueryCommand),
     Lint(LintCommand),
     Package(PackageCommand),
+    Plugin(PluginCommand),
     Project(ProjectCommand),
     Completions(CompletionsCommand),
 }
@@ -144,6 +145,49 @@ struct CompletionsCommand {
 struct ProjectCommand {
     #[command(subcommand)]
     command: ProjectSubcommand,
+}
+
+#[derive(Debug, Args)]
+struct PluginCommand {
+    #[command(subcommand)]
+    command: PluginSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PluginSubcommand {
+    Install(PluginInstallCommand),
+    List(PluginListCommand),
+    Inspect(PluginInspectCommand),
+}
+
+#[derive(Debug, Args)]
+struct PluginInstallCommand {
+    manifest: PathBuf,
+    #[arg(long)]
+    root: Option<PathBuf>,
+    #[arg(long)]
+    force: bool,
+    #[arg(long)]
+    quiet: bool,
+}
+
+#[derive(Debug, Args)]
+struct PluginListCommand {
+    #[arg(long)]
+    root: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+struct PluginInspectCommand {
+    id: String,
+    #[arg(long)]
+    version: Option<String>,
+    #[arg(long)]
+    root: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
 }
 
 #[derive(Debug, Subcommand)]
@@ -325,6 +369,48 @@ struct QueryModelInput {
     document: KirDocument,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PluginManifestEnvelope {
+    id: String,
+    version: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    services: Vec<PluginServiceEnvelope>,
+    #[serde(rename = "cliActions", alias = "cli_actions", default)]
+    cli_actions: Vec<PluginCliActionEnvelope>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PluginServiceEnvelope {
+    id: String,
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PluginCliActionEnvelope {
+    command: String,
+    service: String,
+    #[serde(flatten)]
+    extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct InstalledPluginSummary {
+    id: String,
+    version: String,
+    name: String,
+    services: Vec<String>,
+    cli_actions: Vec<String>,
+    manifest_path: String,
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedEvaluationTarget {
     owner_id: String,
@@ -391,6 +477,7 @@ fn run(cli: Cli) -> Result<RunResult, CliError> {
         Command::Query(command) => run_query(command),
         Command::Lint(command) => run_lint(command),
         Command::Package(command) => run_package(command),
+        Command::Plugin(command) => run_plugin(command),
         Command::Project(command) => run_project(command),
         Command::Completions(command) => run_completions(command),
     }
@@ -628,6 +715,14 @@ fn run_package(command: PackageCommand) -> Result<RunResult, CliError> {
         PackageSubcommand::Publish(command) => run_package_publish(command),
         PackageSubcommand::Install(command) => run_package_install(command),
         PackageSubcommand::Pull(command) => run_package_pull(command),
+    }
+}
+
+fn run_plugin(command: PluginCommand) -> Result<RunResult, CliError> {
+    match command.command {
+        PluginSubcommand::Install(command) => run_plugin_install(command),
+        PluginSubcommand::List(command) => run_plugin_list(command),
+        PluginSubcommand::Inspect(command) => run_plugin_inspect(command),
     }
 }
 
@@ -1011,6 +1106,92 @@ fn run_package_pull(command: PackagePullCommand) -> Result<RunResult, CliError> 
             target_repo.root().display(),
             manifest.digest
         )
+    };
+    Ok(RunResult {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_plugin_install(command: PluginInstallCommand) -> Result<RunResult, CliError> {
+    let manifest = read_plugin_manifest(&command.manifest)?;
+    validate_plugin_manifest(&manifest)?;
+    let root = plugin_registry_root(command.root);
+    let target_dir = plugin_manifest_dir(&root, &manifest.id, &manifest.version);
+    let target_path = target_dir.join("extension.json");
+    if !command.force && target_path.exists() {
+        return Err(CliError::execution(format!(
+            "plugin {} version {} already exists in {}; use --force to overwrite",
+            manifest.id,
+            manifest.version,
+            root.display()
+        )));
+    }
+    std::fs::create_dir_all(&target_dir).map_err(|err| {
+        CliError::execution(format!(
+            "failed to create plugin directory {}: {err}",
+            target_dir.display()
+        ))
+    })?;
+    std::fs::copy(&command.manifest, &target_path).map_err(|err| {
+        CliError::execution(format!(
+            "failed to install plugin manifest {}: {err}",
+            target_path.display()
+        ))
+    })?;
+    let stdout = if command.quiet {
+        String::new()
+    } else {
+        format!(
+            "installed plugin: {}:{}\nname: {}\nto: {}\n",
+            manifest.id,
+            manifest.version,
+            manifest.name,
+            target_path.display()
+        )
+    };
+    Ok(RunResult {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_plugin_list(command: PluginListCommand) -> Result<RunResult, CliError> {
+    let root = plugin_registry_root(command.root);
+    let plugins = installed_plugin_summaries(&root)?;
+    let stdout = match command.format {
+        OutputFormat::Json => to_pretty_json(&plugins)?,
+        OutputFormat::Text => format_installed_plugins_text(&plugins),
+    };
+    Ok(RunResult {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_plugin_inspect(command: PluginInspectCommand) -> Result<RunResult, CliError> {
+    let root = plugin_registry_root(command.root);
+    let manifests = installed_plugin_manifests(&root)?;
+    let matches = manifests
+        .into_iter()
+        .filter(|(_, manifest)| {
+            manifest.id == command.id
+                && command
+                    .version
+                    .as_deref()
+                    .is_none_or(|version| manifest.version == version)
+        })
+        .collect::<Vec<_>>();
+    let Some((path, manifest)) = select_plugin_manifest_match(matches, &command.id)? else {
+        return Err(CliError::execution(format!(
+            "plugin {} was not found in {}",
+            command.id,
+            root.display()
+        )));
+    };
+    let stdout = match command.format {
+        OutputFormat::Json => to_pretty_json(&manifest)?,
+        OutputFormat::Text => format_plugin_manifest_text(&manifest, &path),
     };
     Ok(RunResult {
         exit_code: 0,
@@ -1954,6 +2135,199 @@ fn package_repository_target(
         return Err(CliError::usage(format!("{target_label} must not be empty")));
     }
     Ok(LocalPackageRepository::new(PathBuf::from(path)))
+}
+
+fn plugin_registry_root(path: Option<PathBuf>) -> PathBuf {
+    path.unwrap_or_else(|| {
+        default_user_config_path()
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".mercurio"))
+            .join("plugins")
+    })
+}
+
+fn plugin_manifest_dir(root: &Path, id: &str, version: &str) -> PathBuf {
+    root.join("installed")
+        .join(safe_package_path_segment(id))
+        .join(safe_package_path_segment(version))
+}
+
+fn read_plugin_manifest(path: &Path) -> Result<PluginManifestEnvelope, CliError> {
+    let input = std::fs::read_to_string(path)
+        .map_err(|err| CliError::execution(format!("failed to read {}: {err}", path.display())))?;
+    serde_json::from_str(&input).map_err(|err| {
+        CliError::usage(format!("invalid plugin manifest {}: {err}", path.display()))
+    })
+}
+
+fn validate_plugin_manifest(manifest: &PluginManifestEnvelope) -> Result<(), CliError> {
+    if manifest.id.trim().is_empty() {
+        return Err(CliError::usage("plugin manifest id must not be empty"));
+    }
+    if manifest.version.trim().is_empty() {
+        return Err(CliError::usage("plugin manifest version must not be empty"));
+    }
+    if manifest.name.trim().is_empty() {
+        return Err(CliError::usage("plugin manifest name must not be empty"));
+    }
+    let service_ids = manifest
+        .services
+        .iter()
+        .map(|service| service.id.as_str())
+        .collect::<Vec<_>>();
+    for service in &manifest.services {
+        if service.id.trim().is_empty() {
+            return Err(CliError::usage("plugin service id must not be empty"));
+        }
+    }
+    for action in &manifest.cli_actions {
+        if action.command.trim().is_empty() {
+            return Err(CliError::usage(
+                "plugin CLI action command must not be empty",
+            ));
+        }
+        if !service_ids
+            .iter()
+            .any(|service_id| *service_id == action.service)
+        {
+            return Err(CliError::usage(format!(
+                "plugin CLI action `{}` references undeclared service `{}`",
+                action.command, action.service
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn installed_plugin_manifests(
+    root: &Path,
+) -> Result<Vec<(PathBuf, PluginManifestEnvelope)>, CliError> {
+    let installed = root.join("installed");
+    if !installed.exists() {
+        return Ok(Vec::new());
+    }
+    let mut manifests = Vec::new();
+    collect_installed_plugin_manifests(&installed, &mut manifests)?;
+    manifests.sort_by(|left, right| {
+        left.1
+            .id
+            .cmp(&right.1.id)
+            .then_with(|| left.1.version.cmp(&right.1.version))
+    });
+    Ok(manifests)
+}
+
+fn collect_installed_plugin_manifests(
+    current: &Path,
+    manifests: &mut Vec<(PathBuf, PluginManifestEnvelope)>,
+) -> Result<(), CliError> {
+    let entries = match std::fs::read_dir(current) {
+        Ok(entries) => entries,
+        Err(err) => {
+            return Err(CliError::execution(format!(
+                "failed to read plugin directory {}: {err}",
+                current.display()
+            )));
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            CliError::execution(format!("failed to read plugin directory entry: {err}"))
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_installed_plugin_manifests(&path, manifests)?;
+        } else if path.file_name().and_then(|value| value.to_str()) == Some("extension.json") {
+            let manifest = read_plugin_manifest(&path)?;
+            validate_plugin_manifest(&manifest)?;
+            manifests.push((path, manifest));
+        }
+    }
+    Ok(())
+}
+
+fn installed_plugin_summaries(root: &Path) -> Result<Vec<InstalledPluginSummary>, CliError> {
+    installed_plugin_manifests(root).map(|manifests| {
+        manifests
+            .into_iter()
+            .map(|(path, manifest)| InstalledPluginSummary {
+                id: manifest.id,
+                version: manifest.version,
+                name: manifest.name,
+                services: manifest
+                    .services
+                    .into_iter()
+                    .map(|service| service.id)
+                    .collect(),
+                cli_actions: manifest
+                    .cli_actions
+                    .into_iter()
+                    .map(|action| action.command)
+                    .collect(),
+                manifest_path: path.display().to_string(),
+            })
+            .collect()
+    })
+}
+
+fn select_plugin_manifest_match(
+    mut matches: Vec<(PathBuf, PluginManifestEnvelope)>,
+    id: &str,
+) -> Result<Option<(PathBuf, PluginManifestEnvelope)>, CliError> {
+    if matches.is_empty() {
+        return Ok(None);
+    }
+    if matches.len() == 1 {
+        return Ok(matches.pop());
+    }
+    let versions = matches
+        .iter()
+        .map(|(_, manifest)| manifest.version.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(CliError::usage(format!(
+        "plugin {id} has multiple installed versions ({versions}); pass --version"
+    )))
+}
+
+fn format_installed_plugins_text(plugins: &[InstalledPluginSummary]) -> String {
+    let mut output = String::new();
+    for plugin in plugins {
+        output.push_str(&format!(
+            "{}:{}\t{}\tservices={}\tactions={}\n",
+            plugin.id,
+            plugin.version,
+            plugin.name,
+            plugin.services.join(","),
+            plugin.cli_actions.join(",")
+        ));
+    }
+    output
+}
+
+fn format_plugin_manifest_text(manifest: &PluginManifestEnvelope, path: &Path) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("id: {}\n", manifest.id));
+    output.push_str(&format!("version: {}\n", manifest.version));
+    output.push_str(&format!("name: {}\n", manifest.name));
+    if let Some(description) = &manifest.description {
+        output.push_str(&format!("description: {description}\n"));
+    }
+    output.push_str(&format!("manifest: {}\n", path.display()));
+    output.push_str("services:\n");
+    for service in &manifest.services {
+        output.push_str(&format!(
+            "- {} runtime={}\n",
+            service.id,
+            service.runtime.as_deref().unwrap_or("-")
+        ));
+    }
+    output.push_str("cli_actions:\n");
+    for action in &manifest.cli_actions {
+        output.push_str(&format!("- {} -> {}\n", action.command, action.service));
+    }
+    output
 }
 
 fn parse_package_coordinate(coordinate: &str) -> Result<(String, String), CliError> {
@@ -3351,9 +3725,93 @@ mod tests {
     }
 
     #[test]
+    fn plugin_install_list_and_inspect_manage_manifest_metadata() {
+        let root = temp_dir("mercurio-cli-plugin-registry");
+        let manifest_path = root.join("requirements.extension.json");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            &manifest_path,
+            r#"{
+  "id": "org.mercurio.requirements",
+  "version": "0.1.0",
+  "name": "Requirements Reasoning",
+  "description": "Requirement coverage plugin.",
+  "services": [
+    {
+      "id": "requirements.coverage",
+      "runtime": "in_process",
+      "function": "coverage"
+    }
+  ],
+  "cliActions": [
+    {
+      "command": "requirements coverage",
+      "service": "requirements.coverage"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let registry = root.join("plugins");
+        let install = run_args(&[
+            "plugin",
+            "install",
+            manifest_path.to_str().unwrap(),
+            "--root",
+            registry.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(install.exit_code, 0);
+        assert!(
+            install
+                .stdout
+                .contains("installed plugin: org.mercurio.requirements:0.1.0")
+        );
+
+        let list = run_args(&["plugin", "list", "--root", registry.to_str().unwrap()]).unwrap();
+        assert_eq!(list.exit_code, 0);
+        assert!(list.stdout.contains("org.mercurio.requirements:0.1.0"));
+        assert!(list.stdout.contains("requirements.coverage"));
+
+        let inspect = run_args(&[
+            "plugin",
+            "inspect",
+            "org.mercurio.requirements",
+            "--version",
+            "0.1.0",
+            "--root",
+            registry.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        assert_eq!(inspect.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&inspect.stdout).unwrap();
+        assert_eq!(json["id"], "org.mercurio.requirements");
+        assert_eq!(json["cliActions"][0]["command"], "requirements coverage");
+
+        let duplicate = run_args(&[
+            "plugin",
+            "install",
+            manifest_path.to_str().unwrap(),
+            "--root",
+            registry.to_str().unwrap(),
+        ])
+        .unwrap_err();
+        assert!(duplicate.message.contains("already exists"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn http_package_urls_follow_repository_layout() {
         assert_eq!(
-            http_package_manifest_url("https://packages.example.com/mercurio/", "org.example/domain-lib", "1.2.3"),
+            http_package_manifest_url(
+                "https://packages.example.com/mercurio/",
+                "org.example/domain-lib",
+                "1.2.3"
+            ),
             "https://packages.example.com/mercurio/org.example/domain-lib/1.2.3/manifest.json"
         );
         assert_eq!(

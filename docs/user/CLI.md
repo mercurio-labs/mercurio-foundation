@@ -222,6 +222,18 @@ mercurio package install kpar:domain-lib:0.1.0 --from https://packages.example.c
 
 For HTTP(S), Mercurio resolves the coordinate to the package repository layout, fetches `manifest.json`, verifies the downloaded KPAR digest, and stages it locally. Use `--repo` with package repository commands to use a non-default source or target repository. `publish`, `pull`, and `install` keep existing versions immutable unless `--force` is provided.
 
+## Plugin Registry
+
+Install and inspect plugin manifests through the default `mercurio` CLI:
+
+```powershell
+mercurio plugin install .\extension.json
+mercurio plugin list
+mercurio plugin inspect org.mercurio.requirements --version 0.1.0
+```
+
+This first plugin surface is metadata-only. It registers plugin manifests under the local Mercurio plugin registry so later commands can invoke installed services through the same default CLI.
+
 ## Shell Completions
 
 Generate completion scripts:
