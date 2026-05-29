@@ -107,13 +107,12 @@ Add fields for:
 - `meta`
 - `project_files`
 - `libraries`
-- `baseline_libraries`
 - `cache`
 
-The important distinction is:
+Each library entry carries a `role`:
 
-- `libraries` is the general mechanism for ordinary dependencies, including many L2 libraries
-- `baseline_libraries` is the special mechanism for the foundational set we currently treat as stdlib
+- `role: "dependency"` is the general mechanism for ordinary dependencies, including many L2 libraries
+- `role: "baseline"` is the special mechanism for the foundational set we currently treat as stdlib
 
 This avoids making every package look like a stdlib override.
 

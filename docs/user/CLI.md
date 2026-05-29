@@ -2,13 +2,18 @@
 
 ## Overview
 
-The public CLI is one cohesive `mercurio` binary with `project`, `parse`, `compile`, `query`, `evaluate`, `state-machine`, `lint`, `package`, and `completions` subcommands.
+The public CLI is one cohesive `mercurio` binary with `project`, `parse`, `compile`, `query`, `evaluate`, `lint`, `package`, and `completions` subcommands.
 
-`parse`, `compile`, `query`, `evaluate`, and `state-machine` commands can read source input from:
+Source-based commands can read model input from:
 
 - `--file PATH`
 - `--text TEXT`
 - `--url URL`
+
+`compile`, `query`, and `evaluate` commands can also read prebuilt inputs where supported:
+
+- `--kir PATH` for KIR JSON input
+- `--kpar PATH` for KPAR package input
 
 Inline text defaults to SysML. File and URL input infer language from `.sysml` or `.kerml`. Use `--language kerml` for inline KerML.
 
@@ -32,11 +37,33 @@ Compile inline KerML:
 mercurio compile --text "package Demo { classifier Vehicle; }" --language kerml
 ```
 
+Create a project scaffold:
+
+```powershell
+mercurio project new my-model --name "My Model"
+```
+
 Lint a file:
 
 ```powershell
 mercurio lint --file "examples/src/examples/Simple Tests/PartTest.sysml"
 ```
+
+Build and stage a KPAR package:
+
+```powershell
+mercurio package build --file src --name domain-lib --version 0.1.0
+```
+
+## Project Scaffolding
+
+Create a new project directory with `.mercurio-project.json` and `src/main.sysml`:
+
+```powershell
+mercurio project new my-model --name "My Model"
+```
+
+Use `--force` to scaffold into an existing non-empty directory and `--quiet` to suppress the creation summary. New descriptors use a single `libraries` array; baseline libraries are entries with `role: "baseline"` and ordinary dependencies use `role: "dependency"`.
 
 ## Parse SysML Or KerML
 
@@ -84,21 +111,40 @@ Compile source from a network URL:
 mercurio compile --url https://example.com/models/vehicle.sysml
 ```
 
-## State Machine Projection And Execution
-
-Project state machines from KIR:
+Compile a KPAR package:
 
 ```powershell
-mercurio state-machine projection --kir examples/state_machine_model.json --format json
+mercurio compile --kpar model.kpar --format json
 ```
 
-Run a state machine scenario from source:
+## Query And Evaluate
+
+Query a source model:
 
 ```powershell
-mercurio state-machine run --file "examples/src/training/25. Transitions/Local Clock Example.sysml" --machine ServerBehavior --event Start --event request --format json
+mercurio query --file model.sysml --query 'from elements where kind = "SysML::Systems::PartDefinition" select id, qualified_name'
 ```
 
-Higher-level reasoning capabilities, such as requirement coverage reports, live in the sibling `mercurio-reasoning` repository.
+Query from a file:
+
+```powershell
+mercurio query --kpar model.kpar --query-file queries/requirements.mq --format json
+```
+
+Evaluate a derived feature:
+
+```powershell
+mercurio evaluate --file model.sysml --owner Demo.Vehicle --feature totalMass
+```
+
+Provide runtime overlay values and explanation output:
+
+```powershell
+mercurio evaluate --kir model.kir.json --owner Demo.Vehicle --feature totalMass --value Demo.Vehicle.mass=42 --explain
+```
+
+Higher-level reasoning capabilities, such as behavioral simulation and requirement coverage reports, live in the sibling `mercurio-reasoning` repository.
+
 
 ## Lint SysML Or KerML
 
@@ -125,6 +171,56 @@ Fail when warnings are present, useful for CI:
 ```powershell
 mercurio lint --file "examples/src/examples/Simple Tests" --warnings-as-errors
 ```
+
+## KPAR Package Workflows
+
+Build a package from source files and write it to a specific path:
+
+```powershell
+mercurio package build --file src --out dist/domain-lib-0.1.0.kpar --name domain-lib --version 0.1.0
+```
+
+Build and stage a package in the default local package repository:
+
+```powershell
+mercurio package build --file src --name domain-lib --version 0.1.0
+```
+
+Include precompiled KIR in the package:
+
+```powershell
+mercurio package build --file src --name domain-lib --version 0.1.0 --include-kir
+```
+
+List, inspect, verify, and compile staged packages:
+
+```powershell
+mercurio package list
+mercurio package inspect domain-lib --version 0.1.0
+mercurio package verify domain-lib --version 0.1.0
+mercurio package compile domain-lib --version 0.1.0 --format json
+```
+
+Move packages between package repositories:
+
+```powershell
+mercurio package publish domain-lib --version 0.1.0 --to C:/work/published-packages
+mercurio package pull domain-lib --version 0.1.0 --from C:/work/published-packages
+```
+
+Publish to an indexless HTTP package manager:
+
+```powershell
+mercurio package publish domain-lib --version 0.1.0 --to https://packages.example.com/mercurio
+```
+
+Install by coordinate from a package repository or indexless HTTP package manager:
+
+```powershell
+mercurio package install kpar:domain-lib:0.1.0 --from https://packages.example.com/mercurio
+```
+
+For HTTP(S), Mercurio resolves the coordinate to the package repository layout, fetches `manifest.json`, verifies the downloaded KPAR digest, and stages it locally. Use `--repo` with package repository commands to use a non-default source or target repository. `publish`, `pull`, and `install` keep existing versions immutable unless `--force` is provided.
 
 ## Shell Completions
 

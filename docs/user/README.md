@@ -4,7 +4,7 @@ This directory contains user-facing documentation for the public CLI and model w
 
 ## Guides
 
-- [CLI Guide](CLI.md): public command examples for parse, compile, lint, completions, and common input forms.
+- [CLI Guide](CLI.md): public command examples for project, parse, compile, query, evaluate, lint, package, completions, and common input forms.
 - [Project Descriptors](PROJECTS.md): `.mercurio-project.json`, provider kinds, and descriptor discovery.
 - [KIR User Guide](KIR.md): compiled semantic JSON models and low-level workflows.
 - [Querying And Evaluation](QUERY_EVALUATE.md): model queries, derived values, runtime context, and explanations.

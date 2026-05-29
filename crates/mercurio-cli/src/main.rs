@@ -4,21 +4,18 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
-use mercurio_core::behavior::{
-    StateMachineExecutionReport, StateMachineExecutionStatus, StateMachineModel,
-    StateMachineScenario, StateMachineScenarioEvent, project_state_machines,
-};
 use mercurio_core::frontend::ast::{Declaration, SysmlModule};
 use mercurio_core::frontend::diagnostics::Diagnostic;
 use mercurio_core::frontend::kerml::{compile_kerml_text, parse_kerml};
 use mercurio_core::frontend::sysml::{compile_sysml_text_with_context_report, parse_sysml};
 use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
-    LintSeverity, LocalPackageRepository, LocalPackageSource, PROJECT_DESCRIPTOR_FILE_NAME,
-    ProjectDescriptor, QueryEngine, QueryResultSet, Runtime, SemanticCompileStatus, SourceLanguage,
-    default_stdlib_path, lint_text, parse_query, resolve_project_context, write_kpar_package,
+    LintSeverity, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
+    PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet, Runtime,
+    SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
+    resolve_project_context, write_kpar_package,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Debug, Parser)]
@@ -35,7 +32,6 @@ enum Command {
     Compile(CompileCommand),
     Evaluate(EvaluateCommand),
     Query(QueryCommand),
-    StateMachine(StateMachineCommand),
     Lint(LintCommand),
     Package(PackageCommand),
     Project(ProjectCommand),
@@ -133,60 +129,6 @@ struct QueryCommand {
 }
 
 #[derive(Debug, Args)]
-struct StateMachineCommand {
-    #[command(subcommand)]
-    command: StateMachineSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-enum StateMachineSubcommand {
-    Projection(StateMachineProjectionCommand),
-    Run(StateMachineRunCommand),
-}
-
-#[derive(Debug, Args)]
-struct StateMachineProjectionCommand {
-    #[command(flatten)]
-    input: SingleInput,
-    #[arg(long)]
-    kir: Option<PathBuf>,
-    #[arg(long)]
-    kpar: Option<PathBuf>,
-    #[arg(long, value_enum)]
-    language: Option<LanguageArg>,
-    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
-    format: OutputFormat,
-    #[arg(long)]
-    stdlib: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct StateMachineRunCommand {
-    #[command(flatten)]
-    input: SingleInput,
-    #[arg(long)]
-    kir: Option<PathBuf>,
-    #[arg(long)]
-    kpar: Option<PathBuf>,
-    #[arg(long, value_enum)]
-    language: Option<LanguageArg>,
-    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
-    format: OutputFormat,
-    #[arg(long)]
-    stdlib: Option<PathBuf>,
-    #[arg(long)]
-    machine: Option<String>,
-    #[arg(long = "event")]
-    events: Vec<String>,
-    #[arg(long)]
-    scenario: Option<PathBuf>,
-    #[arg(long)]
-    initial_state: Option<String>,
-    #[arg(long, default_value_t = 64)]
-    max_steps: usize,
-}
-
-#[derive(Debug, Args)]
 struct PackageCommand {
     #[command(subcommand)]
     command: PackageSubcommand,
@@ -228,6 +170,7 @@ enum PackageSubcommand {
     Verify(PackageVerifyCommand),
     Compile(PackageCompileCommand),
     Publish(PackagePublishCommand),
+    Install(PackageInstallCommand),
     Pull(PackagePullCommand),
 }
 
@@ -295,6 +238,19 @@ struct PackagePublishCommand {
     version: String,
     #[arg(long)]
     to: String,
+    #[arg(long)]
+    repo: Option<PathBuf>,
+    #[arg(long)]
+    force: bool,
+    #[arg(long)]
+    quiet: bool,
+}
+
+#[derive(Debug, Args)]
+struct PackageInstallCommand {
+    coordinate: String,
+    #[arg(long = "from")]
+    from: String,
     #[arg(long)]
     repo: Option<PathBuf>,
     #[arg(long)]
@@ -433,7 +389,6 @@ fn run(cli: Cli) -> Result<RunResult, CliError> {
         Command::Compile(command) => run_compile(command),
         Command::Evaluate(command) => run_evaluate(command),
         Command::Query(command) => run_query(command),
-        Command::StateMachine(command) => run_state_machine(command),
         Command::Lint(command) => run_lint(command),
         Command::Package(command) => run_package(command),
         Command::Project(command) => run_project(command),
@@ -622,53 +577,6 @@ fn run_query(command: QueryCommand) -> Result<RunResult, CliError> {
     })
 }
 
-fn run_state_machine(command: StateMachineCommand) -> Result<RunResult, CliError> {
-    match command.command {
-        StateMachineSubcommand::Projection(command) => run_state_machine_projection(command),
-        StateMachineSubcommand::Run(command) => run_state_machine_run(command),
-    }
-}
-
-fn run_state_machine_projection(
-    command: StateMachineProjectionCommand,
-) -> Result<RunResult, CliError> {
-    let model = read_state_machine_projection_model_input(&command)?;
-    let runtime = Runtime::from_document(model.document)
-        .map_err(|err| CliError::execution(format!("failed to build runtime: {err}")))?;
-    let machines = project_state_machines(&runtime);
-    let stdout = match command.format {
-        OutputFormat::Json => to_pretty_json(&machines)?,
-        OutputFormat::Text => format_state_machine_projection_text(&machines),
-    };
-
-    Ok(RunResult {
-        exit_code: 0,
-        stdout,
-    })
-}
-
-fn run_state_machine_run(command: StateMachineRunCommand) -> Result<RunResult, CliError> {
-    let model = read_state_machine_run_model_input(&command)?;
-    let runtime = Runtime::from_document(model.document)
-        .map_err(|err| CliError::execution(format!("failed to build runtime: {err}")))?;
-    let machines = project_state_machines(&runtime);
-    let machine = select_state_machine(&machines, command.machine.as_deref())?;
-    let scenario = read_state_machine_scenario(&command)?;
-    let report = machine.execute_scenario(&scenario);
-    let stdout = match command.format {
-        OutputFormat::Json => to_pretty_json(&report)?,
-        OutputFormat::Text => format_state_machine_execution_text(&report),
-    };
-
-    Ok(RunResult {
-        exit_code: match report.status {
-            StateMachineExecutionStatus::Completed => 0,
-            StateMachineExecutionStatus::Blocked | StateMachineExecutionStatus::Failed => 1,
-        },
-        stdout,
-    })
-}
-
 fn run_lint(command: LintCommand) -> Result<RunResult, CliError> {
     let sources = read_lint_inputs(&command)?;
     let library_context =
@@ -718,6 +626,7 @@ fn run_package(command: PackageCommand) -> Result<RunResult, CliError> {
         PackageSubcommand::Verify(command) => run_package_verify(command),
         PackageSubcommand::Compile(command) => run_package_compile(command),
         PackageSubcommand::Publish(command) => run_package_publish(command),
+        PackageSubcommand::Install(command) => run_package_install(command),
         PackageSubcommand::Pull(command) => run_package_pull(command),
     }
 }
@@ -789,7 +698,6 @@ fn run_project_new(command: ProjectNewCommand) -> Result<RunResult, CliError> {
     let descriptor = ProjectDescriptor {
         version: 1,
         name: Some(project_name),
-        baseline_libraries: Vec::new(),
         libraries: Vec::new(),
     };
     let descriptor_json = to_pretty_json(&descriptor)?;
@@ -1052,10 +960,22 @@ fn run_package_compile(command: PackageCompileCommand) -> Result<RunResult, CliE
 
 fn run_package_publish(command: PackagePublishCommand) -> Result<RunResult, CliError> {
     let source_repo = package_repo(command.repo);
-    let target_repo = package_publish_target_repo(&command.to)?;
-    let manifest = source_repo
-        .publish_to_repository(&target_repo, &command.name, &command.version, command.force)
-        .map_err(|err| CliError::execution(format!("failed to publish package: {err}")))?;
+    let (manifest, target_label) = if is_http_package_repository(&command.to) {
+        let manifest = publish_to_http_package_repository(
+            &source_repo,
+            &command.to,
+            &command.name,
+            &command.version,
+            command.force,
+        )?;
+        (manifest, command.to.clone())
+    } else {
+        let target_repo = package_publish_target_repo(&command.to)?;
+        let manifest = source_repo
+            .publish_to_repository(&target_repo, &command.name, &command.version, command.force)
+            .map_err(|err| CliError::execution(format!("failed to publish package: {err}")))?;
+        (manifest, target_repo.root().display().to_string())
+    };
     let stdout = if command.quiet {
         String::new()
     } else {
@@ -1064,7 +984,7 @@ fn run_package_publish(command: PackagePublishCommand) -> Result<RunResult, CliE
             manifest.name,
             manifest.version,
             source_repo.root().display(),
-            target_repo.root().display(),
+            target_label,
             manifest.digest
         )
     };
@@ -1088,6 +1008,41 @@ fn run_package_pull(command: PackagePullCommand) -> Result<RunResult, CliError> 
             manifest.name,
             manifest.version,
             source_repo.root().display(),
+            target_repo.root().display(),
+            manifest.digest
+        )
+    };
+    Ok(RunResult {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_package_install(command: PackageInstallCommand) -> Result<RunResult, CliError> {
+    let target_repo = package_repo(command.repo);
+    let (name, version) = parse_package_coordinate(&command.coordinate)?;
+    let manifest = if is_http_package_repository(&command.from) {
+        install_from_http_package_repository(
+            &target_repo,
+            &command.from,
+            &name,
+            &version,
+            command.force,
+        )?
+    } else {
+        let source_repo = package_repository_target(&command.from, "install source")?;
+        target_repo
+            .pull_from_repository(&source_repo, &name, &version, command.force)
+            .map_err(|err| CliError::execution(format!("failed to install package: {err}")))?
+    };
+    let stdout = if command.quiet {
+        String::new()
+    } else {
+        format!(
+            "installed: {}:{}\nfrom: {}\nto: {}\ndigest: {}\n",
+            manifest.name,
+            manifest.version,
+            command.from,
             target_repo.root().display(),
             manifest.digest
         )
@@ -1262,164 +1217,6 @@ fn read_query_model_input(command: &QueryCommand) -> Result<QueryModelInput, Cli
         source: response.source,
         project_descriptor: library_context.project_descriptor_output(),
         document,
-    })
-}
-
-fn read_state_machine_projection_model_input(
-    command: &StateMachineProjectionCommand,
-) -> Result<QueryModelInput, CliError> {
-    let query_command = QueryCommand {
-        input: command.input.clone(),
-        kir: command.kir.clone(),
-        kpar: command.kpar.clone(),
-        query: Some("from elements select id limit 1".to_string()),
-        query_file: None,
-        language: command.language,
-        format: command.format,
-        stdlib: command.stdlib.clone(),
-    };
-    read_query_model_input(&query_command)
-}
-
-fn read_state_machine_run_model_input(
-    command: &StateMachineRunCommand,
-) -> Result<QueryModelInput, CliError> {
-    let query_command = QueryCommand {
-        input: command.input.clone(),
-        kir: command.kir.clone(),
-        kpar: command.kpar.clone(),
-        query: Some("from elements select id limit 1".to_string()),
-        query_file: None,
-        language: command.language,
-        format: command.format,
-        stdlib: command.stdlib.clone(),
-    };
-    read_query_model_input(&query_command)
-}
-
-fn select_state_machine<'a>(
-    machines: &'a [StateMachineModel],
-    selector: Option<&str>,
-) -> Result<&'a StateMachineModel, CliError> {
-    if machines.is_empty() {
-        return Err(CliError::execution("no state machines found"));
-    }
-    if let Some(selector) = selector {
-        let matches = machines
-            .iter()
-            .filter(|machine| {
-                machine.id == selector
-                    || machine.label == selector
-                    || machine.id.ends_with(selector)
-                    || machine.label.ends_with(selector)
-            })
-            .collect::<Vec<_>>();
-        return match matches.as_slice() {
-            [machine] => Ok(*machine),
-            [] => Err(CliError::execution(format!(
-                "no state machine matched `{selector}`"
-            ))),
-            _ => Err(CliError::execution(format!(
-                "state machine selector `{selector}` matched multiple machines"
-            ))),
-        };
-    }
-    if machines.len() == 1 {
-        Ok(&machines[0])
-    } else {
-        Err(CliError::usage(
-            "multiple state machines found; provide --machine",
-        ))
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ScenarioFile {
-    id: Option<String>,
-    initial_state_id: Option<String>,
-    #[serde(alias = "initialStateId")]
-    initial_state_id_camel: Option<String>,
-    events: Vec<ScenarioFileEvent>,
-    max_steps: Option<usize>,
-    #[serde(alias = "maxSteps")]
-    max_steps_camel: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum ScenarioFileEvent {
-    Trigger(String),
-    Object { id: Option<String>, trigger: String },
-}
-
-fn read_state_machine_scenario(
-    command: &StateMachineRunCommand,
-) -> Result<StateMachineScenario, CliError> {
-    if let Some(path) = &command.scenario {
-        if !command.events.is_empty() {
-            return Err(CliError::usage(
-                "provide either --scenario or repeated --event values, not both",
-            ));
-        }
-        let content = std::fs::read_to_string(path).map_err(|err| {
-            CliError::execution(format!(
-                "failed to read scenario file {}: {err}",
-                path.display()
-            ))
-        })?;
-        let parsed: ScenarioFile = serde_json::from_str(&content).map_err(|err| {
-            CliError::execution(format!(
-                "failed to parse scenario file {}: {err}",
-                path.display()
-            ))
-        })?;
-        let initial_state_id = parsed
-            .initial_state_id
-            .or(parsed.initial_state_id_camel)
-            .or_else(|| command.initial_state.clone());
-        return Ok(StateMachineScenario {
-            id: parsed.id.unwrap_or_else(|| "cli.scenario".to_string()),
-            initial_state_id,
-            events: parsed
-                .events
-                .into_iter()
-                .enumerate()
-                .map(|(index, event)| match event {
-                    ScenarioFileEvent::Trigger(trigger) => StateMachineScenarioEvent {
-                        id: format!("event.{}", index + 1),
-                        trigger,
-                    },
-                    ScenarioFileEvent::Object { id, trigger } => StateMachineScenarioEvent {
-                        id: id.unwrap_or_else(|| format!("event.{}", index + 1)),
-                        trigger,
-                    },
-                })
-                .collect(),
-            max_steps: parsed
-                .max_steps
-                .or(parsed.max_steps_camel)
-                .unwrap_or(command.max_steps),
-        });
-    }
-
-    if command.events.is_empty() {
-        return Err(CliError::usage(
-            "provide at least one --event or a --scenario file",
-        ));
-    }
-    Ok(StateMachineScenario {
-        id: "cli.scenario".to_string(),
-        initial_state_id: command.initial_state.clone(),
-        events: command
-            .events
-            .iter()
-            .enumerate()
-            .map(|(index, trigger)| StateMachineScenarioEvent {
-                id: format!("event.{}", index + 1),
-                trigger: trigger.clone(),
-            })
-            .collect(),
-        max_steps: command.max_steps,
     })
 }
 
@@ -2159,6 +1956,297 @@ fn package_repository_target(
     Ok(LocalPackageRepository::new(PathBuf::from(path)))
 }
 
+fn parse_package_coordinate(coordinate: &str) -> Result<(String, String), CliError> {
+    let coordinate = coordinate
+        .strip_prefix("kpar:")
+        .unwrap_or(coordinate)
+        .trim();
+    let Some((name, version)) = coordinate.rsplit_once(':') else {
+        return Err(CliError::usage(
+            "package coordinate must be NAME:VERSION or kpar:NAME:VERSION",
+        ));
+    };
+    let name = name.trim();
+    let version = version.trim();
+    if name.is_empty() || version.is_empty() {
+        return Err(CliError::usage(
+            "package coordinate must include a non-empty name and version",
+        ));
+    }
+    Ok((name.to_string(), version.to_string()))
+}
+
+fn is_http_package_repository(source: &str) -> bool {
+    source.starts_with("http://") || source.starts_with("https://")
+}
+
+fn install_from_http_package_repository(
+    target_repo: &LocalPackageRepository,
+    base_url: &str,
+    name: &str,
+    version: &str,
+    force: bool,
+) -> Result<LocalPackageManifest, CliError> {
+    let target_manifest_path = target_repo.manifest_path(name, version);
+    let target_package_path = target_repo.package_path(name, version);
+    if !force && (target_manifest_path.exists() || target_package_path.exists()) {
+        return Err(CliError::execution(format!(
+            "package {name} version {version} already exists in {}; use --force to overwrite",
+            target_repo.root().display()
+        )));
+    }
+
+    let manifest_url = http_package_manifest_url(base_url, name, version);
+    let manifest: LocalPackageManifest = http_get_json(&manifest_url)?;
+    if manifest.name != name || manifest.version != version {
+        return Err(CliError::execution(format!(
+            "remote package manifest identity mismatch: expected {name}:{version}, got {}:{}",
+            manifest.name, manifest.version
+        )));
+    }
+    if manifest.kind != "kpar" {
+        return Err(CliError::execution(format!(
+            "unsupported remote package kind '{}'",
+            manifest.kind
+        )));
+    }
+    if !is_safe_remote_package_file(&manifest.file) {
+        return Err(CliError::execution(format!(
+            "remote package manifest has unsafe file name '{}'",
+            manifest.file
+        )));
+    }
+
+    let package_url = http_package_file_url(base_url, name, version, &manifest.file);
+    let bytes = http_get_bytes(&package_url)?;
+    let digest = stable_file_digest(&bytes);
+    if digest != manifest.digest {
+        return Err(CliError::execution(format!(
+            "remote package digest mismatch for {name}:{version}: expected {}, got {}",
+            manifest.digest, digest
+        )));
+    }
+
+    let temp_path = temporary_package_download_path(name, version);
+    std::fs::write(&temp_path, &bytes).map_err(|err| {
+        CliError::execution(format!(
+            "failed to write temporary package {}: {err}",
+            temp_path.display()
+        ))
+    })?;
+    let staged = target_repo
+        .stage_kpar(
+            &temp_path,
+            name,
+            version,
+            Some(LocalPackageSource {
+                kind: "http_package_repository".to_string(),
+                path: package_url,
+            }),
+        )
+        .map_err(|err| CliError::execution(format!("failed to stage package: {err}")))?;
+    let _ = std::fs::remove_file(temp_path);
+    Ok(staged)
+}
+
+fn publish_to_http_package_repository(
+    source_repo: &LocalPackageRepository,
+    base_url: &str,
+    name: &str,
+    version: &str,
+    force: bool,
+) -> Result<LocalPackageManifest, CliError> {
+    let Some(package_path) = source_repo
+        .find_package(name, version)
+        .map_err(|err| CliError::execution(format!("failed to resolve package: {err}")))?
+    else {
+        return Err(CliError::execution(format!(
+            "package {name} version {version} was not found in {}",
+            source_repo.root().display()
+        )));
+    };
+    let manifest = source_repo
+        .read_manifest(name, version)
+        .map_err(|err| CliError::execution(format!("failed to read package manifest: {err}")))?;
+    if manifest.name != name || manifest.version != version {
+        return Err(CliError::execution(format!(
+            "local package manifest identity mismatch: expected {name}:{version}, got {}:{}",
+            manifest.name, manifest.version
+        )));
+    }
+    if manifest.kind != "kpar" {
+        return Err(CliError::execution(format!(
+            "unsupported package kind '{}'",
+            manifest.kind
+        )));
+    }
+    if !is_safe_remote_package_file(&manifest.file) {
+        return Err(CliError::execution(format!(
+            "local package manifest has unsafe file name '{}'",
+            manifest.file
+        )));
+    }
+
+    let manifest_url = http_package_manifest_url(base_url, name, version);
+    if !force && http_package_manifest_exists(&manifest_url)? {
+        return Err(CliError::execution(format!(
+            "package {name} version {version} already exists at {base_url}; use --force to overwrite"
+        )));
+    }
+
+    let package_url = http_package_file_url(base_url, name, version, &manifest.file);
+    let package_bytes = std::fs::read(&package_path).map_err(|err| {
+        CliError::execution(format!(
+            "failed to read package {}: {err}",
+            package_path.display()
+        ))
+    })?;
+    let digest = stable_file_digest(&package_bytes);
+    if digest != manifest.digest {
+        return Err(CliError::execution(format!(
+            "local package digest mismatch for {name}:{version}: expected {}, got {}",
+            manifest.digest, digest
+        )));
+    }
+
+    http_put_bytes(&package_url, package_bytes, "application/vnd.mercurio.kpar")?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|err| CliError::execution(format!("failed to encode package manifest: {err}")))?;
+    http_put_bytes(&manifest_url, manifest_bytes, "application/json")?;
+    Ok(manifest)
+}
+
+fn http_package_manifest_exists(url: &str) -> Result<bool, CliError> {
+    let response = reqwest::blocking::Client::new()
+        .get(url)
+        .send()
+        .map_err(|err| CliError::execution(format!("failed to check {url}: {err}")))?;
+    if response.status().is_success() {
+        return Ok(true);
+    }
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    Err(CliError::execution(format!(
+        "failed to check {url}: HTTP {}",
+        response.status()
+    )))
+}
+
+fn http_put_bytes(url: &str, bytes: Vec<u8>, content_type: &str) -> Result<(), CliError> {
+    reqwest::blocking::Client::new()
+        .put(url)
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .body(bytes)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|err| CliError::execution(format!("failed to upload {url}: {err}")))?;
+    Ok(())
+}
+
+fn http_get_json<T>(url: &str) -> Result<T, CliError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let text = reqwest::blocking::get(url)
+        .and_then(|response| response.error_for_status())
+        .map_err(|err| CliError::execution(format!("failed to fetch {url}: {err}")))?
+        .text()
+        .map_err(|err| CliError::execution(format!("failed to read {url}: {err}")))?;
+    serde_json::from_str(&text)
+        .map_err(|err| CliError::execution(format!("failed to parse JSON from {url}: {err}")))
+}
+
+fn http_get_bytes(url: &str) -> Result<Vec<u8>, CliError> {
+    let bytes = reqwest::blocking::get(url)
+        .and_then(|response| response.error_for_status())
+        .map_err(|err| CliError::execution(format!("failed to fetch {url}: {err}")))?
+        .bytes()
+        .map_err(|err| CliError::execution(format!("failed to read {url}: {err}")))?;
+    Ok(bytes.to_vec())
+}
+
+fn http_package_manifest_url(base_url: &str, name: &str, version: &str) -> String {
+    http_package_file_url(base_url, name, version, "manifest.json")
+}
+
+fn http_package_file_url(base_url: &str, name: &str, version: &str, file: &str) -> String {
+    let mut url = base_url.trim_end_matches('/').to_string();
+    for segment in name.split('/') {
+        url.push('/');
+        url.push_str(&safe_package_path_segment(segment));
+    }
+    url.push('/');
+    url.push_str(&safe_package_path_segment(version));
+    url.push('/');
+    url.push_str(file);
+    url
+}
+
+fn is_safe_remote_package_file(file: &str) -> bool {
+    !file.is_empty()
+        && !file.contains('/')
+        && !file.contains('\\')
+        && file != "."
+        && file != ".."
+        && file.ends_with(".kpar")
+}
+
+fn temporary_package_download_path(name: &str, version: &str) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!(
+        "mercurio-package-install-{}-{}-{now}.kpar",
+        safe_package_path_segment(name),
+        safe_package_path_segment(version)
+    ))
+}
+
+fn safe_package_path_segment(value: &str) -> String {
+    let mut segment = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if segment.is_empty() || segment == "." || segment == ".." {
+        segment = "package".to_string();
+    }
+    segment
+}
+
+fn stable_file_digest(bytes: &[u8]) -> String {
+    format_stable_digest([("file".as_bytes(), bytes)])
+}
+
+fn format_stable_digest<'a, I>(chunks: I) -> String
+where
+    I: IntoIterator<Item = (&'a [u8], &'a [u8])>,
+{
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET;
+    for (label, bytes) in chunks {
+        for byte in label
+            .iter()
+            .chain(&(bytes.len() as u64).to_le_bytes())
+            .chain(bytes)
+        {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    format!("fnv1a64:{hash:016x}")
+}
+
 fn collect_package_manifest_rows(
     repo_root: &Path,
     current: &Path,
@@ -2358,71 +2446,6 @@ struct QueryResponse {
     source: String,
     project_descriptor: ProjectDescriptorOutput,
     result: QueryResultSet,
-}
-
-fn format_state_machine_projection_text(machines: &[StateMachineModel]) -> String {
-    let mut output = String::new();
-    output.push_str(&format!("state_machines: {}\n", machines.len()));
-    for machine in machines {
-        output.push_str(&format!(
-            "- {} states={} transitions={}\n",
-            machine.id,
-            machine.states.len(),
-            machine.transitions.len()
-        ));
-        for state in &machine.states {
-            output.push_str(&format!(
-                "  state {} initial={} final={} parent={}\n",
-                state.id,
-                state.is_initial,
-                state.is_final,
-                state.parent_state_id.as_deref().unwrap_or("-")
-            ));
-        }
-        for transition in &machine.transitions {
-            output.push_str(&format!(
-                "  transition {} {} -> {} trigger={}\n",
-                transition.id,
-                transition.source,
-                transition.target,
-                transition.trigger.as_deref().unwrap_or("-")
-            ));
-        }
-    }
-    output
-}
-
-fn format_state_machine_execution_text(report: &StateMachineExecutionReport) -> String {
-    let mut output = String::new();
-    output.push_str(&format!("machine: {}\n", report.machine_id));
-    output.push_str(&format!("status: {:?}\n", report.status));
-    output.push_str("active_configuration:\n");
-    for state_id in &report.active_configuration {
-        output.push_str(&format!("- {state_id}\n"));
-    }
-    output.push_str(&format!("steps: {}\n", report.steps.len()));
-    for step in &report.steps {
-        output.push_str(&format!(
-            "- step {} event={} trigger={} transition={}\n",
-            step.step,
-            step.event_id.as_deref().unwrap_or("-"),
-            step.trigger.as_deref().unwrap_or("-"),
-            step.transition_id.as_deref().unwrap_or("-")
-        ));
-        output.push_str(&format!("  before: {}\n", step.before.join(", ")));
-        output.push_str(&format!("  after: {}\n", step.after.join(", ")));
-        output.push_str(&format!("  {}\n", step.explanation));
-    }
-    if !report.diagnostics.is_empty() {
-        output.push_str(&format!("diagnostics: {}\n", report.diagnostics.len()));
-        for diagnostic in &report.diagnostics {
-            output.push_str(&format!(
-                "- {:?}: {} ({})\n",
-                diagnostic.severity, diagnostic.message, diagnostic.code
-            ));
-        }
-    }
-    output
 }
 
 fn format_parse_text(response: &ParseResponse) -> String {
@@ -3273,6 +3296,78 @@ mod tests {
     }
 
     #[test]
+    fn package_install_accepts_coordinate_and_local_package_repo() {
+        let root = temp_dir("mercurio-cli-package-install-local");
+        let source_repo = root.join("source");
+        let target_repo = root.join("target");
+        let source_dir = root.join("src");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(
+            source_dir.join("model.sysml"),
+            "package Demo { part def Vehicle; }",
+        )
+        .unwrap();
+
+        let build = run_args(&[
+            "package",
+            "build",
+            "--file",
+            source_dir.to_str().unwrap(),
+            "--name",
+            "domain-lib",
+            "--version",
+            "1.2.3",
+            "--out",
+            root.join("domain-lib.kpar").to_str().unwrap(),
+            "--quiet",
+        ])
+        .unwrap();
+        assert_eq!(build.exit_code, 0);
+
+        let source_package = root.join("domain-lib.kpar");
+        let source_repo_model = LocalPackageRepository::new(&source_repo);
+        source_repo_model
+            .stage_kpar(&source_package, "domain-lib", "1.2.3", None)
+            .unwrap();
+
+        let install = run_args(&[
+            "package",
+            "install",
+            "kpar:domain-lib:1.2.3",
+            "--from",
+            source_repo.to_str().unwrap(),
+            "--repo",
+            target_repo.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(install.exit_code, 0);
+        assert!(install.stdout.contains("installed: domain-lib:1.2.3"));
+
+        let list = run_args(&["package", "list", "--repo", target_repo.to_str().unwrap()]).unwrap();
+        assert_eq!(list.exit_code, 0);
+        assert!(list.stdout.contains("domain-lib:1.2.3"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn http_package_urls_follow_repository_layout() {
+        assert_eq!(
+            http_package_manifest_url("https://packages.example.com/mercurio/", "org.example/domain-lib", "1.2.3"),
+            "https://packages.example.com/mercurio/org.example/domain-lib/1.2.3/manifest.json"
+        );
+        assert_eq!(
+            http_package_file_url(
+                "https://packages.example.com/mercurio",
+                "org.example/domain lib",
+                "1.2.3",
+                "domain_lib-1.2.3.kpar",
+            ),
+            "https://packages.example.com/mercurio/org.example/domain_lib/1.2.3/domain_lib-1.2.3.kpar"
+        );
+    }
+
+    #[test]
     fn compile_kpar_file_returns_document() {
         let root = temp_dir("mercurio-cli-compile-kpar");
         std::fs::create_dir_all(&root).unwrap();
@@ -3543,71 +3638,6 @@ mod tests {
     }
 
     #[test]
-    fn state_machine_projection_reports_nested_state() {
-        let path = mercurio_core::repo_path("examples/state_machine_model.json");
-        let result = run_args(&[
-            "state-machine",
-            "projection",
-            "--kir",
-            path.to_str().unwrap(),
-            "--format",
-            "json",
-        ])
-        .unwrap();
-
-        assert_eq!(result.exit_code, 0);
-        let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(json[0]["id"], "ServerBehavior");
-        assert!(json[0]["states"].as_array().unwrap().iter().any(|state| {
-            state["id"] == "state.ServerBehavior.waiting.idle"
-                && state["parent_state_id"] == "state.ServerBehavior.waiting"
-        }));
-        assert!(
-            json[0]["transitions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|transition| {
-                    transition["id"] == "transition.ServerBehavior.timeout"
-                        && transition["trigger_kind"] == "after"
-                })
-        );
-    }
-
-    #[test]
-    fn state_machine_run_executes_local_clock_events() {
-        let path = mercurio_core::repo_path(
-            "examples/src/training/25. Transitions/Local Clock Example.sysml",
-        );
-        let result = run_args(&[
-            "state-machine",
-            "run",
-            "--file",
-            path.to_str().unwrap(),
-            "--machine",
-            "ServerBehavior",
-            "--event",
-            "Start",
-            "--event",
-            "request",
-            "--event",
-            "after 5 [ SI :: min ]",
-            "--format",
-            "json",
-        ])
-        .unwrap();
-
-        assert_eq!(result.exit_code, 0);
-        let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(json["status"], "completed");
-        assert_eq!(json["steps"].as_array().unwrap().len(), 3);
-        assert_eq!(
-            json["active_configuration"][1],
-            "state.Local Clock Example.Server.ServerBehavior.waiting"
-        );
-    }
-
-    #[test]
     fn query_match_selects_bound_element_fields() {
         let result = run_args(&[
             "query",
@@ -3695,9 +3725,10 @@ mod tests {
             root.join(PROJECT_DESCRIPTOR_FILE_NAME),
             r#"{
   "version": 1,
-  "baseline_libraries": [
+  "libraries": [
     {
       "id": "missing",
+      "role": "baseline",
       "provider": {
         "kind": "precompiled_kir_artifact",
         "path": "missing.kir.json"
@@ -3725,9 +3756,10 @@ mod tests {
             root.join(PROJECT_DESCRIPTOR_FILE_NAME),
             r#"{
   "version": 1,
-  "baseline_libraries": [
+  "libraries": [
     {
       "id": "missing",
+      "role": "baseline",
       "provider": {
         "kind": "precompiled_kir_artifact",
         "path": "missing.kir.json"
@@ -3783,7 +3815,6 @@ mod tests {
         let descriptor = ProjectDescriptor::from_path(&descriptor_path).unwrap();
         assert_eq!(descriptor.version, 1);
         assert_eq!(descriptor.name.as_deref(), Some("Demo Project"));
-        assert!(descriptor.baseline_libraries.is_empty());
         assert!(descriptor.libraries.is_empty());
 
         let sample = std::fs::read_to_string(sample_path).unwrap();

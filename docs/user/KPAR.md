@@ -139,6 +139,21 @@ Published package versions are immutable by default. Use `--force` to overwrite 
 mercurio package publish domain-lib --version 0.1.0 --to C:/work/published-packages --force
 ```
 
+Publish can also target an indexless HTTP package manager:
+
+```powershell
+mercurio package publish domain-lib --version 0.1.0 --to https://packages.example.com/mercurio
+```
+
+For HTTP(S), Mercurio verifies the staged local package, checks whether the remote `manifest.json` already exists, then uploads the KPAR and manifest with `PUT` requests:
+
+```text
+PUT https://packages.example.com/mercurio/domain-lib/0.1.0/domain-lib-0.1.0.kpar
+PUT https://packages.example.com/mercurio/domain-lib/0.1.0/manifest.json
+```
+
+The KPAR is uploaded before the manifest so installers do not discover a package before the payload exists. Remote package versions are immutable by default. Use `--force` to skip the remote existence check and overwrite.
+
 Pull a package from another repository into the local package repository:
 
 ```powershell
@@ -152,6 +167,21 @@ mercurio package pull domain-lib --version 0.1.0 --from C:/work/published-packag
 ```
 
 Pulled package versions are immutable by default. Use `--force` to overwrite an existing package in the target repository.
+
+Install a package by coordinate from a package manager or repository root:
+
+```powershell
+mercurio package install kpar:domain-lib:0.1.0 --from https://packages.example.com/mercurio
+```
+
+The initial package-manager shape is indexless. Given `kpar:domain-lib:0.1.0`, Mercurio fetches:
+
+```text
+https://packages.example.com/mercurio/domain-lib/0.1.0/manifest.json
+https://packages.example.com/mercurio/domain-lib/0.1.0/domain-lib-0.1.0.kpar
+```
+
+The remote manifest provides the package file name and digest. Mercurio downloads the KPAR, verifies the downloaded bytes against the manifest digest, and stages the package into the local package repository. `--from` can also point at a filesystem package repository, which makes `install` a coordinate-oriented form of `pull`.
 
 ## Compile A KPAR
 
@@ -186,6 +216,7 @@ Add a KPAR dependency in `.mercurio-project.json`:
   "libraries": [
     {
       "id": "domain-lib",
+      "role": "dependency",
       "provider": {
         "kind": "kpar_file",
         "path": "libs/domain.kpar"
@@ -199,7 +230,7 @@ Relative paths are resolved from the descriptor location.
 
 ## Package Locators
 
-Project descriptors can use a locator-based provider. A locator describes the package coordinate, while Mercurio decides whether to load it from the local package repository, configured package repositories, or a bundled repository.
+Project descriptors can use a locator shorthand. A locator describes the package coordinate, while Mercurio decides whether to load it from the local package repository, configured package repositories, or a bundled repository.
 
 Example:
 
@@ -210,10 +241,8 @@ Example:
   "libraries": [
     {
       "id": "domain-lib",
-      "provider": {
-        "kind": "kpar_locator",
-        "locator": "kpar:domain-lib:0.1.0"
-      }
+      "role": "dependency",
+      "locator": "kpar:domain-lib:0.1.0"
     }
   ]
 }
@@ -267,7 +296,7 @@ If a `kpar:` locator cannot be resolved, Mercurio reports the package coordinate
 
 ## Standard Library Package Locator
 
-When a project omits `baseline_libraries`, Mercurio uses the default standard library locator:
+When a project omits a `role: "baseline"` library, Mercurio uses the default standard library locator:
 
 ```text
 kpar:org.omg/sysml-stdlib:2.0.0

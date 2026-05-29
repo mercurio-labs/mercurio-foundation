@@ -14,7 +14,7 @@ UI and desktop/web product docs live in the sibling repo at `../../mercurio-ui/d
 
 ## User Guides
 
-- [CLI Guide](user/CLI.md)
+- [CLI Guide](user/CLI.md): public `mercurio` command examples and common workflows.
 - [Project Descriptors](user/PROJECTS.md)
 - [KIR User Guide](user/KIR.md)
 - [Querying And Evaluation](user/QUERY_EVALUATE.md)

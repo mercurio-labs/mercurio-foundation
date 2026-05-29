@@ -16,7 +16,7 @@ The goal of this repository is to make the modeling kernel useful on its own: pa
 ## What Lives Here
 
 - `mercurio-core` parses, compiles, lints, loads libraries, builds runtime graphs, and computes derived values.
-- `mercurio-cli` provides the public `mercurio` command for parse, compile, lint, query, evaluate, and package workflows.
+- `mercurio-cli` provides the public `mercurio` command for project, parse, compile, query, evaluate, lint, package, and completion workflows.
 - `mercurio-tools` contains maintainer tools for diagnostics, benchmarks, demos, and Pilot comparison/export workflows.
 - `resources/` contains bundled runtime and standard library artifacts.
 - `examples/` and `fixtures/` provide SysML, KerML, and KIR models for tests and demonstrations.
@@ -28,6 +28,7 @@ Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI o
 - Source languages: Mercurio reads `.sysml` and `.kerml` files. Inline CLI text defaults to SysML unless `--language kerml` is provided.
 - KIR: Mercurio's validated semantic JSON format, used by graph queries, derived values, projections, package loading, and product hosts.
 - Standard library: semantic compilation and linting use the bundled default standard library unless a command is given `--stdlib PATH`.
+- Project descriptors: `.mercurio-project.json` files describe baseline and dependency libraries in a single `libraries` array.
 - KPAR packages: source-backed zip packages containing SysML/KerML sources plus package metadata.
 
 ## Requirements
@@ -63,9 +64,15 @@ Parse an inline SysML model:
 mercurio parse --text "package Demo { part def Vehicle; }"
 ```
 
+Create a project scaffold:
+
+```powershell
+mercurio project new my-model --name "My Model"
+```
+
 ## User Documentation
 
-- [CLI Guide](docs/user/CLI.md): public `mercurio` command examples for parse, compile, lint, completions, and common input forms.
+- [CLI Guide](docs/user/CLI.md): public `mercurio` command examples for project, parse, compile, query, evaluate, lint, package, completions, and common input forms.
 - [Project Descriptors](docs/user/PROJECTS.md): `.mercurio-project.json`, provider kinds, and descriptor discovery.
 - [KIR User Guide](docs/user/KIR.md): compiled semantic JSON, ids, provenance, validation, and low-level workflows.
 - [Querying And Evaluation](docs/user/QUERY_EVALUATE.md): model queries, derived values, runtime context, and explanations.

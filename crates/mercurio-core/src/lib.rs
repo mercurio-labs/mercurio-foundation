@@ -140,9 +140,9 @@ pub use paths::{
     default_user_config_path, default_workspace_root, repo_path, repo_root,
 };
 pub use project::{
-    PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectDescriptorError, ProjectLibraryRole,
-    ResolvedProjectContext, ResolvedProjectLibrary, discover_project_descriptor_path,
-    resolve_project_context,
+    PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectDescriptorError, ProjectLibraryConfig,
+    ProjectLibraryRole, ResolvedProjectContext, ResolvedProjectLibrary,
+    discover_project_descriptor_path, resolve_project_context,
 };
 pub use project_cache::{
     PersistentCacheStatus, PersistentCompileResult, PersistentProjectCache,

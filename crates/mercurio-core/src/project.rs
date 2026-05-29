@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ir::{KirDocument, KirError};
 use crate::library::{
-    BaselineLibraryConfig, LibraryCacheMetadata, LibrarySourceFingerprint, ResolvedLibraryArtifact,
+    BaselineLibraryConfig, LibraryCacheMetadata, LibraryProviderConfig, LibrarySourceFingerprint,
+    ResolvedLibraryArtifact,
 };
 
 pub const PROJECT_DESCRIPTOR_FILE_NAME: &str = ".mercurio-project.json";
@@ -17,15 +18,14 @@ fn is_model_source_file(path: &Path) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectDescriptor {
     #[serde(default = "default_project_descriptor_version")]
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default)]
-    pub baseline_libraries: Vec<BaselineLibraryConfig>,
-    #[serde(default)]
-    pub libraries: Vec<BaselineLibraryConfig>,
+    pub libraries: Vec<ProjectLibraryConfig>,
 }
 
 #[derive(Debug)]
@@ -33,6 +33,7 @@ pub enum ProjectDescriptorError {
     Io(std::io::Error),
     Json(serde_json::Error),
     Kir(KirError),
+    Invalid(String),
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,19 @@ pub struct ResolvedProjectContext {
 pub enum ProjectLibraryRole {
     Baseline,
     Dependency,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectLibraryConfig {
+    #[serde(default = "default_project_library_id")]
+    pub id: String,
+    #[serde(default = "default_project_library_role")]
+    pub role: ProjectLibraryRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<LibraryProviderConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +103,7 @@ impl std::fmt::Display for ProjectDescriptorError {
             Self::Io(err) => write!(f, "failed to read project descriptor: {err}"),
             Self::Json(err) => write!(f, "failed to parse project descriptor: {err}"),
             Self::Kir(err) => write!(f, "failed to resolve project libraries: {err}"),
+            Self::Invalid(message) => write!(f, "invalid project descriptor: {message}"),
         }
     }
 }
@@ -175,18 +190,25 @@ fn resolve_library_context_document(
     descriptor_root: Option<&Path>,
     cache_root: Option<&Path>,
 ) -> Result<(KirDocument, Vec<ResolvedProjectLibrary>), ProjectDescriptorError> {
-    let baseline_libraries = descriptor
-        .map(|descriptor| descriptor.baseline_libraries.as_slice())
-        .unwrap_or(&[]);
     let project_libraries = descriptor
         .map(|descriptor| descriptor.libraries.as_slice())
         .unwrap_or(&[]);
 
     let mut resolved_libraries = Vec::new();
-    let baseline_configs = if baseline_libraries.is_empty() {
+    let baseline_configs = project_libraries
+        .iter()
+        .filter(|library| library.role == ProjectLibraryRole::Baseline)
+        .map(ProjectLibraryConfig::to_baseline_library_config)
+        .collect::<Result<Vec<_>, _>>()?;
+    let dependency_configs = project_libraries
+        .iter()
+        .filter(|library| library.role == ProjectLibraryRole::Dependency)
+        .map(ProjectLibraryConfig::to_baseline_library_config)
+        .collect::<Result<Vec<_>, _>>()?;
+    let baseline_configs = if baseline_configs.is_empty() {
         vec![BaselineLibraryConfig::stdlib_locator()]
     } else {
-        baseline_libraries.to_vec()
+        baseline_configs
     };
     for library in &baseline_configs {
         resolved_libraries.push(resolve_or_load_project_library(
@@ -204,7 +226,7 @@ fn resolve_library_context_document(
 
     let mut library_context = KirDocument::merge(baseline_documents)?;
 
-    for library in project_libraries {
+    for library in &dependency_configs {
         let resolved_library = resolve_or_load_project_library(
             library,
             ProjectLibraryRole::Dependency,
@@ -248,6 +270,40 @@ impl ResolvedProjectLibrary {
             cached_element_count: Some(artifact.document.elements.len()),
             document: artifact.document.clone(),
         }
+    }
+}
+
+impl ProjectLibraryConfig {
+    fn to_baseline_library_config(&self) -> Result<BaselineLibraryConfig, ProjectDescriptorError> {
+        let provider = match (&self.locator, &self.provider) {
+            (Some(locator), None) => LibraryProviderConfig::KparLocator {
+                locator: locator.clone(),
+            },
+            (None, Some(LibraryProviderConfig::KparLocator { .. })) => {
+                return Err(ProjectDescriptorError::Invalid(format!(
+                    "library '{}' must use the top-level locator field instead of provider kind kpar_locator",
+                    self.id
+                )));
+            }
+            (None, Some(provider)) => provider.clone(),
+            (Some(_), Some(_)) => {
+                return Err(ProjectDescriptorError::Invalid(format!(
+                    "library '{}' must use either locator or provider, not both",
+                    self.id
+                )));
+            }
+            (None, None) => {
+                return Err(ProjectDescriptorError::Invalid(format!(
+                    "library '{}' must declare locator or provider",
+                    self.id
+                )));
+            }
+        };
+
+        Ok(BaselineLibraryConfig {
+            id: self.id.clone(),
+            provider,
+        })
     }
 }
 
@@ -436,6 +492,14 @@ fn default_project_descriptor_version() -> u32 {
     1
 }
 
+fn default_project_library_id() -> String {
+    "stdlib".to_string()
+}
+
+fn default_project_library_role() -> ProjectLibraryRole {
+    ProjectLibraryRole::Dependency
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -487,9 +551,10 @@ mod tests {
         let descriptor = serde_json::json!({
             "version": 1,
             "name": "Demo Project",
-            "baseline_libraries": [
+            "libraries": [
                 {
                     "id": "custom",
+                    "role": "baseline",
                     "provider": {
                         "kind": "precompiled_kir_artifact",
                         "path": library_path.display().to_string()
@@ -546,8 +611,17 @@ mod tests {
         let descriptor: ProjectDescriptor = serde_json::from_str("{}").unwrap();
 
         assert_eq!(descriptor.version, 1);
-        assert!(descriptor.baseline_libraries.is_empty());
         assert!(descriptor.libraries.is_empty());
+    }
+
+    #[test]
+    fn project_descriptor_rejects_legacy_baseline_libraries_field() {
+        let err = serde_json::from_str::<ProjectDescriptor>(
+            r#"{"version":1,"baseline_libraries":[],"libraries":[]}"#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("baseline_libraries"));
     }
 
     #[test]
@@ -623,9 +697,10 @@ mod tests {
 
         let descriptor = serde_json::json!({
             "version": 1,
-            "baseline_libraries": [
+            "libraries": [
                 {
                     "id": "custom",
+                    "role": "baseline",
                     "provider": {
                         "kind": "precompiled_kir_artifact",
                         "path": "baseline.kir.json"
@@ -885,7 +960,7 @@ mod tests {
                 .resolved_libraries
                 .iter()
                 .any(|library| library.role == ProjectLibraryRole::Baseline
-                    && library.source_kind == "bundled_stdlib")
+                    && library.id == "stdlib")
         );
         assert!(
             resolved

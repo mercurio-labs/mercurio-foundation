@@ -25,7 +25,6 @@ The generated descriptor is intentionally small:
 {
   "version": 1,
   "name": "My Model",
-  "baseline_libraries": [],
   "libraries": []
 }
 ```
@@ -34,16 +33,16 @@ Fields:
 
 - `version`: descriptor schema version. The current version is `1`; omitted values default to `1`.
 - `name`: optional display name for the project.
-- `baseline_libraries`: foundational libraries used as the baseline semantic context. If this array is empty or omitted, Mercurio uses the bundled standard library.
-- `libraries`: ordinary read-only dependency libraries added after the baseline context.
+- `libraries`: baseline and dependency libraries. If no baseline library is declared, Mercurio uses the bundled standard library locator.
 
 ## Library Providers
 
-Each entry in `baseline_libraries` or `libraries` has this shape:
+Each entry in `libraries` has this shape:
 
 ```json
 {
   "id": "domain-lib",
+  "role": "dependency",
   "provider": {
     "kind": "kpar_file",
     "path": "libs/domain.kpar"
@@ -68,10 +67,8 @@ Mercurio supports a package-locator provider for portable KPAR dependencies:
 ```json
 {
   "id": "domain-lib",
-  "provider": {
-    "kind": "kpar_locator",
-    "locator": "kpar:domain-lib:0.1.0"
-  }
+  "role": "dependency",
+  "locator": "kpar:domain-lib:0.1.0"
 }
 ```
 
@@ -96,10 +93,8 @@ And another project to consume it without hardcoding an absolute file path:
   "libraries": [
     {
       "id": "domain-lib",
-      "provider": {
-        "kind": "kpar_locator",
-        "locator": "kpar:domain-lib:0.1.0"
-      }
+      "role": "dependency",
+      "locator": "kpar:domain-lib:0.1.0"
     }
   ]
 }
@@ -129,14 +124,12 @@ The standard library should follow the same package convention as project and do
 ```json
 {
   "id": "stdlib",
-  "provider": {
-    "kind": "kpar_locator",
-    "locator": "kpar:org.omg/sysml-stdlib:2.0.0"
-  }
+  "role": "baseline",
+  "locator": "kpar:org.omg/sysml-stdlib:2.0.0"
 }
 ```
 
-If `baseline_libraries` is empty or omitted, Mercurio behaves as if the descriptor declared that standard library locator. Resolution prefers cached and bundled KPAR packages before falling back to the current bundled KIR during migration.
+If no `role: "baseline"` library is declared, Mercurio behaves as if the descriptor declared that standard library locator. Resolution prefers cached and bundled KPAR packages before falling back to the current bundled KIR during migration.
 
 During migration, `bundled_stdlib` remains the compatibility provider and fallback for environments that do not yet use locator-backed standard library packages.
 
