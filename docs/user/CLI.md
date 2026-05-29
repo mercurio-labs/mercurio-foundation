@@ -228,11 +228,14 @@ Install and inspect plugin manifests through the default `mercurio` CLI:
 
 ```powershell
 mercurio plugin install .\extension.json
+mercurio plugin install .\org.mercurio.semantic-impact-0.1.0.mpack
 mercurio plugin list
 mercurio plugin inspect org.mercurio.requirements --version 0.1.0
 ```
 
-This first plugin surface is metadata-only. It registers plugin manifests under the local Mercurio plugin registry so later commands can invoke installed services through the same default CLI.
+The install command accepts either a raw `extension.json` manifest or a packaged `.mpack` archive containing `extension.json`. Packaged installs preserve the original archive as `plugin.mpack` beside the normalized installed manifest.
+
+Reasoning services are implemented in the sibling `mercurio-reasoning` repository. `mercurio-reason invoke` can resolve service declarations from this same local plugin registry, while the default `mercurio` CLI remains the package and registry management surface.
 
 ## Shell Completions
 
