@@ -1,0 +1,249 @@
+use std::fmt;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+use crate::default_user_config_path;
+
+#[derive(Debug)]
+pub enum PluginRegistryError {
+    Io(String),
+    Invalid(String),
+}
+
+impl fmt::Display for PluginRegistryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(message) | Self::Invalid(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for PluginRegistryError {}
+
+#[derive(Debug, Clone)]
+pub struct PluginInstallSource {
+    pub manifest: Value,
+    pub package_path: Option<PathBuf>,
+}
+
+pub fn plugin_registry_root(path: Option<PathBuf>) -> PathBuf {
+    path.unwrap_or_else(default_plugin_registry_root)
+}
+
+pub fn default_plugin_registry_root() -> PathBuf {
+    default_user_config_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(".mercurio"))
+        .join("plugins")
+}
+
+pub fn plugin_manifest_dir(root: &Path, id: &str, version: &str) -> PathBuf {
+    root.join("installed")
+        .join(safe_plugin_path_segment(id))
+        .join(safe_plugin_path_segment(version))
+}
+
+pub fn read_plugin_install_source(path: &Path) -> Result<PluginInstallSource, PluginRegistryError> {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mpack"))
+    {
+        return Ok(PluginInstallSource {
+            manifest: read_plugin_manifest_from_mpack(path)?,
+            package_path: Some(path.to_path_buf()),
+        });
+    }
+    Ok(PluginInstallSource {
+        manifest: read_plugin_manifest(path)?,
+        package_path: None,
+    })
+}
+
+pub fn read_plugin_manifest(path: &Path) -> Result<Value, PluginRegistryError> {
+    let input = std::fs::read_to_string(path).map_err(|err| {
+        PluginRegistryError::Io(format!("failed to read {}: {err}", path.display()))
+    })?;
+    serde_json::from_str(&input).map_err(|err| {
+        PluginRegistryError::Invalid(format!("invalid plugin manifest {}: {err}", path.display()))
+    })
+}
+
+pub fn read_plugin_manifest_from_mpack(path: &Path) -> Result<Value, PluginRegistryError> {
+    let file = std::fs::File::open(path).map_err(|err| {
+        PluginRegistryError::Io(format!(
+            "failed to read plugin package {}: {err}",
+            path.display()
+        ))
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|err| {
+        PluginRegistryError::Invalid(format!(
+            "invalid plugin package archive {}: {err}",
+            path.display()
+        ))
+    })?;
+    let mut manifest_entry = archive.by_name("extension.json").map_err(|err| {
+        PluginRegistryError::Invalid(format!(
+            "plugin package {} is missing extension.json: {err}",
+            path.display()
+        ))
+    })?;
+    let mut input = String::new();
+    manifest_entry.read_to_string(&mut input).map_err(|err| {
+        PluginRegistryError::Invalid(format!(
+            "failed to read extension.json from {}: {err}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_str(&input).map_err(|err| {
+        PluginRegistryError::Invalid(format!(
+            "invalid plugin manifest in package {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+pub fn install_plugin_manifest(
+    root: &Path,
+    id: &str,
+    version: &str,
+    manifest: &Value,
+    package_path: Option<&Path>,
+    force: bool,
+) -> Result<PathBuf, PluginRegistryError> {
+    let target_dir = plugin_manifest_dir(root, id, version);
+    let target_path = target_dir.join("extension.json");
+    if !force && target_path.exists() {
+        return Err(PluginRegistryError::Invalid(format!(
+            "plugin {id} version {version} already exists in {}; use --force to overwrite",
+            root.display()
+        )));
+    }
+    std::fs::create_dir_all(&target_dir).map_err(|err| {
+        PluginRegistryError::Io(format!(
+            "failed to create plugin directory {}: {err}",
+            target_dir.display()
+        ))
+    })?;
+    let manifest_json = serde_json::to_vec_pretty(manifest).map_err(|err| {
+        PluginRegistryError::Invalid(format!("failed to encode plugin manifest: {err}"))
+    })?;
+    std::fs::write(&target_path, manifest_json).map_err(|err| {
+        PluginRegistryError::Io(format!(
+            "failed to install plugin manifest {}: {err}",
+            target_path.display()
+        ))
+    })?;
+    if let Some(package_path) = package_path {
+        let target_package = target_dir.join("plugin.mpack");
+        std::fs::copy(package_path, &target_package).map_err(|err| {
+            PluginRegistryError::Io(format!(
+                "failed to install plugin package {}: {err}",
+                target_package.display()
+            ))
+        })?;
+    }
+    Ok(target_path)
+}
+
+pub fn installed_plugin_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, PluginRegistryError> {
+    let installed = root.join("installed");
+    if !installed.exists() {
+        return Ok(Vec::new());
+    }
+    let mut paths = Vec::new();
+    collect_installed_plugin_manifest_paths(&installed, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_installed_plugin_manifest_paths(
+    current: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), PluginRegistryError> {
+    for entry in std::fs::read_dir(current).map_err(|err| {
+        PluginRegistryError::Io(format!(
+            "failed to read plugin directory {}: {err}",
+            current.display()
+        ))
+    })? {
+        let entry = entry.map_err(|err| {
+            PluginRegistryError::Io(format!("failed to read plugin directory entry: {err}"))
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_installed_plugin_manifest_paths(&path, paths)?;
+        } else if path.file_name().and_then(|value| value.to_str()) == Some("extension.json") {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn safe_plugin_path_segment(value: &str) -> String {
+    let mut segment = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if segment.is_empty() || segment == "." || segment == ".." {
+        segment = "package".to_string();
+    }
+    segment
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn install_plugin_manifest_preserves_package_archive() {
+        let root = temp_dir("mercurio-plugin-registry-core");
+        let package_path = root.join("sample.mpack");
+        std::fs::create_dir_all(&root).unwrap();
+        let file = std::fs::File::create(&package_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("extension.json", zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(br#"{"id":"org.example","version":"1.0.0","name":"Example"}"#)
+            .unwrap();
+        zip.finish().unwrap();
+
+        let source = read_plugin_install_source(&package_path).unwrap();
+        let path = install_plugin_manifest(
+            &root.join("plugins"),
+            "org.example",
+            "1.0.0",
+            &source.manifest,
+            source.package_path.as_deref(),
+            false,
+        )
+        .unwrap();
+
+        assert!(path.is_file());
+        assert!(path.with_file_name("plugin.mpack").is_file());
+        let manifests = installed_plugin_manifest_paths(&root.join("plugins")).unwrap();
+        assert_eq!(manifests, vec![path]);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

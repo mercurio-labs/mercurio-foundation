@@ -18,6 +18,7 @@ pub mod metamodel;
 pub mod mutation;
 pub mod outline;
 pub mod paths;
+pub mod plugin_registry;
 pub mod project;
 pub mod project_cache;
 pub mod proposal;
@@ -138,6 +139,12 @@ pub use paths::{
     bundled_package_repo_path, bundled_stdlib_package_set_path, default_package_kir_cache_path,
     default_package_repo_path, default_stdlib_path, default_stdlib_rulepack_path,
     default_user_config_path, default_workspace_root, repo_path, repo_root,
+};
+pub use plugin_registry::{
+    PluginInstallSource as RegistryPluginInstallSource, PluginRegistryError,
+    default_plugin_registry_root, install_plugin_manifest, installed_plugin_manifest_paths,
+    plugin_manifest_dir, plugin_registry_root, read_plugin_install_source,
+    read_plugin_manifest as read_registry_plugin_manifest,
 };
 pub use project::{
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectDescriptorError, ProjectLibraryConfig,

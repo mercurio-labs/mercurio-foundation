@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -9,12 +8,13 @@ use mercurio_core::frontend::ast::{Declaration, SysmlModule};
 use mercurio_core::frontend::diagnostics::Diagnostic;
 use mercurio_core::frontend::kerml::{compile_kerml_text, parse_kerml};
 use mercurio_core::frontend::sysml::{compile_sysml_text_with_context_report, parse_sysml};
+use mercurio_core::plugin_registry as registry;
 use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
     LintSeverity, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet, Runtime,
-    SemanticCompileStatus, SourceLanguage, default_stdlib_path, default_user_config_path,
-    lint_text, parse_query, resolve_project_context, write_kpar_package,
+    SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
+    resolve_project_context, write_kpar_package,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -412,11 +412,6 @@ struct InstalledPluginSummary {
     manifest_path: String,
 }
 
-struct PluginInstallSource {
-    manifest: PluginManifestEnvelope,
-    package_path: Option<PathBuf>,
-}
-
 #[derive(Debug, Clone)]
 struct ResolvedEvaluationTarget {
     owner_id: String,
@@ -452,6 +447,13 @@ impl fmt::Display for CliError {
 }
 
 impl std::error::Error for CliError {}
+
+fn registry_error_to_cli(error: registry::PluginRegistryError) -> CliError {
+    match error {
+        registry::PluginRegistryError::Io(message) => CliError::execution(message),
+        registry::PluginRegistryError::Invalid(message) => CliError::usage(message),
+    }
+}
 
 fn main() {
     let cli = Cli::parse();
@@ -1120,49 +1122,26 @@ fn run_package_pull(command: PackagePullCommand) -> Result<RunResult, CliError> 
 }
 
 fn run_plugin_install(command: PluginInstallCommand) -> Result<RunResult, CliError> {
-    let PluginInstallSource {
-        manifest,
-        package_path,
-    } = read_plugin_install_source(&command.manifest)?;
-    validate_plugin_manifest(&manifest)?;
-    let root = plugin_registry_root(command.root);
-    let target_dir = plugin_manifest_dir(&root, &manifest.id, &manifest.version);
-    let target_path = target_dir.join("extension.json");
-    if !command.force && target_path.exists() {
-        return Err(CliError::execution(format!(
-            "plugin {} version {} already exists in {}; use --force to overwrite",
-            manifest.id,
-            manifest.version,
-            root.display()
-        )));
-    }
-    std::fs::create_dir_all(&target_dir).map_err(|err| {
-        CliError::execution(format!(
-            "failed to create plugin directory {}: {err}",
-            target_dir.display()
-        ))
-    })?;
-    std::fs::write(
-        &target_path,
-        serde_json::to_vec_pretty(&manifest).map_err(|err| {
-            CliError::execution(format!("failed to encode plugin manifest: {err}"))
-        })?,
-    )
-    .map_err(|err| {
-        CliError::execution(format!(
-            "failed to install plugin manifest {}: {err}",
-            target_path.display()
-        ))
-    })?;
-    if let Some(package_path) = package_path {
-        let target_package = target_dir.join("plugin.mpack");
-        std::fs::copy(&package_path, &target_package).map_err(|err| {
-            CliError::execution(format!(
-                "failed to install plugin package {}: {err}",
-                target_package.display()
+    let source =
+        registry::read_plugin_install_source(&command.manifest).map_err(registry_error_to_cli)?;
+    let manifest: PluginManifestEnvelope = serde_json::from_value(source.manifest.clone())
+        .map_err(|err| {
+            CliError::usage(format!(
+                "invalid plugin manifest {}: {err}",
+                command.manifest.display()
             ))
         })?;
-    }
+    validate_plugin_manifest(&manifest)?;
+    let root = registry::plugin_registry_root(command.root);
+    let target_path = registry::install_plugin_manifest(
+        &root,
+        &manifest.id,
+        &manifest.version,
+        &source.manifest,
+        source.package_path.as_deref(),
+        command.force,
+    )
+    .map_err(registry_error_to_cli)?;
     let stdout = if command.quiet {
         String::new()
     } else {
@@ -1181,7 +1160,7 @@ fn run_plugin_install(command: PluginInstallCommand) -> Result<RunResult, CliErr
 }
 
 fn run_plugin_list(command: PluginListCommand) -> Result<RunResult, CliError> {
-    let root = plugin_registry_root(command.root);
+    let root = registry::plugin_registry_root(command.root);
     let plugins = installed_plugin_summaries(&root)?;
     let stdout = match command.format {
         OutputFormat::Json => to_pretty_json(&plugins)?,
@@ -1194,7 +1173,7 @@ fn run_plugin_list(command: PluginListCommand) -> Result<RunResult, CliError> {
 }
 
 fn run_plugin_inspect(command: PluginInspectCommand) -> Result<RunResult, CliError> {
-    let root = plugin_registry_root(command.root);
+    let root = registry::plugin_registry_root(command.root);
     let manifests = installed_plugin_manifests(&root)?;
     let matches = manifests
         .into_iter()
@@ -2161,78 +2140,10 @@ fn package_repository_target(
     Ok(LocalPackageRepository::new(PathBuf::from(path)))
 }
 
-fn plugin_registry_root(path: Option<PathBuf>) -> PathBuf {
-    path.unwrap_or_else(|| {
-        default_user_config_path()
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from(".mercurio"))
-            .join("plugins")
-    })
-}
-
-fn plugin_manifest_dir(root: &Path, id: &str, version: &str) -> PathBuf {
-    root.join("installed")
-        .join(safe_package_path_segment(id))
-        .join(safe_package_path_segment(version))
-}
-
 fn read_plugin_manifest(path: &Path) -> Result<PluginManifestEnvelope, CliError> {
-    let input = std::fs::read_to_string(path)
-        .map_err(|err| CliError::execution(format!("failed to read {}: {err}", path.display())))?;
-    serde_json::from_str(&input).map_err(|err| {
+    let manifest = registry::read_plugin_manifest(path).map_err(registry_error_to_cli)?;
+    serde_json::from_value(manifest).map_err(|err| {
         CliError::usage(format!("invalid plugin manifest {}: {err}", path.display()))
-    })
-}
-
-fn read_plugin_install_source(path: &Path) -> Result<PluginInstallSource, CliError> {
-    if path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("mpack"))
-    {
-        return Ok(PluginInstallSource {
-            manifest: read_plugin_manifest_from_mpack(path)?,
-            package_path: Some(path.to_path_buf()),
-        });
-    }
-    Ok(PluginInstallSource {
-        manifest: read_plugin_manifest(path)?,
-        package_path: None,
-    })
-}
-
-fn read_plugin_manifest_from_mpack(path: &Path) -> Result<PluginManifestEnvelope, CliError> {
-    let file = std::fs::File::open(path).map_err(|err| {
-        CliError::execution(format!(
-            "failed to read plugin package {}: {err}",
-            path.display()
-        ))
-    })?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|err| {
-        CliError::usage(format!(
-            "invalid plugin package archive {}: {err}",
-            path.display()
-        ))
-    })?;
-    let mut manifest_entry = archive.by_name("extension.json").map_err(|err| {
-        CliError::usage(format!(
-            "plugin package {} is missing extension.json: {err}",
-            path.display()
-        ))
-    })?;
-    let mut input = String::new();
-    manifest_entry.read_to_string(&mut input).map_err(|err| {
-        CliError::usage(format!(
-            "failed to read extension.json from {}: {err}",
-            path.display()
-        ))
-    })?;
-    serde_json::from_str(&input).map_err(|err| {
-        CliError::usage(format!(
-            "invalid plugin manifest in package {}: {err}",
-            path.display()
-        ))
     })
 }
 
@@ -2278,12 +2189,15 @@ fn validate_plugin_manifest(manifest: &PluginManifestEnvelope) -> Result<(), Cli
 fn installed_plugin_manifests(
     root: &Path,
 ) -> Result<Vec<(PathBuf, PluginManifestEnvelope)>, CliError> {
-    let installed = root.join("installed");
-    if !installed.exists() {
-        return Ok(Vec::new());
-    }
-    let mut manifests = Vec::new();
-    collect_installed_plugin_manifests(&installed, &mut manifests)?;
+    let mut manifests = registry::installed_plugin_manifest_paths(root)
+        .map_err(registry_error_to_cli)?
+        .into_iter()
+        .map(|path| {
+            let manifest = read_plugin_manifest(&path)?;
+            validate_plugin_manifest(&manifest)?;
+            Ok((path, manifest))
+        })
+        .collect::<Result<Vec<_>, CliError>>()?;
     manifests.sort_by(|left, right| {
         left.1
             .id
@@ -2291,35 +2205,6 @@ fn installed_plugin_manifests(
             .then_with(|| left.1.version.cmp(&right.1.version))
     });
     Ok(manifests)
-}
-
-fn collect_installed_plugin_manifests(
-    current: &Path,
-    manifests: &mut Vec<(PathBuf, PluginManifestEnvelope)>,
-) -> Result<(), CliError> {
-    let entries = match std::fs::read_dir(current) {
-        Ok(entries) => entries,
-        Err(err) => {
-            return Err(CliError::execution(format!(
-                "failed to read plugin directory {}: {err}",
-                current.display()
-            )));
-        }
-    };
-    for entry in entries {
-        let entry = entry.map_err(|err| {
-            CliError::execution(format!("failed to read plugin directory entry: {err}"))
-        })?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_installed_plugin_manifests(&path, manifests)?;
-        } else if path.file_name().and_then(|value| value.to_str()) == Some("extension.json") {
-            let manifest = read_plugin_manifest(&path)?;
-            validate_plugin_manifest(&manifest)?;
-            manifests.push((path, manifest));
-        }
-    }
-    Ok(())
 }
 
 fn installed_plugin_summaries(root: &Path) -> Result<Vec<InstalledPluginSummary>, CliError> {
