@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -409,6 +410,11 @@ struct InstalledPluginSummary {
     services: Vec<String>,
     cli_actions: Vec<String>,
     manifest_path: String,
+}
+
+struct PluginInstallSource {
+    manifest: PluginManifestEnvelope,
+    package_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -1114,7 +1120,10 @@ fn run_package_pull(command: PackagePullCommand) -> Result<RunResult, CliError> 
 }
 
 fn run_plugin_install(command: PluginInstallCommand) -> Result<RunResult, CliError> {
-    let manifest = read_plugin_manifest(&command.manifest)?;
+    let PluginInstallSource {
+        manifest,
+        package_path,
+    } = read_plugin_install_source(&command.manifest)?;
     validate_plugin_manifest(&manifest)?;
     let root = plugin_registry_root(command.root);
     let target_dir = plugin_manifest_dir(&root, &manifest.id, &manifest.version);
@@ -1133,12 +1142,27 @@ fn run_plugin_install(command: PluginInstallCommand) -> Result<RunResult, CliErr
             target_dir.display()
         ))
     })?;
-    std::fs::copy(&command.manifest, &target_path).map_err(|err| {
+    std::fs::write(
+        &target_path,
+        serde_json::to_vec_pretty(&manifest).map_err(|err| {
+            CliError::execution(format!("failed to encode plugin manifest: {err}"))
+        })?,
+    )
+    .map_err(|err| {
         CliError::execution(format!(
             "failed to install plugin manifest {}: {err}",
             target_path.display()
         ))
     })?;
+    if let Some(package_path) = package_path {
+        let target_package = target_dir.join("plugin.mpack");
+        std::fs::copy(&package_path, &target_package).map_err(|err| {
+            CliError::execution(format!(
+                "failed to install plugin package {}: {err}",
+                target_package.display()
+            ))
+        })?;
+    }
     let stdout = if command.quiet {
         String::new()
     } else {
@@ -2161,6 +2185,57 @@ fn read_plugin_manifest(path: &Path) -> Result<PluginManifestEnvelope, CliError>
     })
 }
 
+fn read_plugin_install_source(path: &Path) -> Result<PluginInstallSource, CliError> {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mpack"))
+    {
+        return Ok(PluginInstallSource {
+            manifest: read_plugin_manifest_from_mpack(path)?,
+            package_path: Some(path.to_path_buf()),
+        });
+    }
+    Ok(PluginInstallSource {
+        manifest: read_plugin_manifest(path)?,
+        package_path: None,
+    })
+}
+
+fn read_plugin_manifest_from_mpack(path: &Path) -> Result<PluginManifestEnvelope, CliError> {
+    let file = std::fs::File::open(path).map_err(|err| {
+        CliError::execution(format!(
+            "failed to read plugin package {}: {err}",
+            path.display()
+        ))
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|err| {
+        CliError::usage(format!(
+            "invalid plugin package archive {}: {err}",
+            path.display()
+        ))
+    })?;
+    let mut manifest_entry = archive.by_name("extension.json").map_err(|err| {
+        CliError::usage(format!(
+            "plugin package {} is missing extension.json: {err}",
+            path.display()
+        ))
+    })?;
+    let mut input = String::new();
+    manifest_entry.read_to_string(&mut input).map_err(|err| {
+        CliError::usage(format!(
+            "failed to read extension.json from {}: {err}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_str(&input).map_err(|err| {
+        CliError::usage(format!(
+            "invalid plugin manifest in package {}: {err}",
+            path.display()
+        ))
+    })
+}
+
 fn validate_plugin_manifest(manifest: &PluginManifestEnvelope) -> Result<(), CliError> {
     if manifest.id.trim().is_empty() {
         return Err(CliError::usage("plugin manifest id must not be empty"));
@@ -3066,6 +3141,18 @@ mod tests {
         std::env::temp_dir().join(format!("{prefix}-{nanos}"))
     }
 
+    fn write_test_plugin_package(path: &Path, manifest: &str) {
+        use std::io::Write as _;
+
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("extension.json", options).unwrap();
+        writer.write_all(manifest.as_bytes()).unwrap();
+        writer.finish().unwrap();
+    }
+
     #[test]
     fn parse_text_sysml_succeeds() {
         let result = run_args(&["parse", "--text", "package Demo { part def Vehicle; }"]).unwrap();
@@ -3800,6 +3887,74 @@ mod tests {
         ])
         .unwrap_err();
         assert!(duplicate.message.contains("already exists"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plugin_install_accepts_mpack_archive() {
+        let root = temp_dir("mercurio-cli-plugin-mpack-registry");
+        let package_path = root.join("requirements.mpack");
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_plugin_package(
+            &package_path,
+            r#"{
+  "id": "org.mercurio.requirements",
+  "version": "0.1.0",
+  "name": "Requirements Reasoning",
+  "services": [
+    {
+      "id": "requirements.coverage",
+      "runtime": "in_process",
+      "function": "coverage"
+    }
+  ],
+  "cli_actions": [
+    {
+      "command": "requirements coverage",
+      "service": "requirements.coverage"
+    }
+  ]
+}"#,
+        );
+
+        let registry = root.join("plugins");
+        let install = run_args(&[
+            "plugin",
+            "install",
+            package_path.to_str().unwrap(),
+            "--root",
+            registry.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(install.exit_code, 0);
+        assert!(
+            install
+                .stdout
+                .contains("installed plugin: org.mercurio.requirements:0.1.0")
+        );
+
+        let installed_dir = registry
+            .join("installed")
+            .join("org.mercurio.requirements")
+            .join("0.1.0");
+        assert!(installed_dir.join("extension.json").is_file());
+        assert!(installed_dir.join("plugin.mpack").is_file());
+
+        let inspect = run_args(&[
+            "plugin",
+            "inspect",
+            "org.mercurio.requirements",
+            "--root",
+            registry.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        assert_eq!(inspect.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&inspect.stdout).unwrap();
+        assert_eq!(json["id"], "org.mercurio.requirements");
+        assert_eq!(json["cliActions"][0]["service"], "requirements.coverage");
 
         std::fs::remove_dir_all(root).unwrap();
     }
