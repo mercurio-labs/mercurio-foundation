@@ -14,9 +14,9 @@ use mercurio_core::frontend::kerml::{compile_kerml_text, parse_kerml};
 use mercurio_core::frontend::sysml::{compile_sysml_text_with_context_report, parse_sysml};
 use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
-    LintSeverity, PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet,
-    Runtime, SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
-    resolve_project_context, write_kpar_package,
+    LintSeverity, LocalPackageRepository, LocalPackageSource, PROJECT_DESCRIPTOR_FILE_NAME,
+    ProjectDescriptor, QueryEngine, QueryResultSet, Runtime, SemanticCompileStatus, SourceLanguage,
+    default_stdlib_path, lint_text, parse_query, resolve_project_context, write_kpar_package,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -223,6 +223,9 @@ struct ProjectNewCommand {
 #[derive(Debug, Subcommand)]
 enum PackageSubcommand {
     Build(PackageBuildCommand),
+    List(PackageListCommand),
+    Inspect(PackageInspectCommand),
+    Compile(PackageCompileCommand),
 }
 
 #[derive(Debug, Args)]
@@ -230,7 +233,7 @@ struct PackageBuildCommand {
     #[arg(long = "file")]
     files: Vec<PathBuf>,
     #[arg(long)]
-    out: PathBuf,
+    out: Option<PathBuf>,
     #[arg(long)]
     stdlib: Option<PathBuf>,
     #[arg(long)]
@@ -239,6 +242,32 @@ struct PackageBuildCommand {
     version: Option<String>,
     #[arg(long)]
     quiet: bool,
+}
+
+#[derive(Debug, Args)]
+struct PackageListCommand {
+    #[arg(long)]
+    repo: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct PackageInspectCommand {
+    name: String,
+    #[arg(long)]
+    version: String,
+    #[arg(long)]
+    repo: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct PackageCompileCommand {
+    name: String,
+    #[arg(long)]
+    version: String,
+    #[arg(long)]
+    repo: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -636,6 +665,9 @@ fn run_lint(command: LintCommand) -> Result<RunResult, CliError> {
 fn run_package(command: PackageCommand) -> Result<RunResult, CliError> {
     match command.command {
         PackageSubcommand::Build(command) => run_package_build(command),
+        PackageSubcommand::List(command) => run_package_list(command),
+        PackageSubcommand::Inspect(command) => run_package_inspect(command),
+        PackageSubcommand::Compile(command) => run_package_compile(command),
     }
 }
 
@@ -744,10 +776,20 @@ fn run_project_new(command: ProjectNewCommand) -> Result<RunResult, CliError> {
 
 fn run_package_build(command: PackageBuildCommand) -> Result<RunResult, CliError> {
     let sources = read_package_sources(&command.files)?;
-    let package_name = command
-        .name
-        .clone()
-        .unwrap_or_else(|| derive_package_name(&command.out));
+    let package_name = match (&command.name, &command.out) {
+        (Some(name), _) => name.clone(),
+        (None, Some(out)) => derive_package_name(out),
+        (None, None) => {
+            return Err(CliError::usage(
+                "provide --name when staging a package without --out",
+            ));
+        }
+    };
+    if command.out.is_none() && command.version.is_none() {
+        return Err(CliError::usage(
+            "provide --version when staging a package without --out",
+        ));
+    }
     let package = KparPackageBuild {
         name: package_name,
         version: command.version.clone(),
@@ -755,7 +797,13 @@ fn run_package_build(command: PackageBuildCommand) -> Result<RunResult, CliError
     };
     let library_context =
         load_library_context(command.stdlib.as_deref(), package_context_path(&command)?)?;
-    let temp_path = temp_kpar_path(&command.out)?;
+    let output_path = command.out.clone().unwrap_or_else(|| {
+        std::env::temp_dir().join(LocalPackageRepository::package_file_name(
+            &package.name,
+            package.version.as_deref().unwrap_or("0.0.0"),
+        ))
+    });
+    let temp_path = temp_kpar_path(&output_path)?;
 
     write_kpar_package(&temp_path, &package)
         .map_err(|err| CliError::execution(format!("failed to write package: {err}")))?;
@@ -777,33 +825,41 @@ fn run_package_build(command: PackageBuildCommand) -> Result<RunResult, CliError
         }
     };
 
-    if let Some(parent) = command.out.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| {
+    let wrote_path = if let Some(out) = &command.out {
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                CliError::execution(format!(
+                    "failed to create output directory {}: {err}",
+                    parent.display()
+                ))
+            })?;
+        }
+        std::fs::copy(&temp_path, out).map_err(|err| {
             CliError::execution(format!(
-                "failed to create output directory {}: {err}",
-                parent.display()
+                "failed to write output package {}: {err}",
+                out.display()
             ))
         })?;
-    }
-    std::fs::copy(&temp_path, &command.out).map_err(|err| {
-        CliError::execution(format!(
-            "failed to write output package {}: {err}",
-            command.out.display()
-        ))
-    })?;
-    std::fs::remove_file(&temp_path).map_err(|err| {
-        CliError::execution(format!(
-            "failed to remove temporary package {}: {err}",
-            temp_path.display()
-        ))
-    })?;
+        out.clone()
+    } else {
+        let version = package.version.as_deref().unwrap();
+        let repo = LocalPackageRepository::default_user();
+        let source = command.files.first().map(|path| LocalPackageSource {
+            kind: if path.is_dir() { "directory" } else { "file" }.to_string(),
+            path: path.display().to_string(),
+        });
+        repo.stage_kpar(&temp_path, &package.name, version, source)
+            .map_err(|err| CliError::execution(format!("failed to stage package: {err}")))?;
+        repo.package_path(&package.name, version)
+    };
+    let _ = std::fs::remove_file(&temp_path);
 
     let stdout = if command.quiet {
         String::new()
     } else {
         format!(
             "wrote: {}\nproject_descriptor: {}\nsources: {}\nelements: {}\n",
-            command.out.display(),
+            wrote_path.display(),
             library_context.project_descriptor_text(),
             package.sources.len(),
             artifact.document.elements.len()
@@ -813,6 +869,69 @@ fn run_package_build(command: PackageBuildCommand) -> Result<RunResult, CliError
     Ok(RunResult {
         exit_code: 0,
         stdout,
+    })
+}
+
+fn run_package_list(command: PackageListCommand) -> Result<RunResult, CliError> {
+    let repo = package_repo(command.repo);
+    let mut rows = Vec::new();
+    if repo.root().is_dir() {
+        collect_package_manifest_rows(repo.root(), repo.root(), &mut rows)?;
+    }
+    rows.sort();
+    let stdout = if rows.is_empty() {
+        format!("repo: {}\npackages: 0\n", repo.root().display())
+    } else {
+        format!(
+            "repo: {}\npackages: {}\n{}\n",
+            repo.root().display(),
+            rows.len(),
+            rows.join("\n")
+        )
+    };
+    Ok(RunResult {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_package_inspect(command: PackageInspectCommand) -> Result<RunResult, CliError> {
+    let repo = package_repo(command.repo);
+    let manifest = repo
+        .read_manifest(&command.name, &command.version)
+        .map_err(|err| CliError::execution(format!("failed to inspect package: {err}")))?;
+    let stdout = serde_json::to_string_pretty(&manifest)
+        .map(|json| format!("{json}\n"))
+        .map_err(|err| CliError::execution(format!("failed to render manifest: {err}")))?;
+    Ok(RunResult {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn run_package_compile(command: PackageCompileCommand) -> Result<RunResult, CliError> {
+    let repo = package_repo(command.repo);
+    let Some(path) = repo
+        .find_package(&command.name, &command.version)
+        .map_err(|err| CliError::execution(format!("failed to resolve package: {err}")))?
+    else {
+        return Err(CliError::execution(format!(
+            "package {} version {} was not found in {}",
+            command.name,
+            command.version,
+            repo.root().display()
+        )));
+    };
+    run_compile(CompileCommand {
+        input: SingleInput {
+            file: None,
+            text: None,
+            url: None,
+        },
+        kpar: Some(path),
+        language: None,
+        format: command.format,
+        stdlib: None,
     })
 }
 
@@ -1844,6 +1963,53 @@ fn package_context_path(command: &PackageBuildCommand) -> Result<PathBuf, CliErr
         .cloned()
         .map(Ok)
         .unwrap_or_else(current_directory_context_path)
+}
+
+fn package_repo(path: Option<PathBuf>) -> LocalPackageRepository {
+    path.map(LocalPackageRepository::new)
+        .unwrap_or_else(LocalPackageRepository::default_user)
+}
+
+fn collect_package_manifest_rows(
+    repo_root: &Path,
+    current: &Path,
+    rows: &mut Vec<String>,
+) -> Result<(), CliError> {
+    let mut entries = std::fs::read_dir(current)
+        .map_err(|err| {
+            CliError::execution(format!(
+                "failed to read directory {}: {err}",
+                current.display()
+            ))
+        })?
+        .collect::<Result<Vec<_>, std::io::Error>>()
+        .map_err(|err| CliError::execution(format!("failed to read directory entry: {err}")))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_package_manifest_rows(repo_root, &path, rows)?;
+        } else if path.file_name().and_then(|value| value.to_str()) == Some("manifest.json") {
+            let input = std::fs::read_to_string(&path).map_err(|err| {
+                CliError::execution(format!("failed to read {}: {err}", path.display()))
+            })?;
+            let manifest: serde_json::Value = serde_json::from_str(&input).map_err(|err| {
+                CliError::execution(format!("failed to parse {}: {err}", path.display()))
+            })?;
+            let name = manifest["name"].as_str().unwrap_or("unknown");
+            let version = manifest["version"].as_str().unwrap_or("unknown");
+            let relative = path
+                .parent()
+                .unwrap_or(&path)
+                .strip_prefix(repo_root)
+                .unwrap_or(path.parent().unwrap_or(&path))
+                .display();
+            rows.push(format!("{name}:{version}\t{relative}"));
+        }
+    }
+
+    Ok(())
 }
 
 fn current_directory_context_path() -> Result<PathBuf, CliError> {

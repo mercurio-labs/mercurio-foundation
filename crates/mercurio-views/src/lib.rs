@@ -6,7 +6,10 @@ use serde_json::Value;
 
 use mercurio_core::graph::{Element, Graph, NodeId};
 use mercurio_core::metadata_annotations_named;
-use mercurio_core::metamodel::MetamodelAttributeRegistry;
+use mercurio_core::metamodel::{
+    MetamodelAttributeRegistry, collect_specialization_ancestors, effective_properties,
+    element_metatype, query_element_attributes,
+};
 
 const DEFAULT_MAX_DEPTH: usize = 8;
 const DEFAULT_MAX_NODES: usize = 350;
@@ -203,6 +206,8 @@ pub struct TableSpecDto {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_type: Option<String>,
     #[serde(default)]
     pub query: DiagramQueryOptionsDto,
     #[serde(default)]
@@ -218,6 +223,8 @@ pub struct TableRenderRequestDto {
 pub struct TableViewDto {
     pub spec: TableSpecDto,
     pub columns: Vec<TableColumnSpecDto>,
+    #[serde(default)]
+    pub available_columns: Vec<TableColumnSpecDto>,
     pub rows: Vec<TableRowDto>,
     pub warnings: Vec<String>,
 }
@@ -552,23 +559,33 @@ fn view_diagnostic(
     }
 }
 
-pub fn render_table(graph: &Graph, mut spec: TableSpecDto) -> Result<TableViewDto, TableError> {
+pub fn render_table(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    mut spec: TableSpecDto,
+) -> Result<TableViewDto, TableError> {
     if spec.version != 1 {
         return Err(TableError::UnsupportedVersion(spec.version));
     }
 
     match spec.kind {
-        TableKindDto::Elements => render_elements_table(graph, &mut spec),
-        TableKindDto::Requirements => render_requirements_table(graph, &mut spec),
+        TableKindDto::Elements => render_elements_table(graph, metamodel_registry, &mut spec),
+        TableKindDto::Requirements => {
+            render_requirements_table(graph, metamodel_registry, &mut spec)
+        }
     }
 }
 
 fn render_elements_table(
     graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
     spec: &mut TableSpecDto,
 ) -> Result<TableViewDto, TableError> {
+    let target_type = normalized_target_type(spec.target_type.as_deref());
+    let available_columns =
+        available_table_columns(graph, metamodel_registry, target_type.as_deref());
     let columns = if spec.columns.is_empty() {
-        default_elements_columns()
+        default_table_columns(&available_columns)
     } else {
         spec.columns.clone()
     };
@@ -586,6 +603,7 @@ fn render_elements_table(
         .iter()
         .filter_map(|node_id| graph.element(*node_id))
         .filter(|element| include_element(element, &spec.query))
+        .filter(|element| table_target_matches(graph, element, target_type.as_deref()))
         .map(|element| table_row(graph, element, &columns))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.id.cmp(&right.id));
@@ -598,6 +616,7 @@ fn render_elements_table(
     Ok(TableViewDto {
         spec: spec.clone(),
         columns,
+        available_columns,
         rows,
         warnings,
     })
@@ -605,8 +624,13 @@ fn render_elements_table(
 
 fn render_requirements_table(
     graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
     spec: &mut TableSpecDto,
 ) -> Result<TableViewDto, TableError> {
+    let target_type = normalized_target_type(spec.target_type.as_deref())
+        .or_else(|| Some("Requirement".to_string()));
+    let available_columns =
+        available_table_columns(graph, metamodel_registry, target_type.as_deref());
     let columns = if spec.columns.is_empty() {
         default_requirements_columns()
     } else {
@@ -635,7 +659,7 @@ fn render_requirements_table(
         .iter()
         .filter_map(|node_id| graph.element(*node_id))
         .filter(|element| include_element(element, &spec.query))
-        .filter(|element| element.kind.to_ascii_lowercase().contains("requirement"))
+        .filter(|element| table_target_matches(graph, element, target_type.as_deref()))
         .map(|element| table_row(graph, element, &columns))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.id.cmp(&right.id));
@@ -648,6 +672,7 @@ fn render_requirements_table(
     Ok(TableViewDto {
         spec: spec.clone(),
         columns,
+        available_columns,
         rows,
         warnings,
     })
@@ -687,6 +712,150 @@ fn default_requirements_columns() -> Vec<TableColumnSpecDto> {
     .collect()
 }
 
+fn normalized_target_type(target_type: Option<&str>) -> Option<String> {
+    target_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn default_table_columns(available_columns: &[TableColumnSpecDto]) -> Vec<TableColumnSpecDto> {
+    let preferred = ["id", "name", "kind", "owner", "source_file"];
+    let mut columns = preferred
+        .iter()
+        .filter_map(|key| {
+            available_columns
+                .iter()
+                .find(|column| column.key == *key)
+                .cloned()
+        })
+        .collect::<Vec<_>>();
+    if columns.is_empty() {
+        columns = default_elements_columns();
+    }
+    columns
+}
+
+fn available_table_columns(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    target_type: Option<&str>,
+) -> Vec<TableColumnSpecDto> {
+    let mut keys = BTreeSet::new();
+    let mut columns = Vec::new();
+    for column in default_elements_columns() {
+        if keys.insert(column.key.clone()) {
+            columns.push(column);
+        }
+    }
+
+    if let Some(target_type) = target_type {
+        for element in graph.elements() {
+            if !table_type_identifier_matches(element, target_type) {
+                continue;
+            }
+            for declaration in metamodel_registry.declared_attributes_for(&element.element_id) {
+                if keys.insert(declaration.name.clone()) {
+                    columns.push(TableColumnSpecDto {
+                        key: declaration.name.clone(),
+                        label: title_from_column_key(&declaration.name),
+                        path: Some(declaration.name.clone()),
+                    });
+                }
+            }
+            let Some(query) = query_element_attributes(graph, metamodel_registry, element.id, None)
+            else {
+                continue;
+            };
+            for row in query.rows {
+                if keys.insert(row.name.clone()) {
+                    columns.push(TableColumnSpecDto {
+                        key: row.name.clone(),
+                        label: title_from_column_key(&row.name),
+                        path: Some(row.name),
+                    });
+                }
+            }
+        }
+    }
+
+    columns.sort_by(|left, right| {
+        column_sort_rank(&left.key)
+            .cmp(&column_sort_rank(&right.key))
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    columns
+}
+
+fn column_sort_rank(key: &str) -> usize {
+    match key {
+        "id" => 0,
+        "name" => 1,
+        "kind" => 2,
+        "owner" => 3,
+        "source_file" => 4,
+        _ => 10,
+    }
+}
+
+fn title_from_column_key(key: &str) -> String {
+    key.split('_')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn table_target_matches(graph: &Graph, element: &Element, target_type: Option<&str>) -> bool {
+    let Some(target_type) = target_type else {
+        return true;
+    };
+    if table_type_is_element(target_type) {
+        return true;
+    }
+    table_type_identifier_matches(element, target_type)
+        || element_metatype(graph, element.id)
+            .is_some_and(|metatype| table_type_identifier_matches(metatype, target_type))
+        || collect_specialization_ancestors(graph, element.id)
+            .into_iter()
+            .any(|ancestor| table_type_identifier_matches(ancestor, target_type))
+}
+
+fn table_type_is_element(target_type: &str) -> bool {
+    let normalized = canonical_table_type(target_type);
+    normalized == "element" || normalized.ends_with("::element")
+}
+
+fn table_type_identifier_matches(element: &Element, target_type: &str) -> bool {
+    let target = canonical_table_type(target_type);
+    [element.element_id.as_str(), element.kind.as_str()]
+        .into_iter()
+        .any(|candidate| {
+            let candidate = canonical_table_type(candidate);
+            candidate == target
+                || candidate.ends_with(&format!("::{target}"))
+                || (!target.contains("::") && label_for_id(&candidate).contains(&target))
+        })
+}
+
+fn canonical_table_type(value: &str) -> String {
+    let normalized = value
+        .trim()
+        .replace('.', "::")
+        .replace(' ', "")
+        .to_ascii_lowercase();
+    normalized
+        .strip_suffix("def")
+        .map(|stem| format!("{stem}definition"))
+        .unwrap_or(normalized)
+}
+
 fn table_row(graph: &Graph, element: &Element, columns: &[TableColumnSpecDto]) -> TableRowDto {
     TableRowDto {
         id: element.element_id.clone(),
@@ -713,17 +882,17 @@ fn table_cell_value(graph: &Graph, element: &Element, column: &TableColumnSpecDt
     match path {
         "id" | "element" => element.element_id.clone(),
         "kind" => element.kind.clone(),
-        "owner" => property_text(element, "owner")
+        "owner" => effective_property_text(graph, element, "owner")
             .or_else(|| owner_label(graph, element))
             .unwrap_or_default(),
-        "name" => property_text(element, "declared_name")
-            .or_else(|| property_text(element, "name"))
+        "name" => effective_property_text(graph, element, "declared_name")
+            .or_else(|| effective_property_text(graph, element, "name"))
             .unwrap_or_else(|| label_for_id(&element.element_id)),
-        "text" => property_text(element, "text")
-            .or_else(|| property_text(element, "body"))
-            .or_else(|| property_text(element, "doc"))
+        "text" => effective_property_text(graph, element, "text")
+            .or_else(|| effective_property_text(graph, element, "body"))
+            .or_else(|| effective_property_text(graph, element, "doc"))
             .unwrap_or_default(),
-        other => property_text(element, other).unwrap_or_default(),
+        other => effective_property_text(graph, element, other).unwrap_or_default(),
     }
 }
 
@@ -798,6 +967,15 @@ fn owner_label(graph: &Graph, element: &Element) -> Option<String> {
 
 fn property_text(element: &Element, key: &str) -> Option<String> {
     element.properties.get(key).map(value_to_text)
+}
+
+fn effective_property_text(graph: &Graph, element: &Element, key: &str) -> Option<String> {
+    property_text(element, key).or_else(|| {
+        let ancestors = collect_specialization_ancestors(graph, element.id);
+        effective_properties(&ancestors, &element.properties)
+            .get(key)
+            .map(value_to_text)
+    })
 }
 
 fn value_to_text(value: &Value) -> String {
@@ -1547,6 +1725,16 @@ mod tests {
                     "SysML::Actions::ObjectNode",
                     2,
                 ),
+                element(17, "KerML::Root::Comment", "KerML::Metaclass", 1),
+                element(18, "KerML::Root::Comment::body", "KerML::Feature", 1),
+                element(19, "KerML::Root::Comment::locale", "KerML::Feature", 1),
+                element(20, "comment.Vehicle.Note", "KerML::Root::Comment", 2),
+                element(
+                    21,
+                    "comment.Vehicle.LocalizedNote",
+                    "KerML::Root::TextualRepresentation",
+                    2,
+                ),
             ],
             edges: vec![
                 edge(2, 0, "specializes"),
@@ -1575,6 +1763,9 @@ mod tests {
                 edge(16, 13, "owner"),
                 edge(16, 14, "object_flow"),
                 edge(14, 15, "control_flow"),
+                edge(17, 18, "features"),
+                edge(17, 19, "features"),
+                edge(21, 17, "specializes"),
             ],
         };
         let graph = Graph::from_artifact(artifact).expect("sample graph should be valid");
@@ -1585,6 +1776,20 @@ mod tests {
     fn element(id: u32, element_id: &str, kind: &str, layer: u8) -> Element {
         let mut properties = BTreeMap::new();
         properties.insert("declared_name".to_string(), json!(label_for_id(element_id)));
+        if element_id == "KerML::Root::Comment" {
+            properties.insert(
+                "features".to_string(),
+                json!(["KerML::Root::Comment::body", "KerML::Root::Comment::locale"]),
+            );
+        }
+        if element_id == "comment.Vehicle.Note" {
+            properties.insert("body".to_string(), json!("Package-level review note."));
+            properties.insert("locale".to_string(), json!("en-US"));
+        }
+        if element_id == "comment.Vehicle.LocalizedNote" {
+            properties.insert("body".to_string(), json!("Localized package note."));
+            properties.insert("locale".to_string(), json!("fr-FR"));
+        }
         if kind.contains("Requirement") {
             properties.insert("requirement_id".to_string(), json!("REQ-001"));
             properties.insert(
@@ -1627,8 +1832,8 @@ mod tests {
     }
 
     fn render_table_sample(spec: TableSpecDto) -> TableViewDto {
-        let (graph, _) = sample_graph();
-        render_table(&graph, spec).expect("sample table should render")
+        let (graph, registry) = sample_graph();
+        render_table(&graph, &registry, spec).expect("sample table should render")
     }
 
     fn structure_spec(root: Option<&str>, relations: Vec<&str>) -> DiagramSpecDto {
@@ -1854,6 +2059,7 @@ mod tests {
             title: "Requirements".to_string(),
             description: None,
             root: Some("pkg.Vehicle".to_string()),
+            target_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
                 direction: DiagramDirectionDto::Children,
@@ -1908,6 +2114,7 @@ mod tests {
             title: "Requirements".to_string(),
             description: None,
             root: Some("pkg.Vehicle".to_string()),
+            target_type: None,
             query: DiagramQueryOptionsDto::default(),
             columns: vec![TableColumnSpecDto {
                 key: "requirement_id".to_string(),
@@ -1950,6 +2157,7 @@ mod tests {
             title: "Requirements".to_string(),
             description: None,
             root: None,
+            target_type: None,
             query: DiagramQueryOptionsDto::default(),
             columns: vec![
                 TableColumnSpecDto {
@@ -1988,6 +2196,7 @@ mod tests {
             title: "Requirements".to_string(),
             description: None,
             root: Some("pkg.Vehicle".to_string()),
+            target_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
                 direction: DiagramDirectionDto::Children,
@@ -2032,6 +2241,7 @@ mod tests {
             title: "Requirement Lifecycle".to_string(),
             description: None,
             root: Some("pkg.Vehicle".to_string()),
+            target_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
                 direction: DiagramDirectionDto::Children,
@@ -2075,6 +2285,62 @@ mod tests {
             row.cells
                 .iter()
                 .any(|cell| cell.key == "review_date" && cell.value == "2026-05-27")
+        );
+    }
+
+    #[test]
+    fn element_table_filters_by_type_and_subtypes() {
+        let view = render_table_sample(TableSpecDto {
+            version: 1,
+            kind: TableKindDto::Elements,
+            title: "Comments".to_string(),
+            description: None,
+            root: None,
+            target_type: Some("Comment".to_string()),
+            query: DiagramQueryOptionsDto::default(),
+            columns: vec![
+                TableColumnSpecDto {
+                    key: "name".to_string(),
+                    label: "Name".to_string(),
+                    path: None,
+                },
+                TableColumnSpecDto {
+                    key: "body".to_string(),
+                    label: "Body".to_string(),
+                    path: Some("body".to_string()),
+                },
+                TableColumnSpecDto {
+                    key: "locale".to_string(),
+                    label: "Locale".to_string(),
+                    path: Some("locale".to_string()),
+                },
+            ],
+        });
+
+        assert!(
+            view.rows
+                .iter()
+                .any(|row| row.element == "comment.Vehicle.Note")
+        );
+        assert!(
+            view.rows
+                .iter()
+                .any(|row| row.element == "comment.Vehicle.LocalizedNote")
+        );
+        assert!(
+            view.rows
+                .iter()
+                .all(|row| row.element.contains("Comment") || row.element.contains("comment."))
+        );
+        assert!(
+            view.available_columns
+                .iter()
+                .any(|column| column.key == "body")
+        );
+        assert!(
+            view.available_columns
+                .iter()
+                .any(|column| column.key == "locale")
         );
     }
 }

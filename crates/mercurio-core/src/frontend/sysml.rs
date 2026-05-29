@@ -1670,12 +1670,10 @@ impl Parser {
             && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "requirement")
         {
             self.expect_identifier_named("requirement", "expected `requirement` after `satisfy`")?;
-            explicit_reference_target =
-                Some(self.parse_qualified_name()?);
+            explicit_reference_target = Some(self.parse_qualified_name()?);
             Some("satisfy".to_string())
         } else if keyword == "satisfy" && matches!(self.peek_kind(), TokenKind::Identifier(_)) {
-            explicit_reference_target =
-                Some(self.parse_qualified_name()?);
+            explicit_reference_target = Some(self.parse_qualified_name()?);
             Some("satisfy".to_string())
         } else if keyword == "exhibit"
             && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "state")
@@ -1767,9 +1765,9 @@ impl Parser {
         let end = self.finish_usage(&effective_keyword, tail.had_body)?;
         let span = merge_span(&start.span, &end.span);
         let has_type = tail.ty.is_some();
-        let reference_target = explicit_reference_target.or_else(|| {
-            infer_reference_target(&effective_keyword, &name, has_type, &mut tail)
-        }).or_else(|| {
+        let reference_target = explicit_reference_target
+            .or_else(|| infer_reference_target(&effective_keyword, &name, has_type, &mut tail))
+            .or_else(|| {
                 if effective_keyword == "require"
                     && tail.ty.is_none()
                     && name != "constraint"

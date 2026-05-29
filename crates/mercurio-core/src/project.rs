@@ -184,7 +184,7 @@ fn resolve_library_context_document(
 
     let mut resolved_libraries = Vec::new();
     let baseline_configs = if baseline_libraries.is_empty() {
-        vec![BaselineLibraryConfig::bundled_stdlib()]
+        vec![BaselineLibraryConfig::stdlib_locator()]
     } else {
         baseline_libraries.to_vec()
     };

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::ir::{KirDocument, KirError};
-use crate::paths::default_stdlib_path;
+use crate::paths::{bundled_package_repo_path, default_package_repo_path, default_stdlib_path};
+
+pub const DEFAULT_STDLIB_LOCATOR: &str = "kpar:org.omg/sysml-stdlib:2.0.0";
 use crate::source_set::{SourceDocument, compile_source_documents};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,6 +32,9 @@ pub enum LibraryProviderConfig {
     },
     KparFile {
         path: String,
+    },
+    KparLocator {
+        locator: String,
     },
     PackageSetDirectory {
         path: String,
@@ -78,6 +83,35 @@ pub struct KparPackageSource {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPackageManifest {
+    pub schema: String,
+    pub name: String,
+    pub version: String,
+    pub kind: String,
+    pub file: String,
+    pub digest: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<LocalPackageSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPackageSource {
+    pub kind: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalPackageRepository {
+    root: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KparLocator {
+    raw: String,
+}
+
 impl Default for BaselineLibraryConfig {
     fn default() -> Self {
         Self::bundled_stdlib()
@@ -89,6 +123,15 @@ impl BaselineLibraryConfig {
         Self {
             id: "stdlib".to_string(),
             provider: LibraryProviderConfig::BundledStdlib,
+        }
+    }
+
+    pub fn stdlib_locator() -> Self {
+        Self {
+            id: "stdlib".to_string(),
+            provider: LibraryProviderConfig::KparLocator {
+                locator: DEFAULT_STDLIB_LOCATOR.to_string(),
+            },
         }
     }
 
@@ -195,6 +238,66 @@ impl LibraryProviderConfig {
                     document,
                 })
             }
+            Self::KparLocator { locator } => {
+                let locator = KparLocator::parse(locator.clone());
+                if let Some(path) = locator.as_str().strip_prefix("file:") {
+                    return Self::KparFile {
+                        path: path.to_string(),
+                    }
+                    .resolve_with_context(
+                        library_id,
+                        base_dir,
+                        library_context,
+                    );
+                }
+
+                let Some((name, version)) = locator.resolve_package_coordinate() else {
+                    return Err(KirError::Sysml(format!(
+                        "unsupported KPAR locator '{}'",
+                        locator.as_str()
+                    )));
+                };
+
+                for repo in [
+                    LocalPackageRepository::default_user(),
+                    LocalPackageRepository::bundled(),
+                ] {
+                    if let Some(source_path) = repo.find_package(name, version)? {
+                        let fallback_context = KirDocument::from_path(&default_stdlib_path())?;
+                        let context_document = library_context.unwrap_or(&fallback_context);
+                        let (document, package_metadata) =
+                            compile_kpar_file(&source_path, context_document)?;
+                        return Ok(ResolvedLibraryArtifact {
+                            library_id: library_id.to_string(),
+                            source_kind: "kpar_locator".to_string(),
+                            source_path: Some(source_path.clone()),
+                            cache_metadata: Some(LibraryCacheMetadata {
+                                source_kind: "kpar_locator".to_string(),
+                                source_identity: locator.as_str().to_string(),
+                                source_version: package_metadata
+                                    .and_then(|metadata| metadata.version)
+                                    .or_else(|| Some(version.to_string())),
+                                source_digest: Some(digest_file(&source_path)?),
+                                importer_version: env!("CARGO_PKG_VERSION").to_string(),
+                            }),
+                            document,
+                        });
+                    }
+                }
+
+                if locator.as_str() == DEFAULT_STDLIB_LOCATOR {
+                    return Self::BundledStdlib.resolve_with_context(
+                        library_id,
+                        base_dir,
+                        library_context,
+                    );
+                }
+
+                Err(KirError::Sysml(format!(
+                    "KPAR package '{}' version '{}' was not found in local or bundled package repositories",
+                    name, version
+                )))
+            }
             Self::PackageSetDirectory { path, entry } => {
                 let fingerprint = self.source_fingerprint(library_id, base_dir)?;
                 let source_path = fingerprint
@@ -288,6 +391,51 @@ impl LibraryProviderConfig {
                     },
                 })
             }
+            Self::KparLocator { locator } => {
+                let locator = KparLocator::parse(locator.clone());
+                if let Some(path) = locator.as_str().strip_prefix("file:") {
+                    return Self::KparFile {
+                        path: path.to_string(),
+                    }
+                    .source_fingerprint(library_id, base_dir);
+                }
+
+                let Some((name, version)) = locator.resolve_package_coordinate() else {
+                    return Err(KirError::Sysml(format!(
+                        "unsupported KPAR locator '{}'",
+                        locator.as_str()
+                    )));
+                };
+
+                for repo in [
+                    LocalPackageRepository::default_user(),
+                    LocalPackageRepository::bundled(),
+                ] {
+                    if let Some(source_path) = repo.find_package(name, version)? {
+                        return Ok(LibrarySourceFingerprint {
+                            library_id: library_id.to_string(),
+                            source_kind: "kpar_locator".to_string(),
+                            source_path: Some(source_path.clone()),
+                            cache_metadata: LibraryCacheMetadata {
+                                source_kind: "kpar_locator".to_string(),
+                                source_identity: locator.as_str().to_string(),
+                                source_version: Some(version.to_string()),
+                                source_digest: Some(digest_file(&source_path)?),
+                                importer_version,
+                            },
+                        });
+                    }
+                }
+
+                if locator.as_str() == DEFAULT_STDLIB_LOCATOR {
+                    return Self::BundledStdlib.source_fingerprint(library_id, base_dir);
+                }
+
+                Err(KirError::Sysml(format!(
+                    "KPAR package '{}' version '{}' was not found in local or bundled package repositories",
+                    name, version
+                )))
+            }
             Self::PackageSetDirectory { path, entry } => {
                 let source_path = resolve_provider_path(path, base_dir);
                 let package_index = build_kpar_package_index(&source_path)?;
@@ -326,6 +474,138 @@ fn resolve_provider_path(path: &str, base_dir: Option<&Path>) -> PathBuf {
 
 pub fn load_baseline_library_document() -> Result<KirDocument, KirError> {
     Ok(BaselineLibraryConfig::bundled_stdlib().resolve()?.document)
+}
+
+impl LocalPackageRepository {
+    pub fn default_user() -> Self {
+        Self::new(default_package_repo_path())
+    }
+
+    pub fn bundled() -> Self {
+        Self::new(bundled_package_repo_path())
+    }
+
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn package_dir(&self, name: &str, version: &str) -> PathBuf {
+        let mut path = self.root.clone();
+        for segment in name.split('/') {
+            path.push(safe_package_path_segment(segment));
+        }
+        path.push(safe_package_path_segment(version));
+        path
+    }
+
+    pub fn package_file_name(name: &str, version: &str) -> String {
+        let leaf_name = name.rsplit('/').next().unwrap_or(name);
+        format!(
+            "{}-{}.kpar",
+            safe_package_path_segment(leaf_name),
+            safe_package_path_segment(version)
+        )
+    }
+
+    pub fn package_path(&self, name: &str, version: &str) -> PathBuf {
+        self.package_dir(name, version)
+            .join(Self::package_file_name(name, version))
+    }
+
+    pub fn manifest_path(&self, name: &str, version: &str) -> PathBuf {
+        self.package_dir(name, version).join("manifest.json")
+    }
+
+    pub fn find_package(&self, name: &str, version: &str) -> Result<Option<PathBuf>, KirError> {
+        let manifest_path = self.manifest_path(name, version);
+        let package_path = self.package_path(name, version);
+        if !manifest_path.is_file() && !package_path.is_file() {
+            return Ok(None);
+        }
+        if manifest_path.is_file() {
+            let manifest = self.read_manifest(name, version)?;
+            let resolved_path = self.package_dir(name, version).join(&manifest.file);
+            if !resolved_path.is_file() {
+                return Ok(None);
+            }
+            let digest = digest_file(&resolved_path)?;
+            if digest != manifest.digest {
+                return Err(KirError::Sysml(format!(
+                    "local package digest mismatch for {name}:{version}: expected {}, got {}",
+                    manifest.digest, digest
+                )));
+            }
+            return Ok(Some(resolved_path));
+        }
+        Ok(package_path.is_file().then_some(package_path))
+    }
+
+    pub fn read_manifest(
+        &self,
+        name: &str,
+        version: &str,
+    ) -> Result<LocalPackageManifest, KirError> {
+        let manifest_path = self.manifest_path(name, version);
+        let input = std::fs::read_to_string(&manifest_path)?;
+        serde_json::from_str(&input).map_err(KirError::Json)
+    }
+
+    pub fn stage_kpar(
+        &self,
+        source_path: &Path,
+        name: &str,
+        version: &str,
+        source: Option<LocalPackageSource>,
+    ) -> Result<LocalPackageManifest, KirError> {
+        let package_dir = self.package_dir(name, version);
+        std::fs::create_dir_all(&package_dir)?;
+        let file = Self::package_file_name(name, version);
+        let package_path = package_dir.join(&file);
+        std::fs::copy(source_path, &package_path)?;
+        let manifest = LocalPackageManifest {
+            schema: "dev.mercurio.local-package.v1".to_string(),
+            name: name.to_string(),
+            version: version.to_string(),
+            kind: "kpar".to_string(),
+            file,
+            digest: digest_file(&package_path)?,
+            created_at: package_created_at(),
+            source,
+        };
+        std::fs::write(
+            package_dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest)?,
+        )?;
+        Ok(manifest)
+    }
+}
+
+impl KparLocator {
+    pub fn parse(locator: impl Into<String>) -> Self {
+        Self {
+            raw: locator.into(),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.raw
+    }
+
+    fn resolve_package_coordinate(&self) -> Option<(&str, &str)> {
+        let value = self.raw.strip_prefix("kpar:")?;
+        if value.contains("@sha") {
+            return None;
+        }
+        let (name, version) = value.rsplit_once(':')?;
+        if name.trim().is_empty() || version.trim().is_empty() {
+            return None;
+        }
+        Some((name, version))
+    }
 }
 
 pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(), KirError> {
@@ -507,6 +787,31 @@ fn digest_file(path: &Path) -> Result<String, KirError> {
         "file".as_bytes(),
         bytes.as_slice(),
     )]))
+}
+
+fn safe_package_path_segment(value: &str) -> String {
+    let mut segment = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if segment.is_empty() || segment == "." || segment == ".." {
+        segment = "package".to_string();
+    }
+    segment
+}
+
+fn package_created_at() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    format!("unix:{seconds}")
 }
 
 fn digest_sysml_directory(path: &Path) -> Result<String, KirError> {
@@ -886,6 +1191,7 @@ fn is_library_archive_source_entry(entry_name: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
     use std::io::Write;
+    use std::sync::Mutex;
 
     use serde_json::Value;
 
@@ -894,6 +1200,8 @@ mod tests {
         write_kpar_package,
     };
     use crate::ir::{KirDocument, KirElement};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn bundled_baseline_config_defaults_to_stdlib_provider() {
@@ -1115,6 +1423,109 @@ mod tests {
                 .and_then(|metadata| metadata.source_version.as_deref()),
             Some("1.2.3")
         );
+        assert!(
+            artifact
+                .document
+                .elements
+                .iter()
+                .any(|element| element.id == "type.Domain.Thing")
+        );
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn local_package_repository_stages_and_finds_kpar() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-local-package-repo-{}",
+            std::process::id()
+        ));
+        let repo = super::LocalPackageRepository::new(&temp_root);
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source_path = temp_root.join("source.kpar");
+        write_test_kpar(
+            &source_path,
+            "Domain Library",
+            "1.2.3",
+            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+        );
+
+        let manifest = repo
+            .stage_kpar(&source_path, "domain-lib", "1.2.3", None)
+            .unwrap();
+        let staged = repo.find_package("domain-lib", "1.2.3").unwrap().unwrap();
+
+        assert_eq!(manifest.name, "domain-lib");
+        assert_eq!(manifest.version, "1.2.3");
+        assert!(staged.is_file());
+        assert_eq!(
+            staged.file_name().and_then(|value| value.to_str()),
+            Some("domain-lib-1.2.3.kpar")
+        );
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn kpar_locator_file_provider_compiles_source_backed_library() {
+        let temp_root =
+            std::env::temp_dir().join(format!("mercurio-kpar-locator-file-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let kpar_path = temp_root.join("domain-lib.kpar");
+        write_test_kpar(
+            &kpar_path,
+            "Domain Library",
+            "1.2.3",
+            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+        );
+
+        let artifact = LibraryProviderConfig::KparLocator {
+            locator: format!("file:{}", kpar_path.display()),
+        }
+        .resolve("domain-lib")
+        .unwrap();
+
+        assert!(
+            artifact
+                .document
+                .elements
+                .iter()
+                .any(|element| element.id == "type.Domain.Thing")
+        );
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn kpar_locator_coordinate_resolves_from_local_package_repo() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp_root =
+            std::env::temp_dir().join(format!("mercurio-kpar-locator-repo-{}", std::process::id()));
+        let repo = super::LocalPackageRepository::new(&temp_root);
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source_path = temp_root.join("source.kpar");
+        write_test_kpar(
+            &source_path,
+            "Domain Library",
+            "1.2.3",
+            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+        );
+        repo.stage_kpar(&source_path, "domain-lib", "1.2.3", None)
+            .unwrap();
+
+        unsafe {
+            std::env::set_var("MERCURIO_PACKAGE_REPO", &temp_root);
+        }
+        let artifact = LibraryProviderConfig::KparLocator {
+            locator: "kpar:domain-lib:1.2.3".to_string(),
+        }
+        .resolve("domain-lib")
+        .unwrap();
+        unsafe {
+            std::env::remove_var("MERCURIO_PACKAGE_REPO");
+        }
+
+        assert_eq!(artifact.source_kind, "kpar_locator");
         assert!(
             artifact
                 .document

@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 const DEFAULT_STDLIB_RELATIVE_PATH: &str = "resources/stdlib.full.kir.json";
 const DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH: &str = "resources/stdlib.rulepack.json";
 const DEFAULT_LANGUAGE_PROFILE_ROOT_RELATIVE_PATH: &str = "resources/language-profiles";
+const DEFAULT_BUNDLED_PACKAGE_REPO_RELATIVE_PATH: &str = "packages";
 const REPO_SENTINELS: [&str; 3] = [
     "resources/stdlib.full.kir.json",
     "mappings/l2/pilot_constructs.seed.json",
@@ -30,6 +31,24 @@ pub fn default_language_profile_path(profile_id: &str) -> PathBuf {
     repo_path(DEFAULT_LANGUAGE_PROFILE_ROOT_RELATIVE_PATH)
         .join(profile_id)
         .join("profile.json")
+}
+
+pub fn default_package_repo_path() -> PathBuf {
+    if let Ok(path) = std::env::var("MERCURIO_PACKAGE_REPO") {
+        return PathBuf::from(path);
+    }
+
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(repo_root);
+
+    home.join(".mercurio").join("packages")
+}
+
+pub fn bundled_package_repo_path() -> PathBuf {
+    repo_path(DEFAULT_BUNDLED_PACKAGE_REPO_RELATIVE_PATH)
 }
 
 pub fn repo_path(relative: &str) -> PathBuf {

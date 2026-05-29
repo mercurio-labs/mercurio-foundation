@@ -61,6 +61,85 @@ Supported provider `kind` values:
 
 Relative provider paths are resolved from the directory containing `.mercurio-project.json`.
 
+## Package Locator Provider
+
+Mercurio supports a package-locator provider for portable KPAR dependencies:
+
+```json
+{
+  "id": "domain-lib",
+  "provider": {
+    "kind": "kpar_locator",
+    "locator": "kpar:domain-lib:0.1.0"
+  }
+}
+```
+
+The locator is a stable package coordinate. The resolver decides where to find the package:
+
+1. Local user package repository, such as `~/.mercurio/packages`.
+2. Bundled package repository shipped with Mercurio.
+3. Configured remote package sources, such as OCI registries, in a later implementation.
+
+This allows one project to stage a package locally:
+
+```powershell
+mercurio package build --file src --name domain-lib --version 0.1.0
+```
+
+And another project to consume it without hardcoding an absolute file path:
+
+```json
+{
+  "version": 1,
+  "name": "Vehicle Model",
+  "libraries": [
+    {
+      "id": "domain-lib",
+      "provider": {
+        "kind": "kpar_locator",
+        "locator": "kpar:domain-lib:0.1.0"
+      }
+    }
+  ]
+}
+```
+
+Supported locator forms in the first implementation:
+
+```text
+kpar:domain-lib:0.1.0
+kpar:com.acme/domain-lib:0.1.0
+file:libs/domain-lib-0.1.0.kpar
+```
+
+Planned later locator forms:
+
+```text
+kpar:domain-lib@sha256:abc123...
+oci:ghcr.io/acme/mercurio/domain-lib:0.1.0
+```
+
+If a locator includes a digest, the resolver should verify the package before loading it.
+
+## Standard Library Locator
+
+The standard library should follow the same package convention as project and domain libraries. The default baseline can be modeled as a locator:
+
+```json
+{
+  "id": "stdlib",
+  "provider": {
+    "kind": "kpar_locator",
+    "locator": "kpar:org.omg/sysml-stdlib:2.0.0"
+  }
+}
+```
+
+If `baseline_libraries` is empty or omitted, Mercurio behaves as if the descriptor declared that standard library locator. Resolution prefers cached and bundled KPAR packages before falling back to the current bundled KIR during migration.
+
+During migration, `bundled_stdlib` remains the compatibility provider and fallback for environments that do not yet use locator-backed standard library packages.
+
 ## Descriptor Discovery
 
 Semantic CLI commands discover this descriptor automatically:

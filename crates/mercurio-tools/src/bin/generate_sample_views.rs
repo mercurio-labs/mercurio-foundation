@@ -108,6 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         title: "Vehicle Requirements".to_string(),
         description: Some("Requirements table rendered from KIR graph properties.".to_string()),
         root: Some("pkg.Vehicle".to_string()),
+        target_type: None,
         query: query(
             vec!["owner"],
             DiagramDirectionDto::Children,
@@ -139,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             table_column("owner_name", "Model Owner", Some("owner.declared_name")),
         ],
     };
-    let requirements_table = render_table(&graph, requirements_table_spec.clone())?;
+    let requirements_table = render_table(&graph, &registry, requirements_table_spec.clone())?;
     write_table_spec(
         &output_dir,
         "requirements",

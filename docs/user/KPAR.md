@@ -31,6 +31,74 @@ Override package metadata:
 mercurio package build --file model.sysml --out model.kpar --name Demo --version 0.1.0
 ```
 
+## Local Package Repository
+
+Mercurio supports a Maven-like local package repository for staged KPAR packages. In this workflow, `package build` can write to a local package repository first, and a later `package publish` command can push that staged package to a remote registry.
+
+Default local repository:
+
+```text
+~/.mercurio/packages/
+```
+
+Package layout:
+
+```text
+~/.mercurio/packages/
+  domain-lib/
+    0.1.0/
+      domain-lib-0.1.0.kpar
+      manifest.json
+```
+
+Build and stage a package:
+
+```powershell
+mercurio package build --file src --name domain-lib --version 0.1.0
+```
+
+That command stages the package locally. The existing `--out` form remains useful when the caller wants to write a package to an explicit path:
+
+```powershell
+mercurio package build --file src --out dist/domain-lib-0.1.0.kpar --name domain-lib --version 0.1.0
+```
+
+The local package manifest records the package identity, file name, digest, creation time, and source path:
+
+```json
+{
+  "schema": "dev.mercurio.local-package.v1",
+  "name": "domain-lib",
+  "version": "0.1.0",
+  "kind": "kpar",
+  "file": "domain-lib-0.1.0.kpar",
+  "digest": "fnv1a64:...",
+  "created_at": "unix:1780000000",
+  "source": {
+    "kind": "directory",
+    "path": "C:/work/domain-lib/src"
+  }
+}
+```
+
+List staged packages:
+
+```powershell
+mercurio package list
+```
+
+Inspect a staged package:
+
+```powershell
+mercurio package inspect domain-lib --version 0.1.0
+```
+
+Compile a staged package:
+
+```powershell
+mercurio package compile domain-lib --version 0.1.0 --format json
+```
+
 ## Compile A KPAR
 
 Compile a KPAR package directly as a model input:
@@ -74,3 +142,64 @@ Add a KPAR dependency in `.mercurio-project.json`:
 ```
 
 Relative paths are resolved from the descriptor location.
+
+## Package Locators
+
+Project descriptors can use a locator-based provider. A locator describes the package coordinate, while Mercurio decides whether to load it from the local package repository, a bundled repository, or a configured remote in later implementations.
+
+Example:
+
+```json
+{
+  "version": 1,
+  "name": "Vehicle Model",
+  "libraries": [
+    {
+      "id": "domain-lib",
+      "provider": {
+        "kind": "kpar_locator",
+        "locator": "kpar:domain-lib:0.1.0"
+      }
+    }
+  ]
+}
+```
+
+Supported locator forms in the first implementation:
+
+```text
+kpar:domain-lib:0.1.0
+kpar:com.acme/domain-lib:0.1.0
+file:libs/domain-lib-0.1.0.kpar
+```
+
+Planned later locator forms:
+
+```text
+kpar:domain-lib@sha256:abc123...
+oci:ghcr.io/acme/mercurio/domain-lib:0.1.0
+```
+
+For a `kpar:` locator, resolution should try:
+
+1. Local user package repository.
+2. Bundled package repository.
+3. Configured remote package sources in a later implementation.
+
+If the package is found remotely, Mercurio should download it, verify any pinned digest, stage it in the local cache, and then load it through the existing KPAR library path.
+
+## Planned OCI Publish
+
+After a KPAR has been staged locally, a publish command can push it to an OCI registry:
+
+```powershell
+mercurio package publish domain-lib --version 0.1.0 --to oci://ghcr.io/acme/mercurio/domain-lib:0.1.0
+```
+
+The OCI artifact should use this media type:
+
+```text
+application/vnd.mercurio.kpar.v1+zip
+```
+
+The published artifact should include annotations for package name, version, kind, and digest.
