@@ -1047,6 +1047,10 @@ impl AuthoringProject {
         self.validate_rendered_files(rendered)
     }
 
+    pub fn compile_kir_document(&self) -> Result<KirDocument, AuthoringError> {
+        self.compile_user_kir()
+    }
+
     fn accept_write_back_files(
         &mut self,
         edited_files: &BTreeMap<String, String>,

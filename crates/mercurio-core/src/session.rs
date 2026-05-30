@@ -10,12 +10,14 @@ use crate::feasibility::{
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
     MutationContext, MutationFeasibilityService,
 };
+use crate::frontend::sysml::compile_sysml_text;
 use crate::identity::workspace_revision_for_kir_document;
 use crate::ir::{KirDocument, KirElement, KirError};
 use crate::mutation::{
     ElementRef, MutationEvidence, MutationProposal, SemanticDiff, SemanticMutation,
     WorkspaceRevision, diff_kir_documents,
 };
+use crate::paths::default_stdlib_path;
 
 const GENERATED_FILE_THRESHOLD: usize = 100;
 
@@ -143,7 +145,7 @@ impl WorkspaceSnapshot {
 
     pub fn from_authoring_project(project: AuthoringProject) -> Result<Self, SessionError> {
         let context = MutationContext::from_project(project.clone());
-        let kir = kir_from_authoring_context(&context);
+        let kir = project.compile_kir_document()?;
         Ok(Self {
             revision: context.workspace_revision,
             kir: Arc::new(kir),
@@ -259,7 +261,7 @@ impl ModelFork {
     ) -> Result<ForkElement, SessionError> {
         let name = normalize_name(&name.into())?;
         let qualified_name = format!("{}.{}", owner.qualified_name, name);
-        let id = format!("feature.{qualified_name}");
+        let id = format!("requirement.{qualified_name}");
         self.ensure_not_present(&id)?;
         let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
             .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
@@ -283,6 +285,95 @@ impl ModelFork {
             source_file,
         });
         Ok(ForkElement { id, qualified_name })
+    }
+
+    pub fn part(
+        &mut self,
+        owner: &ForkElement,
+        name: impl Into<String>,
+        ty: Option<impl Into<String>>,
+    ) -> Result<ForkElement, SessionError> {
+        let name = normalize_name(&name.into())?;
+        let qualified_name = format!("{}.{}", owner.qualified_name, name);
+        let id = format!("feature.{qualified_name}");
+        self.ensure_not_present(&id)?;
+        let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
+            .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
+        let mut properties = BTreeMap::from([
+            ("declared_name".to_string(), Value::String(name)),
+            ("owner".to_string(), Value::String(owner.id.clone())),
+            ("metadata".to_string(), source_file_metadata(&source_file)),
+        ]);
+        if let Some(ty) = ty {
+            properties.insert(
+                "type".to_string(),
+                Value::String(normalize_qname(&ty.into())?),
+            );
+        }
+        let element = KirElement {
+            id: id.clone(),
+            kind: "SysML::PartUsage".to_string(),
+            layer: 2,
+            properties,
+        };
+        self.overlay.added_elements.insert(id.clone(), element);
+        self.patch_member(owner.id.as_str(), id.as_str());
+        Ok(ForkElement { id, qualified_name })
+    }
+
+    pub fn add_metadata(
+        &mut self,
+        owner: &ForkElement,
+        metadata_type: impl Into<String>,
+        properties: BTreeMap<String, String>,
+    ) -> Result<ForkElement, SessionError> {
+        let metadata_type = normalize_name(&metadata_type.into())?;
+        let qualified_name = format!("{}.{}", owner.qualified_name, metadata_type);
+        let id = format!("metadata.{qualified_name}");
+        self.ensure_not_present(&id)?;
+        let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
+            .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
+        let element = KirElement {
+            id: id.clone(),
+            kind: "SysML::MetadataUsage".to_string(),
+            layer: 2,
+            properties: BTreeMap::from([
+                (
+                    "declared_name".to_string(),
+                    Value::String(metadata_type.clone()),
+                ),
+                ("owner".to_string(), Value::String(owner.id.clone())),
+                ("metadata".to_string(), source_file_metadata(&source_file)),
+                (
+                    "doc".to_string(),
+                    Value::Object(
+                        properties
+                            .into_iter()
+                            .map(|(key, value)| (key, Value::String(value)))
+                            .collect(),
+                    ),
+                ),
+            ]),
+        };
+        self.overlay.added_elements.insert(id.clone(), element);
+        self.patch_member(owner.id.as_str(), id.as_str());
+        Ok(ForkElement { id, qualified_name })
+    }
+
+    pub fn satisfy(
+        &mut self,
+        owner: &ForkElement,
+        target: &ForkElement,
+    ) -> Result<ForkElement, SessionError> {
+        self.relationship(owner, "satisfy", target)
+    }
+
+    pub fn verify(
+        &mut self,
+        owner: &ForkElement,
+        target: &ForkElement,
+    ) -> Result<ForkElement, SessionError> {
+        self.relationship(owner, "verify", target)
     }
 
     pub fn requirements<I, N, T>(
@@ -358,6 +449,7 @@ impl ModelFork {
         }
 
         let files = self.render_generated_companion_files()?;
+        self.validate_generated_files(&files)?;
         self.finish_commit(
             CommitMode::PreserveSource,
             CommitStrategy::GeneratedCompanionFiles,
@@ -371,6 +463,7 @@ impl ModelFork {
         }
 
         let files = self.render_generated_companion_files()?;
+        self.validate_generated_files(&files)?;
         self.finish_commit(
             CommitMode::RewriteSource,
             CommitStrategy::RewriteGeneratedSource,
@@ -527,6 +620,72 @@ impl ModelFork {
             rendered.insert(path.to_string(), project.render_new_file(path)?);
         }
         Ok(rendered)
+    }
+
+    fn validate_generated_files(
+        &self,
+        files: &BTreeMap<String, String>,
+    ) -> Result<(), SessionError> {
+        let stdlib = KirDocument::from_path(&default_stdlib_path())?;
+        let mut documents = Vec::new();
+        for (path, source) in files {
+            documents.push(
+                compile_sysml_text(source, path, &stdlib)
+                    .map_err(|err| SessionError::Unsupported(err.to_string()))?,
+            );
+        }
+        let emitted = KirDocument::merge(documents)?;
+        for intended in self.overlay.added_elements.values() {
+            let Some(actual) = emitted
+                .elements
+                .iter()
+                .find(|candidate| candidate.id == intended.id)
+            else {
+                return Err(SessionError::Unsupported(format!(
+                    "generated SysML did not round-trip intended element `{}`",
+                    intended.id
+                )));
+            };
+            if actual.kind != intended.kind
+                && !is_compatible_round_trip_kind(&intended.kind, &actual.kind)
+            {
+                return Err(SessionError::Unsupported(format!(
+                    "generated SysML round-tripped `{}` as `{}`, expected `{}`",
+                    intended.id, actual.kind, intended.kind
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn relationship(
+        &mut self,
+        owner: &ForkElement,
+        kind: &str,
+        target: &ForkElement,
+    ) -> Result<ForkElement, SessionError> {
+        let normalized = normalize_name(kind)?;
+        let name = format!("{}_{}", normalized, target.qualified_name.replace('.', "_"));
+        let qualified_name = format!("{}.{}", owner.qualified_name, name);
+        let id = format!("relationship.{qualified_name}");
+        self.ensure_not_present(&id)?;
+        let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
+            .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
+        let element = KirElement {
+            id: id.clone(),
+            kind: format!("SysML::{}Relationship", pascal_case(&normalized)),
+            layer: 2,
+            properties: BTreeMap::from([
+                ("declared_name".to_string(), Value::String(name)),
+                ("owner".to_string(), Value::String(owner.id.clone())),
+                ("source".to_string(), Value::String(owner.id.clone())),
+                ("target".to_string(), Value::String(target.id.clone())),
+                ("metadata".to_string(), source_file_metadata(&source_file)),
+            ]),
+        };
+        self.overlay.added_elements.insert(id.clone(), element);
+        self.patch_member(owner.id.as_str(), id.as_str());
+        Ok(ForkElement { id, qualified_name })
     }
 
     fn publish_if_workspace(&self, kir: KirDocument, revision: WorkspaceRevision) {
@@ -733,6 +892,33 @@ fn to_snake_segment(segment: &str) -> String {
     output.trim_matches('_').to_string()
 }
 
+fn pascal_case(value: &str) -> String {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => format!(
+                    "{}{}",
+                    first.to_ascii_uppercase(),
+                    chars.as_str().to_ascii_lowercase()
+                ),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+fn is_compatible_round_trip_kind(intended: &str, actual: &str) -> bool {
+    matches!(
+        (intended, actual),
+        ("SysML::RequirementUsage", "KerML::Core::Feature")
+            | ("SysML::PartUsage", "KerML::Core::Feature")
+            | ("SysML::MetadataUsage", "KerML::Core::Feature")
+    )
+}
+
 fn source_file_for_owner(owner: Option<&KirElement>) -> Option<String> {
     owner
         .and_then(|element| element.properties.get("metadata"))
@@ -766,51 +952,6 @@ fn doc_metadata(text: String) -> Value {
         .into_iter()
         .collect(),
     )
-}
-
-fn kir_from_authoring_context(context: &MutationContext) -> KirDocument {
-    let mut elements = Vec::new();
-    for element in &context.project_semantic_context().elements {
-        elements.push(KirElement {
-            id: semantic_element_id(&element.element.qualified_name, &element.kind),
-            kind: format!("SysML::{}", element.kind),
-            layer: 2,
-            properties: BTreeMap::from([(
-                "declared_name".to_string(),
-                Value::String(element.label.clone()),
-            )]),
-        });
-    }
-    KirDocument {
-        metadata: BTreeMap::new(),
-        elements,
-    }
-}
-
-trait MutationContextSemanticView {
-    fn project_semantic_context(&self) -> crate::mutation::SemanticReasoningContext;
-}
-
-impl MutationContextSemanticView for MutationContext {
-    fn project_semantic_context(&self) -> crate::mutation::SemanticReasoningContext {
-        crate::mutation::semantic_reasoning_context_from_authoring_project(
-            &self.project,
-            self.workspace_revision.clone(),
-            Vec::new(),
-            usize::MAX,
-        )
-    }
-}
-
-fn semantic_element_id(qualified_name: &str, kind: &str) -> String {
-    let prefix = if kind == "package" {
-        "pkg"
-    } else if kind.ends_with(" def") || kind.ends_with(" definition") {
-        "type"
-    } else {
-        "feature"
-    };
-    format!("{prefix}.{qualified_name}")
 }
 
 #[cfg(test)]
@@ -866,6 +1007,8 @@ mod tests {
         let package = fork.package("SyntheticRequirements", None).unwrap();
         fork.requirement(&package, "Req00001", "Generated requirement")
             .unwrap();
+        fork.part(&package, "controller", Option::<String>::None)
+            .unwrap();
 
         let result = fork.commit(CommitMode::RewriteSource).unwrap();
 
@@ -876,6 +1019,7 @@ mod tests {
             .unwrap();
         assert!(source.contains("package SyntheticRequirements"));
         assert!(source.contains("requirement Req00001"));
+        assert!(source.contains("part controller"));
         assert_ne!(workspace.current_snapshot().revision, result.base_revision);
     }
 

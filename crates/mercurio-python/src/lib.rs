@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use mercurio_core::{
-    AuthoringProject, ContainerSelector, ElementView, Graph, KirDocument, MetamodelAttributeRegistry,
-    Mutation, QualifiedName, WriteBackMode, WriteBackResult, compile_sysml_text,
-    create_empty_model, default_language_profile, default_stdlib_path, generate_python_wrappers,
-    load_authoring_project_from_sysml,
+    AuthoringProject, CommitMode, CommitResult, CommitStrategy, ContainerSelector, ElementView,
+    ForkElement, Graph, KirDocument, MetamodelAttributeRegistry, ModelFork, ModelSession,
+    ModelWorkspace, Mutation, QualifiedName, SessionError, WorkspaceSnapshot, WriteBackMode,
+    WriteBackResult, compile_sysml_text, create_empty_model, default_language_profile,
+    default_stdlib_path, generate_python_wrappers, load_authoring_project_from_sysml,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -87,8 +88,8 @@ impl PySemanticModel {
     }
 
     fn generate_python_wrappers(&self, module_name: String) -> PyResult<BTreeMap<String, String>> {
-        let profile = default_language_profile()
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let profile =
+            default_language_profile().map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         Ok(generate_python_wrappers(&self.document, &profile, &module_name).files)
     }
 
@@ -176,7 +177,211 @@ impl PyElementView {
 
     fn __repr__(&self) -> PyResult<String> {
         let view = self.view()?;
-        Ok(format!("ElementView(id={:?}, kind={:?})", view.id(), view.kind()))
+        Ok(format!(
+            "ElementView(id={:?}, kind={:?})",
+            view.id(),
+            view.kind()
+        ))
+    }
+}
+
+#[pyclass(name = "ForkElement")]
+#[derive(Debug, Clone)]
+struct PyForkElement {
+    inner: ForkElement,
+}
+
+#[pymethods]
+impl PyForkElement {
+    #[getter]
+    fn id(&self) -> String {
+        self.inner.id.clone()
+    }
+
+    #[getter]
+    fn qualified_name(&self) -> String {
+        self.inner.qualified_name.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ForkElement(id={:?}, qualified_name={:?})",
+            self.inner.id, self.inner.qualified_name
+        )
+    }
+}
+
+#[pyclass(name = "CommitResult")]
+#[derive(Debug, Clone)]
+struct PyCommitResult {
+    #[pyo3(get)]
+    mode: String,
+    #[pyo3(get)]
+    strategy_used: String,
+    #[pyo3(get)]
+    base_revision: String,
+    #[pyo3(get)]
+    new_revision: String,
+    #[pyo3(get)]
+    changed_files: Vec<String>,
+    #[pyo3(get)]
+    edited_files: BTreeMap<String, String>,
+    #[pyo3(get)]
+    generated_elements: usize,
+}
+
+#[pymethods]
+impl PyCommitResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "CommitResult(mode={:?}, strategy_used={:?}, changed_files={:?})",
+            self.mode, self.strategy_used, self.changed_files
+        )
+    }
+}
+
+#[pyclass(name = "ModelWorkspace")]
+#[derive(Clone)]
+struct PyModelWorkspace {
+    inner: ModelWorkspace,
+}
+
+#[pymethods]
+impl PyModelWorkspace {
+    #[classmethod]
+    fn empty(_cls: &Bound<'_, PyType>) -> PyResult<Self> {
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: Vec::new(),
+        };
+        Ok(Self {
+            inner: ModelWorkspace::new(WorkspaceSnapshot::new(document).map_err(session_error)?),
+        })
+    }
+
+    #[classmethod]
+    fn from_kir_json(_cls: &Bound<'_, PyType>, content: String) -> PyResult<Self> {
+        let document = KirDocument::from_str(&content)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(Self {
+            inner: ModelWorkspace::new(WorkspaceSnapshot::new(document).map_err(session_error)?),
+        })
+    }
+
+    #[classmethod]
+    fn from_sysml_files(
+        _cls: &Bound<'_, PyType>,
+        files: BTreeMap<String, String>,
+    ) -> PyResult<Self> {
+        let project = load_authoring_project_from_sysml(files).map_err(authoring_error)?;
+        Ok(Self {
+            inner: ModelWorkspace::new(
+                WorkspaceSnapshot::from_authoring_project(project).map_err(session_error)?,
+            ),
+        })
+    }
+
+    fn session(&self) -> PyModelSession {
+        PyModelSession {
+            inner: self.inner.session(),
+        }
+    }
+
+    fn revision(&self) -> String {
+        self.inner.current_snapshot().revision.fingerprint.clone()
+    }
+}
+
+#[pyclass(name = "ModelSession")]
+#[derive(Clone)]
+struct PyModelSession {
+    inner: ModelSession,
+}
+
+#[pymethods]
+impl PyModelSession {
+    fn fork(&self, label: String) -> PyModelFork {
+        PyModelFork {
+            inner: self.inner.fork(label),
+        }
+    }
+}
+
+#[pyclass(name = "ModelFork")]
+struct PyModelFork {
+    inner: ModelFork,
+}
+
+#[pymethods]
+impl PyModelFork {
+    #[pyo3(signature = (qualified_name, owner=None))]
+    fn package(
+        &mut self,
+        qualified_name: String,
+        owner: Option<&PyForkElement>,
+    ) -> PyResult<PyForkElement> {
+        self.inner
+            .package(qualified_name, owner.map(|element| &element.inner))
+            .map(py_fork_element)
+            .map_err(session_error)
+    }
+
+    fn requirement(
+        &mut self,
+        owner: &PyForkElement,
+        name: String,
+        text: String,
+    ) -> PyResult<PyForkElement> {
+        self.inner
+            .requirement(&owner.inner, name, text)
+            .map(py_fork_element)
+            .map_err(session_error)
+    }
+
+    fn requirements(
+        &mut self,
+        owner: &PyForkElement,
+        items: Vec<(String, String)>,
+    ) -> PyResult<Vec<PyForkElement>> {
+        self.inner
+            .requirements(&owner.inner, items)
+            .map(|items| items.into_iter().map(py_fork_element).collect())
+            .map_err(session_error)
+    }
+
+    #[pyo3(signature = (owner, name, ty=None))]
+    fn part(
+        &mut self,
+        owner: &PyForkElement,
+        name: String,
+        ty: Option<String>,
+    ) -> PyResult<PyForkElement> {
+        self.inner
+            .part(&owner.inner, name, ty)
+            .map(py_fork_element)
+            .map_err(session_error)
+    }
+
+    fn rename_declaration(&mut self, element: String, new_name: String) -> PyResult<()> {
+        self.inner
+            .rename_declaration(element, new_name)
+            .map_err(session_error)
+    }
+
+    fn validate(&self) -> PyResult<()> {
+        self.inner.validate().map_err(session_error)
+    }
+
+    fn added_element_count(&self) -> usize {
+        self.inner.overlay().added_elements.len()
+    }
+
+    #[pyo3(signature = (mode="preserve_source"))]
+    fn commit(&self, mode: &str) -> PyResult<PyCommitResult> {
+        self.inner
+            .commit(parse_commit_mode(mode)?)
+            .map(py_commit_result)
+            .map_err(session_error)
     }
 }
 
@@ -504,6 +709,11 @@ fn mercurio_core_native(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResu
     module.add_class::<PyWriteBackResult>()?;
     module.add_class::<PySemanticModel>()?;
     module.add_class::<PyElementView>()?;
+    module.add_class::<PyModelWorkspace>()?;
+    module.add_class::<PyModelSession>()?;
+    module.add_class::<PyModelFork>()?;
+    module.add_class::<PyForkElement>()?;
+    module.add_class::<PyCommitResult>()?;
     Ok(())
 }
 
@@ -538,6 +748,42 @@ fn qnames(values: Option<Vec<String>>) -> Vec<QualifiedName> {
         .collect()
 }
 
+fn parse_commit_mode(value: &str) -> PyResult<CommitMode> {
+    match value {
+        "preserve_source" => Ok(CommitMode::PreserveSource),
+        "rewrite_source" => Ok(CommitMode::RewriteSource),
+        other => Err(PyValueError::new_err(format!(
+            "unsupported commit mode `{other}`; expected preserve_source or rewrite_source"
+        ))),
+    }
+}
+
+fn py_fork_element(inner: ForkElement) -> PyForkElement {
+    PyForkElement { inner }
+}
+
+fn py_commit_result(result: CommitResult) -> PyCommitResult {
+    PyCommitResult {
+        mode: match result.mode {
+            CommitMode::PreserveSource => "preserve_source",
+            CommitMode::RewriteSource => "rewrite_source",
+        }
+        .to_string(),
+        strategy_used: match result.strategy_used {
+            CommitStrategy::MutatorPlan => "mutator_plan",
+            CommitStrategy::GeneratedCompanionFiles => "generated_companion_files",
+            CommitStrategy::RewriteGeneratedSource => "rewrite_generated_source",
+            CommitStrategy::NoOp => "no_op",
+        }
+        .to_string(),
+        base_revision: result.base_revision.fingerprint,
+        new_revision: result.new_revision.fingerprint,
+        changed_files: result.changed_files.into_iter().collect(),
+        edited_files: result.edited_files,
+        generated_elements: result.generated_elements,
+    }
+}
+
 fn selector(value: &str) -> ContainerSelector {
     if let Some(path) = value.strip_prefix("file:") {
         return ContainerSelector::File {
@@ -553,6 +799,10 @@ fn selector(value: &str) -> ContainerSelector {
 }
 
 fn authoring_error(err: mercurio_core::AuthoringError) -> PyErr {
+    PyValueError::new_err(err.to_string())
+}
+
+fn session_error(err: SessionError) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 
@@ -577,7 +827,9 @@ fn write_atomic(path: &Path, content: &str) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::PyModelBuilder;
+    use super::{PyModelBuilder, PyModelWorkspace};
+    use pyo3::Python;
+    use pyo3::types::PyType;
 
     #[test]
     fn builder_creates_renders_and_compiles_model() {
@@ -647,5 +899,47 @@ mod tests {
         assert_eq!(validation.mode, "canonical_rewrite");
         assert!(validation.validation_ok);
         assert_eq!(validation.changed_files, vec!["model.sysml"]);
+    }
+
+    #[test]
+    fn session_fork_python_surface_builds_and_commits_generated_package() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let cls = PyType::new::<PyModelWorkspace>(py);
+            let workspace = PyModelWorkspace::empty(&cls).unwrap();
+            let session = workspace.session();
+            let mut fork = session.fork("python session".to_string());
+            let package = fork
+                .package("SyntheticRequirements".to_string(), None)
+                .unwrap();
+            fork.requirements(
+                &package,
+                vec![
+                    (
+                        "Req00001".to_string(),
+                        "Generated requirement 1".to_string(),
+                    ),
+                    (
+                        "Req00002".to_string(),
+                        "Generated requirement 2".to_string(),
+                    ),
+                ],
+            )
+            .unwrap();
+            fork.part(&package, "controller".to_string(), None).unwrap();
+
+            let result = fork.commit("rewrite_source").unwrap();
+
+            assert_eq!(result.strategy_used, "rewrite_generated_source");
+            assert_eq!(result.generated_elements, 4);
+            assert!(
+                result.edited_files["generated/synthetic_requirements.sysml"]
+                    .contains("requirement Req00001")
+            );
+            assert!(
+                result.edited_files["generated/synthetic_requirements.sysml"]
+                    .contains("part controller")
+            );
+        });
     }
 }
