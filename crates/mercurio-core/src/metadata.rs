@@ -2,11 +2,85 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::graph::Element;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct KirMetadataAnnotation {
     pub type_name: Option<String>,
     pub properties: Value,
     pub raw: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataView<'a> {
+    annotation: &'a KirMetadataAnnotation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementMetadataView {
+    element_id: String,
+    annotations: Vec<KirMetadataAnnotation>,
+}
+
+impl<'a> MetadataView<'a> {
+    pub fn new(annotation: &'a KirMetadataAnnotation) -> Self {
+        Self { annotation }
+    }
+
+    pub fn type_name(&self) -> Option<&'a str> {
+        self.annotation.type_name.as_deref()
+    }
+
+    pub fn properties(&self) -> &'a Value {
+        &self.annotation.properties
+    }
+
+    pub fn raw(&self) -> &'a Value {
+        &self.annotation.raw
+    }
+
+    pub fn string_property(&self, key: &str) -> Option<String> {
+        metadata_string_property(self.annotation, key)
+    }
+
+    pub fn matches_type(&self, type_name: &str) -> bool {
+        self.annotation
+            .type_name
+            .as_deref()
+            .is_some_and(|candidate| metadata_type_matches(candidate, type_name))
+    }
+}
+
+impl ElementMetadataView {
+    pub fn from_element(element: &Element) -> Self {
+        Self {
+            element_id: element.element_id.clone(),
+            annotations: metadata_annotations(&element.properties),
+        }
+    }
+
+    pub fn element_id(&self) -> &str {
+        &self.element_id
+    }
+
+    pub fn annotations(&self) -> &[KirMetadataAnnotation] {
+        &self.annotations
+    }
+
+    pub fn views(&self) -> Vec<MetadataView<'_>> {
+        self.annotations.iter().map(MetadataView::new).collect()
+    }
+
+    pub fn by_type(&self, type_name: &str) -> Vec<MetadataView<'_>> {
+        self.views()
+            .into_iter()
+            .filter(|annotation| annotation.matches_type(type_name))
+            .collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.annotations.is_empty()
+    }
 }
 
 pub fn metadata_annotations(properties: &BTreeMap<String, Value>) -> Vec<KirMetadataAnnotation> {

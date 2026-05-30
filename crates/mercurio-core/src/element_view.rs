@@ -1,12 +1,13 @@
 use serde_json::Value;
 
+use crate::derived_properties;
 use crate::graph::{Element, Graph, NodeId};
+use crate::metadata::{ElementMetadataView, KirMetadataAnnotation, metadata_annotations_named};
 use crate::metamodel::{
     ElementAttributeQuery, ElementSummary, MetamodelAttributeRegistry,
     collect_specialization_ancestors, effective_properties_with_derived, element_metatype,
     query_element_attributes,
 };
-use crate::derived_properties;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ElementView<'a> {
@@ -71,12 +72,21 @@ impl<'a> ElementView<'a> {
         let element = self.element();
         let ancestors = collect_specialization_ancestors(self.graph, self.node_id);
         let derived = derived_properties(self.graph, element);
-        let effective = effective_properties_with_derived(&ancestors, &element.properties, &derived);
+        let effective =
+            effective_properties_with_derived(&ancestors, &element.properties, &derived);
         effective.get(name).cloned()
     }
 
     pub fn attributes(&self) -> Option<ElementAttributeQuery> {
         query_element_attributes(self.graph, self.registry, self.node_id, None)
+    }
+
+    pub fn metadata(&self) -> ElementMetadataView {
+        ElementMetadataView::from_element(self.element())
+    }
+
+    pub fn metadata_by_type(&self, type_name: &str) -> Vec<KirMetadataAnnotation> {
+        metadata_annotations_named(&self.element().properties, type_name)
     }
 
     pub fn metatype(&self) -> Option<ElementSummary> {
@@ -165,5 +175,40 @@ mod tests {
 
         assert_eq!(view.id(), "pkg.Demo");
         assert_eq!(view.references("features")[0].id(), "type.Demo.Vehicle");
+    }
+
+    #[test]
+    fn element_view_reads_metadata() {
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![KirElement {
+                id: "req.startup".to_string(),
+                kind: "RequirementUsage".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([(
+                    "metadata".to_string(),
+                    serde_json::json!([
+                        {
+                            "type": "ReviewTag",
+                            "properties": {
+                                "status": "draft"
+                            }
+                        }
+                    ]),
+                )]),
+            }],
+        };
+        let graph = Graph::from_document(document).unwrap();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        let view = ElementView::by_id(&graph, &registry, "req.startup").unwrap();
+        let metadata = view.metadata();
+
+        assert_eq!(metadata.element_id(), "req.startup");
+        assert_eq!(
+            metadata.by_type("ReviewTag")[0]
+                .string_property("status")
+                .as_deref(),
+            Some("draft")
+        );
     }
 }

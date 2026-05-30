@@ -7,6 +7,7 @@ use crate::authoring::{
     AuthoringModule, AuthoringProject, Declaration, MutationResult, QualifiedName,
 };
 use crate::graph::Graph;
+use crate::ir::{KirDocument, KirElement};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ElementRef {
@@ -822,11 +823,102 @@ pub struct ChangedAttribute {
     pub attribute: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelationshipChange {
     pub kind: String,
     pub source: ElementRef,
     pub target: ElementRef,
+}
+
+pub fn diff_kir_documents(before: &KirDocument, after: &KirDocument) -> SemanticDiff {
+    let mut diff = SemanticDiff::default();
+    let before_elements = before
+        .elements
+        .iter()
+        .map(|element| (element.id.as_str(), element))
+        .collect::<BTreeMap<_, _>>();
+    let after_elements = after
+        .elements
+        .iter()
+        .map(|element| (element.id.as_str(), element))
+        .collect::<BTreeMap<_, _>>();
+
+    for id in before_elements.keys() {
+        if !after_elements.contains_key(id) {
+            diff.removed_elements
+                .push(ElementRef::new((*id).to_string()));
+        }
+    }
+    for (id, after_element) in &after_elements {
+        let Some(before_element) = before_elements.get(id) else {
+            diff.added_elements.push(ElementRef::new((*id).to_string()));
+            continue;
+        };
+        collect_element_property_diff(&mut diff, before_element, after_element);
+    }
+
+    collect_relationship_diff(before, after, &mut diff);
+    diff
+}
+
+fn collect_element_property_diff(diff: &mut SemanticDiff, before: &KirElement, after: &KirElement) {
+    if before.kind != after.kind {
+        diff.changed_attributes.push(ChangedAttribute {
+            element: ElementRef::new(after.id.clone()),
+            attribute: "kind".to_string(),
+        });
+    }
+    if before.layer != after.layer {
+        diff.changed_attributes.push(ChangedAttribute {
+            element: ElementRef::new(after.id.clone()),
+            attribute: "layer".to_string(),
+        });
+    }
+
+    let property_names = before
+        .properties
+        .keys()
+        .chain(after.properties.keys())
+        .collect::<BTreeSet<_>>();
+    for name in property_names {
+        if before.properties.get(name) != after.properties.get(name) {
+            diff.changed_attributes.push(ChangedAttribute {
+                element: ElementRef::new(after.id.clone()),
+                attribute: name.clone(),
+            });
+        }
+    }
+}
+
+fn collect_relationship_diff(before: &KirDocument, after: &KirDocument, diff: &mut SemanticDiff) {
+    let before_relationships = document_relationships(before);
+    let after_relationships = document_relationships(after);
+
+    for relationship in before_relationships.difference(&after_relationships) {
+        diff.removed_relationships.push(relationship.clone());
+    }
+    for relationship in after_relationships.difference(&before_relationships) {
+        diff.added_relationships.push(relationship.clone());
+    }
+}
+
+fn document_relationships(document: &KirDocument) -> BTreeSet<RelationshipChange> {
+    let Ok(graph) = Graph::from_document(document.clone()) else {
+        return BTreeSet::new();
+    };
+    graph
+        .edges()
+        .iter()
+        .filter_map(|edge| {
+            let source = graph.element_id(edge.source)?;
+            let target = graph.element_id(edge.target)?;
+            Some(RelationshipChange {
+                kind: edge.relation.clone(),
+                source: ElementRef::new(source.to_string()),
+                target: ElementRef::new(target.to_string()),
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn diff_for_operation(
@@ -958,7 +1050,7 @@ mod tests {
 
     use super::{
         ElementRef, WorkspaceRevision, default_semantic_mutation_capability_context,
-        enrich_semantic_reasoning_context_with_child_affordances,
+        diff_kir_documents, enrich_semantic_reasoning_context_with_child_affordances,
         enrich_semantic_reasoning_context_with_graph,
         semantic_reasoning_context_from_authoring_project,
     };
@@ -985,6 +1077,74 @@ mod tests {
                 .iter()
                 .any(|item| item.contains("Never use keyword `block`"))
         );
+    }
+
+    #[test]
+    fn semantic_diff_compares_kir_documents() {
+        let before = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Demo".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "members".to_string(),
+                        serde_json::json!(["req.startup"]),
+                    )]),
+                },
+                KirElement {
+                    id: "req.startup".to_string(),
+                    kind: "RequirementUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        };
+        let after = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Demo".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "members".to_string(),
+                        serde_json::json!(["req.startup", "case.verifyStartup"]),
+                    )]),
+                },
+                KirElement {
+                    id: "req.startup".to_string(),
+                    kind: "RequirementUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "metadata".to_string(),
+                        serde_json::json!([{"type": "ReviewTag"}]),
+                    )]),
+                },
+                KirElement {
+                    id: "case.verifyStartup".to_string(),
+                    kind: "VerificationCaseUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        };
+
+        let diff = diff_kir_documents(&before, &after);
+
+        assert!(
+            diff.added_elements
+                .contains(&ElementRef::new("case.verifyStartup"))
+        );
+        assert!(diff.changed_attributes.iter().any(|change| {
+            change.element == ElementRef::new("req.startup") && change.attribute == "metadata"
+        }));
+        assert!(diff.added_relationships.iter().any(|relationship| {
+            relationship.kind == "members"
+                && relationship.source == ElementRef::new("pkg.Demo")
+                && relationship.target == ElementRef::new("case.verifyStartup")
+        }));
     }
 
     #[test]

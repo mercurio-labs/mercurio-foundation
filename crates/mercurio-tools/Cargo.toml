@@ -52,6 +52,10 @@ path = "src/bin/build_stdlib_release.rs"
 name = "audit_language_profile"
 path = "src/bin/audit_language_profile.rs"
 
+[[bin]]
+name = "verify_core_contracts"
+path = "src/bin/verify_core_contracts.rs"
+
 [dependencies]
 mercurio-core = { path = "../mercurio-core" }
 mercurio-views = { path = "../mercurio-views" }

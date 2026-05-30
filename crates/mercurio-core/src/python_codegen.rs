@@ -6,6 +6,9 @@ use crate::language::{LanguageProfile, SemanticConcept};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonWrapperGeneration {
     pub module_name: String,
+    pub profile_id: String,
+    pub stdlib_version: String,
+    pub kir_schema_version: String,
     pub files: BTreeMap<String, String>,
 }
 
@@ -21,8 +24,18 @@ pub fn generate_python_wrappers(
     );
     files.insert(format!("{module_name}/base.py"), base_py());
     files.insert(format!("{module_name}/concepts.py"), concepts_py(profile));
-    files.insert(format!("{module_name}/stdlib/__init__.py"), stdlib_init_py());
-    files.insert(format!("{module_name}/stdlib/si.py"), catalog_py(document, "SI"));
+    files.insert(
+        format!("{module_name}/generation_info.py"),
+        generation_info_py(profile),
+    );
+    files.insert(
+        format!("{module_name}/stdlib/__init__.py"),
+        stdlib_init_py(),
+    );
+    files.insert(
+        format!("{module_name}/stdlib/si.py"),
+        catalog_py(document, "SI"),
+    );
     files.insert(
         format!("{module_name}/stdlib/isq.py"),
         catalog_prefix_py(document, "ISQ"),
@@ -31,6 +44,9 @@ pub fn generate_python_wrappers(
 
     PythonWrapperGeneration {
         module_name: module_name.to_string(),
+        profile_id: profile.id.clone(),
+        stdlib_version: profile.stdlib_version.clone(),
+        kir_schema_version: profile.kir_schema_version.clone(),
         files,
     }
 }
@@ -40,15 +56,34 @@ fn init_py(module_name: &str, profile: &LanguageProfile) -> String {
         r#""""Generated Mercurio wrappers for {profile_id}."""
 
 from .base import ElementView, StdlibRef
-from .concepts import Package, PartUsage, RequirementUsage, SysML
+from .concepts import (
+    AttributeUsage,
+    ConstraintUsage,
+    MetadataUsage,
+    Package,
+    PartDefinition,
+    PartUsage,
+    RequirementUsage,
+    SysML,
+    VerificationCaseUsage,
+)
+from .generation_info import KIR_SCHEMA_VERSION, PROFILE_ID, STDLIB_VERSION
 
 __all__ = [
+    "AttributeUsage",
+    "ConstraintUsage",
     "ElementView",
+    "KIR_SCHEMA_VERSION",
+    "MetadataUsage",
     "StdlibRef",
     "Package",
+    "PartDefinition",
     "PartUsage",
+    "PROFILE_ID",
     "RequirementUsage",
+    "STDLIB_VERSION",
     "SysML",
+    "VerificationCaseUsage",
     "register",
 ]
 
@@ -56,11 +91,34 @@ __all__ = [
 def register(registry):
     registry.register_profile("{profile_id}", "{module_name}")
     registry.register("package", Package)
+    registry.register("part_definition", PartDefinition)
     registry.register("part_usage", PartUsage)
+    registry.register("attribute_usage", AttributeUsage)
     registry.register("requirement_usage", RequirementUsage)
+    registry.register("verification_case_usage", VerificationCaseUsage)
+    registry.register("constraint_usage", ConstraintUsage)
+    registry.register("metadata_usage", MetadataUsage)
 "#,
         profile_id = profile.id,
         module_name = module_name,
+    )
+}
+
+fn generation_info_py(profile: &LanguageProfile) -> String {
+    format!(
+        r#""""Version information for generated Mercurio wrappers."""
+
+PROFILE_ID = {profile_id:?}
+STDLIB_VERSION = {stdlib_version:?}
+KIR_SCHEMA_VERSION = {kir_schema_version:?}
+LANGUAGE_VERSION = {language_version:?}
+METAMODEL_VERSION = {metamodel_version:?}
+"#,
+        profile_id = profile.id,
+        stdlib_version = profile.stdlib_version,
+        kir_schema_version = profile.kir_schema_version,
+        language_version = profile.language_version,
+        metamodel_version = profile.metamodel_version,
     )
 }
 
@@ -125,9 +183,19 @@ class StdlibRef:
 
 fn concepts_py(profile: &LanguageProfile) -> String {
     let package = python_string_literal(concept_anchor(profile, SemanticConcept::Package));
+    let part_definition =
+        python_string_literal(concept_anchor(profile, SemanticConcept::PartDefinition));
     let part_usage = python_string_literal(concept_anchor(profile, SemanticConcept::PartUsage));
+    let attribute_usage =
+        python_string_literal(concept_anchor(profile, SemanticConcept::AttributeUsage));
     let requirement_usage =
         python_string_literal(concept_anchor(profile, SemanticConcept::RequirementUsage));
+    let verification_case_usage = python_string_literal(concept_anchor(
+        profile,
+        SemanticConcept::VerificationCaseUsage,
+    ));
+    let constraint_usage =
+        python_string_literal(concept_anchor(profile, SemanticConcept::ConstraintUsage));
     format!(
         r#"from __future__ import annotations
 
@@ -148,6 +216,22 @@ class Package(ElementView):
         return self.references("members") or self.references("features")
 
 
+class PartDefinition(ElementView):
+    concept = "part_definition"
+    metatype_id = {part_definition}
+
+    @property
+    def name(self) -> str | None:
+        return self.effective_str("name")
+
+    @property
+    def qualified_name(self) -> str | None:
+        return self.effective_str("qualified_name")
+
+    def features(self) -> list[ElementView]:
+        return self.references("features")
+
+
 class PartUsage(ElementView):
     concept = "part_usage"
     metatype_id = {part_usage}
@@ -161,6 +245,15 @@ class PartUsage(ElementView):
         return self.effective_str("qualified_name")
 
 
+class AttributeUsage(ElementView):
+    concept = "attribute_usage"
+    metatype_id = {attribute_usage}
+
+    @property
+    def name(self) -> str | None:
+        return self.effective_str("name")
+
+
 class RequirementUsage(ElementView):
     concept = "requirement_usage"
     metatype_id = {requirement_usage}
@@ -168,6 +261,33 @@ class RequirementUsage(ElementView):
     @property
     def text(self) -> str | None:
         return self.effective_str("text") or self.effective_str("documentation")
+
+
+class VerificationCaseUsage(ElementView):
+    concept = "verification_case_usage"
+    metatype_id = {verification_case_usage}
+
+    @property
+    def name(self) -> str | None:
+        return self.effective_str("name")
+
+
+class ConstraintUsage(ElementView):
+    concept = "constraint_usage"
+    metatype_id = {constraint_usage}
+
+    @property
+    def expression(self):
+        return self.effective("expression")
+
+
+class MetadataUsage(ElementView):
+    concept = "metadata_usage"
+    metatype_id = None
+
+    @property
+    def metadata_type(self) -> str | None:
+        return self.effective_str("metadata_type") or self.effective_str("type")
 
 
 class StdlibNamespace:
@@ -292,8 +412,8 @@ fn python_keywords() -> BTreeSet<&'static str> {
     [
         "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
         "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
-        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
-        "return", "try", "while", "with", "yield",
+        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield",
     ]
     .into_iter()
     .collect()
@@ -334,9 +454,21 @@ mod tests {
         };
 
         let generated = generate_python_wrappers(&document, &profile, "mercurio_sysml_test");
-        assert!(generated.files.contains_key("mercurio_sysml_test/__init__.py"));
+        assert_eq!(generated.profile_id, "sysml-test");
+        assert_eq!(generated.stdlib_version, "test");
         assert!(
-            generated.files["mercurio_sysml_test/stdlib/si.py"].contains("def metre(self)")
+            generated
+                .files
+                .contains_key("mercurio_sysml_test/__init__.py")
+        );
+        assert!(
+            generated
+                .files
+                .contains_key("mercurio_sysml_test/generation_info.py")
+        );
+        assert!(generated.files["mercurio_sysml_test/stdlib/si.py"].contains("def metre(self)"));
+        assert!(
+            generated.files["mercurio_sysml_test/concepts.py"].contains("class PartDefinition")
         );
     }
 }

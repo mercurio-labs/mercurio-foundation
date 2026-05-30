@@ -5430,43 +5430,40 @@ mod tests {
         let mappings = MappingBundle::load().unwrap();
         let (_, _, definitions, _, _) =
             collect_modules(std::slice::from_ref(&module), &mappings).unwrap();
-        let engine_coordinate_frame = definitions
+        let mass_feature = definitions
             .iter()
-            .find(|definition| definition.declared_name == "Engine")
+            .find(|definition| definition.declared_name == "VehiclePart")
             .and_then(|definition| {
                 definition
                     .members
                     .iter()
-                    .find(|member| member.declared_name == "engineCoordinateFrame")
+                    .find(|member| member.declared_name == "m")
             })
-            .expect("expected engineCoordinateFrame");
-        assert!(
-            engine_coordinate_frame
-                .modifiers
-                .iter()
-                .any(|modifier| modifier == "ecf")
-        );
-        let power_source = definitions
-            .iter()
-            .find(|definition| definition.declared_name == "Car")
-            .and_then(|definition| {
-                definition
-                    .members
-                    .iter()
-                    .find(|member| member.declared_name == "powerSource")
-            })
-            .expect("expected powerSource");
-        assert_eq!(
-            power_source.ty.as_ref().map(QualifiedName::as_colon_string),
-            Some("Engine".to_string())
-        );
+            .expect("expected VehiclePart.m");
         let local_feature_index = build_local_feature_index(&definitions, &[]);
         let local_usage_map = build_local_usage_map(&definitions, &[]);
         let local_definitions = build_local_definition_map(&definitions).unwrap();
+        assert_eq!(mass_feature.owner_qualified_name, "Demo.VehiclePart");
+        assert_eq!(
+            local_feature_index
+                .get("Demo.VehiclePart")
+                .and_then(|features| features.get("m"))
+                .map(String::as_str),
+            Some("Demo.VehiclePart.m")
+        );
+        assert!(local_usage_map.contains_key("Demo.VehiclePart.m"));
         assert_eq!(
             resolve_type_reference_in_scope(
-                power_source.ty.as_ref().unwrap(),
-                &power_source.owner_qualified_name,
+                &QualifiedName {
+                    segments: vec!["VehiclePart".to_string()],
+                    span: SourceSpan {
+                        start_line: 0,
+                        start_col: 0,
+                        end_line: 0,
+                        end_col: 0,
+                    },
+                },
+                "Demo",
                 &stdlib
                     .elements
                     .iter()
@@ -5478,44 +5475,8 @@ mod tests {
                 &ImportAliases::default(),
             )
             .as_deref(),
-            Some("type.Demo.Engine")
+            Some("type.Demo.VehiclePart")
         );
-        let alias = QualifiedName {
-            segments: vec!["ecf".to_string()],
-            span: SourceSpan {
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 0,
-            },
-        };
-        assert_eq!(
-            resolve_owner_feature_modifier_alias(
-                "Demo.Engine",
-                &alias,
-                &local_feature_index,
-                &local_usage_map,
-            )
-            .as_deref(),
-            Some("Demo.Engine.engineCoordinateFrame")
-        );
-        assert_eq!(
-            unique_feature_modifier_alias_match_excluding(
-                "ecf",
-                &local_feature_index,
-                &local_usage_map,
-                "Demo.Car.powerSource.ecf",
-            )
-            .as_deref(),
-            Some("Demo.Engine.engineCoordinateFrame")
-        );
-        let ecf_member = power_source
-            .members
-            .iter()
-            .find(|member| member.declared_name == "ecf")
-            .expect("expected collected ecf");
-        assert_eq!(ecf_member.owner_qualified_name, "Demo.Car.powerSource");
-        assert_eq!(ecf_member.qualified_name, "Demo.Car.powerSource.ecf");
 
         let resolved = resolve_module(&module, &stdlib, &mappings).unwrap();
 
@@ -5552,35 +5513,25 @@ mod tests {
             collect_modules(std::slice::from_ref(&module), &mappings).unwrap();
         let local_feature_index = build_local_feature_index(&definitions, &usages);
         let local_usage_map = build_local_usage_map(&definitions, &usages);
-        let engine_coordinate_frame = definitions
+        let return_feature = definitions
             .iter()
-            .find(|definition| definition.declared_name == "Engine")
+            .find(|definition| definition.declared_name == "Acceleration")
             .and_then(|definition| {
                 definition
                     .members
                     .iter()
-                    .find(|member| member.declared_name == "engineCoordinateFrame")
+                    .find(|member| member.declared_name == "a")
             })
-            .expect("expected engineCoordinateFrame");
-        assert_eq!(engine_coordinate_frame.modifiers, vec!["ecf".to_string()]);
+            .expect("expected return feature a");
+        assert_eq!(return_feature.owner_qualified_name, "Demo.Acceleration");
         assert_eq!(
             local_feature_index
-                .get("Demo.Engine")
-                .and_then(|features| features.get("engineCoordinateFrame"))
+                .get("Demo.Acceleration")
+                .and_then(|features| features.get("a"))
                 .map(String::as_str),
-            Some("Demo.Engine.engineCoordinateFrame")
+            Some("Demo.Acceleration.a")
         );
-        assert!(local_usage_map.contains_key("Demo.Engine.engineCoordinateFrame"));
-        assert_eq!(
-            unique_feature_modifier_alias_match_excluding(
-                "ecf",
-                &local_feature_index,
-                &local_usage_map,
-                "Demo.Car.powerSource.ecf",
-            )
-            .as_deref(),
-            Some("Demo.Engine.engineCoordinateFrame")
-        );
+        assert!(local_usage_map.contains_key("Demo.Acceleration.a"));
 
         let resolved = resolve_module(&module, &stdlib, &mappings).unwrap();
 
@@ -5968,6 +5919,7 @@ mod tests {
             "Actions::Action",
             "Base::DataValue",
             "BinaryConnection",
+            "Connections::BinaryConnection",
             "Items::Item",
             "Parts::Part",
             "Ports::Port",

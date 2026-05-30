@@ -10,6 +10,7 @@ pub mod feasibility;
 pub mod frontend;
 pub mod goal;
 pub mod graph;
+pub mod identity;
 pub mod ir;
 pub mod language;
 pub mod library;
@@ -100,6 +101,10 @@ pub use goal::{
     evaluate_semantic_goal, explain_semantic_goal,
 };
 pub use graph::{Edge, Graph, GraphError, NodeId};
+pub use identity::{
+    ConceptId, ElementId, PackageId, ProfileId, RelationshipId, SourceSpanRef, StdlibVersion,
+    stable_digest, workspace_revision_for_kir_document,
+};
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
     KirFieldSpec, load_model_stack,
@@ -116,8 +121,8 @@ pub use library::{
     load_baseline_library_document, write_kpar_package,
 };
 pub use metadata::{
-    KirMetadataAnnotation, metadata_annotations, metadata_annotations_named,
-    metadata_string_property,
+    ElementMetadataView, KirMetadataAnnotation, MetadataView, metadata_annotations,
+    metadata_annotations_named, metadata_string_property,
 };
 pub use metamodel::{
     AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
@@ -125,13 +130,18 @@ pub use metamodel::{
     effective_properties, effective_properties_with_derived, element_metatype,
     query_element_attributes,
 };
+pub use mpack::{
+    MpackLanguageProfile, MpackLibrary, MpackManifest, MpackPythonPackage,
+    MpackPythonWrapperBinding, MpackRequirements, MpackRulepack, MpackService,
+    MpackValidationError, validate_mpack_manifest,
+};
 pub use mutation::{
     ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
     MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
     RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticElementContext,
     SemanticExpression, SemanticFactContext, SemanticMutation, SemanticMutationCapabilityContext,
     SemanticReasoningContext, SemanticRelationshipContext, WorkspaceRevision,
-    default_semantic_mutation_capability_context,
+    default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
     enrich_semantic_reasoning_context_with_graph,
     semantic_reasoning_context_from_authoring_project,
@@ -145,18 +155,13 @@ pub use paths::{
     default_package_repo_path, default_stdlib_path, default_stdlib_rulepack_path,
     default_user_config_path, default_workspace_root, repo_path, repo_root,
 };
-pub use mpack::{
-    MpackLanguageProfile, MpackLibrary, MpackManifest, MpackPythonPackage,
-    MpackPythonWrapperBinding, MpackRequirements, MpackRulepack, MpackService,
-    MpackValidationError, validate_mpack_manifest,
-};
 pub use plugin_registry::{
     InstalledMpack, MpackActivationIndex, MpackAssetRef,
     PluginInstallSource as RegistryPluginInstallSource, PluginRegistryError,
     default_plugin_registry_root, install_plugin_manifest, installed_mpack_manifests,
     installed_plugin_manifest_paths, mpack_activation_index, plugin_manifest_dir,
-    plugin_package_digest, plugin_registry_root, publish_plugin_package, read_plugin_install_source,
-    read_plugin_manifest as read_registry_plugin_manifest,
+    plugin_package_digest, plugin_registry_root, publish_plugin_package,
+    read_plugin_install_source, read_plugin_manifest as read_registry_plugin_manifest,
 };
 pub use project::{
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectDescriptorError, ProjectLibraryConfig,

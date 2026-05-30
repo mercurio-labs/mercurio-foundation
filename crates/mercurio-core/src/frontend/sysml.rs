@@ -6133,6 +6133,7 @@ mod tests {
             "Actions::Action",
             "Base::DataValue",
             "BinaryConnection",
+            "Connections::BinaryConnection",
             "Items::Item",
             "Parts::Part",
             "Ports::Port",
