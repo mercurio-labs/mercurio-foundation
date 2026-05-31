@@ -5,5 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mercurio-core = { path = "../mercurio-core" }
+mercurio-kir = { path = "../mercurio-kir" }
+mercurio-language-frontend = { path = "../mercurio-language-frontend" }
 mercurio-language-contracts = { path = "../mercurio-language-contracts" }
+
+[dev-dependencies]
+serde_json.workspace = true

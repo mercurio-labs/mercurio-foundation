@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use mercurio_core::repo_path;
@@ -11,7 +11,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     print_report(&report);
 
-    if !report.errors.is_empty() || (args.strict && !report.known_migration_crates.is_empty()) {
+    if !report.errors.is_empty()
+        || (args.strict
+            && (!report.known_migration_crates.is_empty()
+                || !report.temporary_dependency_exceptions.is_empty()))
+    {
         std::process::exit(1);
     }
 
@@ -59,6 +63,10 @@ impl Args {
 struct BoundaryManifest {
     allowed_core_crates: BTreeSet<String>,
     known_migration_crates: BTreeSet<String>,
+    #[serde(default)]
+    forbidden_dependencies: BTreeMap<String, BTreeSet<String>>,
+    #[serde(default)]
+    temporary_dependency_exceptions: BTreeMap<String, BTreeSet<String>>,
     forbidden_root_dirs: BTreeSet<String>,
 }
 
@@ -74,6 +82,8 @@ struct BoundaryReport {
     known_migration_crates: Vec<String>,
     unexpected_crates: Vec<String>,
     forbidden_dirs_present: Vec<String>,
+    forbidden_dependencies: Vec<String>,
+    temporary_dependency_exceptions: Vec<String>,
     errors: Vec<String>,
 }
 
@@ -85,6 +95,8 @@ impl BoundaryReport {
         let mut known_migration_crates = Vec::new();
         let mut unexpected_crates = Vec::new();
         let mut forbidden_dirs_present = Vec::new();
+        let mut forbidden_dependencies = Vec::new();
+        let mut temporary_dependency_exceptions = Vec::new();
         let mut errors = Vec::new();
 
         for crate_name in crates {
@@ -109,14 +121,60 @@ impl BoundaryReport {
             }
         }
 
+        for (crate_name, forbidden) in &manifest.forbidden_dependencies {
+            let dependencies = crate_dependencies(crate_name)?;
+            for dependency in dependencies.intersection(forbidden) {
+                let message = format!("crate `{crate_name}` must not depend on `{dependency}`");
+                let is_temporary = manifest
+                    .temporary_dependency_exceptions
+                    .get(crate_name)
+                    .is_some_and(|exceptions| exceptions.contains(dependency));
+                if is_temporary {
+                    temporary_dependency_exceptions.push(message);
+                } else {
+                    errors.push(message.clone());
+                    forbidden_dependencies.push(message);
+                }
+            }
+        }
+
         Ok(Self {
             allowed_core_crates,
             known_migration_crates,
             unexpected_crates,
             forbidden_dirs_present,
+            forbidden_dependencies,
+            temporary_dependency_exceptions,
             errors,
         })
     }
+}
+
+fn crate_dependencies(crate_name: &str) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+    let manifest_path = repo_path(&format!("crates/{crate_name}/Cargo.toml"));
+    let contents = std::fs::read_to_string(manifest_path)?;
+    let mut dependencies = BTreeSet::new();
+    let mut in_dependencies = false;
+
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.starts_with('[') {
+            in_dependencies = matches!(
+                line,
+                "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
+            );
+            continue;
+        }
+        if !in_dependencies || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((name, _)) = line.split_once('=') else {
+            continue;
+        };
+        dependencies.insert(name.trim().trim_matches('"').to_string());
+    }
+
+    Ok(dependencies)
 }
 
 fn discover_child_dirs(root: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -150,6 +208,14 @@ fn print_report(report: &BoundaryReport) {
     println!(
         "  forbidden root dirs: {}",
         join_or_dash(&report.forbidden_dirs_present)
+    );
+    println!(
+        "  forbidden dependencies: {}",
+        join_or_dash(&report.forbidden_dependencies)
+    );
+    println!(
+        "  temporary dependency exceptions: {}",
+        join_or_dash(&report.temporary_dependency_exceptions)
     );
 
     if report.errors.is_empty() {

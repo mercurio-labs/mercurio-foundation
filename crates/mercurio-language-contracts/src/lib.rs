@@ -3,6 +3,21 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+pub mod ast;
+pub mod diagnostics;
+pub mod expression;
+pub mod lexer;
+pub mod reports;
+
+pub use ast::*;
+pub use diagnostics::Diagnostic;
+pub use expression::{
+    BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
+    ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
+    UnaryExpressionOp,
+};
+pub use reports::{ParseReport, SemanticCompileReport, SemanticCompileStatus};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceLanguage {

@@ -2,11 +2,14 @@ use crate::frontend::ast::ParsedModule;
 use crate::frontend::diagnostics::Diagnostic;
 use crate::ir::KirDocument;
 
-pub use crate::frontend::sysml::{
+pub use mercurio_sysml::{
     ParseReport, SemanticCompileReport, SemanticCompileStatus, SysmlError, compile_sysml_module,
     compile_sysml_module_with_context, compile_sysml_module_with_context_report,
-    compile_sysml_text, compile_sysml_text_with_context, compile_sysml_text_with_context_report,
-    load_sysml_document, load_sysml_document_with_stdlib, parse_sysml, parse_sysml_recovering,
+    compile_sysml_module_with_context_report_with_limit,
+    compile_sysml_module_with_resolver_context,
+    compile_sysml_module_with_resolver_context_report_with_limit, compile_sysml_text,
+    compile_sysml_text_with_context, compile_sysml_text_with_context_report, load_sysml_document,
+    load_sysml_document_with_stdlib, parse_sysml, parse_sysml_recovering,
 };
 
 pub fn parse(input: &str) -> Result<ParsedModule, Diagnostic> {

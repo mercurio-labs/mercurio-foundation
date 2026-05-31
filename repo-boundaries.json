@@ -2,12 +2,27 @@
   "allowed_core_crates": [
     "mercurio-cli",
     "mercurio-core",
+    "mercurio-kerml",
     "mercurio-kir",
+    "mercurio-language-contracts",
+    "mercurio-language-frontend",
     "mercurio-python",
+    "mercurio-sysml",
     "mercurio-tools",
+    "mercurio-views",
     "mercurio-wasm"
   ],
   "known_migration_crates": [],
+  "forbidden_dependencies": {
+    "mercurio-kerml": [
+      "mercurio-core",
+      "mercurio-sysml"
+    ],
+    "mercurio-sysml": [
+      "mercurio-core"
+    ]
+  },
+  "temporary_dependency_exceptions": {},
   "forbidden_root_dirs": [
     "apps",
     "services",
