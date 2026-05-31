@@ -23,6 +23,14 @@ Language/profile binding for a compiler profile, including:
 - `provenance.json`
 - `mappings/`: construct and KIR-emission mapping files for that profile
 
-Longer term, native defaults should resolve stdlib content through bundled
-KPAR/MPack packages. The unpackaged KIR/rulepack files remain here as explicit
-versioned compatibility artifacts during that migration.
+Native defaults can resolve stdlib content through bundled packages under
+`packages/`:
+
+- `packages/libraries/`: optional standalone KPAR model libraries.
+- `packages/extensions/`: MPack support distributions, including the SysML
+  stdlib support MPack with the KPAR, language profile, rulepack, and generated
+  Python wrappers. The stdlib KPAR is distributed through this MPack rather than
+  duplicated as a standalone bundled library.
+
+The unpackaged KIR/rulepack files remain here as explicit versioned
+compatibility artifacts during that migration.

@@ -6,12 +6,13 @@ const DEFAULT_STDLIB_RELATIVE_PATH: &str =
 const DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH: &str =
     "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.rulepack.json";
 const DEFAULT_LANGUAGE_PROFILE_ROOT_RELATIVE_PATH: &str = "resources/language-profiles";
-const DEFAULT_BUNDLED_PACKAGE_REPO_RELATIVE_PATH: &str = "packages";
+const DEFAULT_BUNDLED_LIBRARY_REPO_RELATIVE_PATH: &str = "packages/libraries";
+const DEFAULT_BUNDLED_EXTENSION_REPO_RELATIVE_PATH: &str = "packages/extensions";
 const DEFAULT_BUNDLED_STDLIB_PACKAGE_SET_RELATIVE_PATH: &str =
     "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/sysml.library.kpar";
 const REPO_SENTINELS: [&str; 3] = [
     "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.full.kir.json",
-    "packages/org.omg/sysml-stdlib/2.0.0/manifest.json",
+    "packages/extensions/org.mercurio.sysml-stdlib-support/2.0.0/plugin.mpack",
     "Cargo.toml",
 ];
 
@@ -80,7 +81,11 @@ pub fn default_package_kir_cache_path() -> PathBuf {
 }
 
 pub fn bundled_package_repo_path() -> PathBuf {
-    repo_path(DEFAULT_BUNDLED_PACKAGE_REPO_RELATIVE_PATH)
+    repo_path(DEFAULT_BUNDLED_LIBRARY_REPO_RELATIVE_PATH)
+}
+
+pub fn bundled_extension_repo_path() -> PathBuf {
+    repo_path(DEFAULT_BUNDLED_EXTENSION_REPO_RELATIVE_PATH)
 }
 
 pub fn bundled_stdlib_package_set_path() -> PathBuf {

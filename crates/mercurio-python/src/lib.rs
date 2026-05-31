@@ -3,15 +3,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use mercurio_core::{
-    AuthoringProject, CommitMode, CommitResult, CommitStrategy, ContainerSelector, ElementView,
-    ForkElement, Graph, KirDocument, MetamodelAttributeRegistry, ModelFork, ModelSession,
-    ModelWorkspace, Mutation, QualifiedName, SessionError, WorkspaceSnapshot, WriteBackMode,
-    WriteBackResult, compile_sysml_text, create_empty_model, default_language_profile,
-    default_stdlib_path, generate_python_wrappers, load_authoring_project_from_sysml,
+    AttributeWritePolicy, AuthoringProject, CommitMode, CommitResult, CommitStrategy,
+    ContainerSelector, ElementView, ForkElement, Graph, KirDocument, MetamodelAttributeRegistry,
+    ModelFork, ModelSession, ModelWorkspace, Mutation, QualifiedName, SemanticEdit, SessionError,
+    WorkspaceSnapshot, WriteBackMode, WriteBackResult, compile_sysml_text, create_empty_model,
+    default_language_profile, default_stdlib_path, generate_python_wrappers,
+    load_authoring_project_from_sysml,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyType;
+use pyo3::types::{PyAny, PyType};
 
 static DEFAULT_STDLIB_DOCUMENT: OnceLock<Result<KirDocument, String>> = OnceLock::new();
 
@@ -501,6 +502,32 @@ impl PyModelBuilder {
         })
     }
 
+    fn set_attribute(
+        &mut self,
+        element: String,
+        attribute: String,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<PyWriteBackResult> {
+        self.apply_semantic_edit_and_write_back(SemanticEdit::SetAttribute {
+            element: qname(&element),
+            attribute,
+            value: py_value_to_json(value)?,
+            policy: AttributeWritePolicy::UpsertDirect,
+        })
+    }
+
+    fn clear_attribute(
+        &mut self,
+        element: String,
+        attribute: String,
+    ) -> PyResult<PyWriteBackResult> {
+        self.apply_semantic_edit_and_write_back(SemanticEdit::ClearAttribute {
+            element: qname(&element),
+            attribute,
+            policy: AttributeWritePolicy::UpsertDirect,
+        })
+    }
+
     fn move_declaration(
         &mut self,
         element: String,
@@ -643,6 +670,38 @@ impl PyModelBuilder {
         ))
     }
 
+    fn apply_semantic_edit_and_write_back(
+        &mut self,
+        edit: SemanticEdit,
+    ) -> PyResult<PyWriteBackResult> {
+        let result = self
+            .project
+            .apply_semantic_edit(edit)
+            .map_err(authoring_error)?;
+        let changed_files = result.changed_files.iter().cloned().collect::<Vec<_>>();
+        let changed_declarations = result
+            .changed_declarations
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        if !self.validate_each_mutation {
+            self.pending_changed_files
+                .extend(result.changed_files.iter().cloned());
+            self.pending_changed_declarations
+                .extend(result.changed_declarations.iter().cloned());
+            return self.deferred_write_back_result(changed_files, changed_declarations);
+        }
+        let write_back = self
+            .project
+            .write_back_mutation(&result)
+            .map_err(authoring_error)?;
+        Ok(py_write_back_result(
+            write_back,
+            changed_files,
+            changed_declarations,
+        ))
+    }
+
     fn compile_document(&self) -> PyResult<KirDocument> {
         let rendered = self.rendered_files()?;
         let stdlib = default_stdlib_document()?;
@@ -748,6 +807,30 @@ fn qnames(values: Option<Vec<String>>) -> Vec<QualifiedName> {
         .collect()
 }
 
+fn py_value_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    if value.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+    if let Ok(value) = value.extract::<bool>() {
+        return Ok(serde_json::Value::Bool(value));
+    }
+    if let Ok(value) = value.extract::<i64>() {
+        return Ok(serde_json::json!(value));
+    }
+    if let Ok(value) = value.extract::<f64>() {
+        return Ok(serde_json::json!(value));
+    }
+    if let Ok(value) = value.extract::<String>() {
+        return Ok(serde_json::Value::String(value));
+    }
+    if let Ok(values) = value.extract::<Vec<String>>() {
+        return Ok(serde_json::json!(values));
+    }
+    Err(PyValueError::new_err(
+        "attribute value must be None, bool, int, float, str, or list[str]",
+    ))
+}
+
 fn parse_commit_mode(value: &str) -> PyResult<CommitMode> {
     match value {
         "preserve_source" => Ok(CommitMode::PreserveSource),
@@ -828,6 +911,7 @@ fn write_atomic(path: &Path, content: &str) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{PyModelBuilder, PyModelWorkspace};
+    use pyo3::IntoPyObjectExt;
     use pyo3::Python;
     use pyo3::types::PyType;
 
@@ -899,6 +983,41 @@ mod tests {
         assert_eq!(validation.mode, "canonical_rewrite");
         assert!(validation.validation_ok);
         assert_eq!(validation.changed_files, vec!["model.sysml"]);
+    }
+
+    #[test]
+    fn builder_can_set_abstract_attribute_and_render_sysml() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let mut builder = PyModelBuilder::new(true);
+            builder
+                .add_package("model.sysml".to_string(), "Demo".to_string())
+                .unwrap();
+            builder
+                .add_definition(
+                    "Demo".to_string(),
+                    "part".to_string(),
+                    "Vehicle".to_string(),
+                    None,
+                )
+                .unwrap();
+
+            let value = true.into_bound_py_any(py).unwrap();
+            let result = builder
+                .set_attribute(
+                    "Demo.Vehicle".to_string(),
+                    "isAbstract".to_string(),
+                    &value,
+                )
+                .unwrap();
+            assert!(result.validation_ok);
+
+            let rendered = builder.render_file("model.sysml".to_string()).unwrap();
+            assert!(rendered.contains("abstract part def Vehicle;"));
+
+            let compiled = builder.compile_json().unwrap();
+            assert!(compiled.contains("\"is_abstract\": true"));
+        });
     }
 
     #[test]

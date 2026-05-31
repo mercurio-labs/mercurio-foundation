@@ -1,0 +1,60 @@
+{
+  "id": "org.mercurio.sysml-stdlib-support",
+  "version": "2.0.0",
+  "name": "SysML Standard Library Support",
+  "kind": "stdlib_support",
+  "description": "Mercurio support package for the OMG SysML standard library: KPAR content, language profile, rulepack, and generated Python typed wrappers.",
+  "requires": {
+    "mercurio": ">=0.1.0",
+    "kir": "0.2",
+    "plugin_abi": "mpack-0.1"
+  },
+  "libraries": [
+    {
+      "id": "org.omg/sysml-stdlib",
+      "path": "libraries/sysml-stdlib-2.0.0.kpar",
+      "locator": "kpar:org.omg/sysml-stdlib:2.0.0",
+      "sha256": null,
+      "role": "baseline"
+    }
+  ],
+  "language_profiles": [
+    {
+      "id": "sysml-2.0-pilot-0.57.0",
+      "path": "profiles/sysml-2.0-pilot-0.57.0/profile.json",
+      "stdlib": "libraries/sysml-stdlib-2.0.0.kpar",
+      "python_wrappers": {
+        "module": "mercurio_sysml_2_0",
+        "path": "python",
+        "entrypoint": "mercurio_sysml_2_0:register"
+      }
+    }
+  ],
+  "rulepacks": [
+    {
+      "path": "rules/stdlib.rulepack.json",
+      "id": "org.mercurio.sysml-stdlib-rules"
+    }
+  ],
+  "python_packages": [
+    {
+      "module": "mercurio_sysml_2_0",
+      "path": "python",
+      "profile": "sysml-2.0-pilot-0.57.0",
+      "entrypoint": "mercurio_sysml_2_0:register"
+    }
+  ],
+  "services": [],
+  "metadata": {
+    "release": {
+      "kir_digest": "fnv1a64:d2eaaba5049a612b",
+      "kpar_digest": "fnv1a64:f460a003725ad24e",
+      "profile_digest": "fnv1a64:2b646f06c567757a",
+      "profile_mappings_digest": "fnv1a64:743e7666f58903f9",
+      "python_wrappers_digest": "fnv1a64:84905f9246cd7bfc",
+      "raw_export_digest": "fnv1a64:67e3dc2e5e7b4ea1",
+      "rulepack_digest": "fnv1a64:fe275e340a408585",
+      "source_id": "sysml-2.0-pilot-0.57.0"
+    }
+  }
+}

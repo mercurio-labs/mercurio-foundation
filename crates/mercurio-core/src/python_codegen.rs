@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ir::KirDocument;
+use crate::ir::{KirDocument, KirElement};
 use crate::language::{LanguageProfile, SemanticConcept};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +23,10 @@ pub fn generate_python_wrappers(
         init_py(module_name, profile),
     );
     files.insert(format!("{module_name}/base.py"), base_py());
+    files.insert(
+        format!("{module_name}/metamodel.py"),
+        metamodel_py(document, profile),
+    );
     files.insert(format!("{module_name}/concepts.py"), concepts_py(profile));
     files.insert(
         format!("{module_name}/generation_info.py"),
@@ -56,6 +60,13 @@ fn init_py(module_name: &str, profile: &LanguageProfile) -> String {
         r#""""Generated Mercurio wrappers for {profile_id}."""
 
 from .base import ElementView, StdlibRef
+from .metamodel import (
+    METAMODEL_CLASSES,
+    METAMODEL_CLASS_BY_KIND,
+    METAMODEL_CLASS_BY_METATYPE,
+    class_for,
+    wrap,
+)
 from .concepts import (
     AttributeUsage,
     ConstraintUsage,
@@ -74,6 +85,9 @@ __all__ = [
     "ConstraintUsage",
     "ElementView",
     "KIR_SCHEMA_VERSION",
+    "METAMODEL_CLASSES",
+    "METAMODEL_CLASS_BY_KIND",
+    "METAMODEL_CLASS_BY_METATYPE",
     "MetadataUsage",
     "StdlibRef",
     "Package",
@@ -84,8 +98,16 @@ __all__ = [
     "STDLIB_VERSION",
     "SysML",
     "VerificationCaseUsage",
+    "class_for",
     "register",
+    "wrap",
 ]
+
+for _cls in METAMODEL_CLASSES:
+    globals().setdefault(_cls.__name__, _cls)
+    if _cls.__name__ not in __all__:
+        __all__.append(_cls.__name__)
+del _cls
 
 
 def register(registry):
@@ -98,6 +120,17 @@ def register(registry):
     registry.register("verification_case_usage", VerificationCaseUsage)
     registry.register("constraint_usage", ConstraintUsage)
     registry.register("metadata_usage", MetadataUsage)
+    register_metamodel = getattr(registry, "register_metamodel_classes", None)
+    if callable(register_metamodel):
+        register_metamodel(METAMODEL_CLASSES)
+    register_metatype = getattr(registry, "register_metatype", None)
+    if callable(register_metatype):
+        for metatype_id, cls in METAMODEL_CLASS_BY_METATYPE.items():
+            register_metatype(metatype_id, cls)
+    register_kind = getattr(registry, "register_kind", None)
+    if callable(register_kind):
+        for kind, cls in METAMODEL_CLASS_BY_KIND.items():
+            register_kind(kind, cls)
 "#,
         profile_id = profile.id,
         module_name = module_name,
@@ -125,6 +158,7 @@ METAMODEL_VERSION = {metamodel_version:?}
 fn base_py() -> String {
     r#"from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -132,6 +166,9 @@ from typing import Any, ClassVar
 class ElementView:
     concept: ClassVar[str | None] = None
     metatype_id: ClassVar[str | None] = None
+    metatype_ids: ClassVar[tuple[str, ...]] = ()
+    kind_name: ClassVar[str | None] = None
+    kind_names: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, element: Any):
         self._element = element
@@ -147,7 +184,16 @@ class ElementView:
         metatype_id = getattr(element, "metatype_id", None)
         if callable(metatype_id):
             metatype_id = metatype_id()
-        return cls.metatype_id is None or metatype_id == cls.metatype_id
+        kind = getattr(element, "kind", None)
+        if callable(kind):
+            kind = kind()
+        metatype_ids = cls.metatype_ids or ((cls.metatype_id,) if cls.metatype_id else ())
+        kind_names = cls.kind_names or ((cls.kind_name,) if cls.kind_name else ())
+        return (
+            bool(metatype_id and metatype_id in metatype_ids)
+            or bool(kind and kind in kind_names)
+            or (not metatype_ids and not kind_names and cls.metatype_id is None)
+        )
 
     @property
     def id(self) -> str:
@@ -158,10 +204,30 @@ class ElementView:
         return self._element.kind
 
     def get(self, name: str) -> Any:
-        return self._element.get(name)
+        get = getattr(self._element, "get", None)
+        if callable(get):
+            return get(name)
+        get_json = getattr(self._element, "get_json", None)
+        if callable(get_json):
+            value = get_json(name)
+            return json.loads(value) if value is not None else None
+        get_str = getattr(self._element, "get_str", None)
+        if callable(get_str):
+            return get_str(name)
+        return None
 
     def effective(self, name: str) -> Any:
-        return self._element.effective(name)
+        effective = getattr(self._element, "effective", None)
+        if callable(effective):
+            return effective(name)
+        effective_json = getattr(self._element, "effective_json", None)
+        if callable(effective_json):
+            value = effective_json(name)
+            return json.loads(value) if value is not None else None
+        effective_str = getattr(self._element, "effective_str", None)
+        if callable(effective_str):
+            return effective_str(name)
+        return self.get(name)
 
     def references(self, name: str) -> list[Any]:
         return self._element.references(name)
@@ -197,6 +263,331 @@ class StdlibRef:
     .to_string()
 }
 
+#[derive(Debug, Clone, Default)]
+struct PythonMetamodelClass {
+    class_name: String,
+    base_class_names: BTreeSet<String>,
+    metatype_ids: BTreeSet<String>,
+    kind_names: BTreeSet<String>,
+}
+
+fn metamodel_py(document: &KirDocument, profile: &LanguageProfile) -> String {
+    let classes = metamodel_classes(document, profile);
+    let mut output = String::from(
+        r#"from __future__ import annotations
+
+from typing import Any
+
+from .base import ElementView
+
+
+"#,
+    );
+
+    for class in ordered_metamodel_classes(&classes) {
+        let bases = if class.base_class_names.is_empty() {
+            "ElementView".to_string()
+        } else {
+            class
+                .base_class_names
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        output.push_str(&format!("class {}({bases}):\n", class.class_name));
+        output.push_str("    concept = None\n");
+        output.push_str(&format!(
+            "    metatype_id = {}\n",
+            python_string_literal(class.metatype_ids.first().map(String::as_str))
+        ));
+        output.push_str(&format!(
+            "    metatype_ids = {}\n",
+            python_tuple_literal(&class.metatype_ids)
+        ));
+        output.push_str(&format!(
+            "    kind_name = {}\n",
+            python_string_literal(class.kind_names.first().map(String::as_str))
+        ));
+        output.push_str(&format!(
+            "    kind_names = {}\n\n",
+            python_tuple_literal(&class.kind_names)
+        ));
+        output.push_str(
+            r#"    @property
+    def name(self) -> str | None:
+        return self.effective_str("name")
+
+    @property
+    def declared_name(self) -> str | None:
+        return self.effective_str("declared_name")
+
+    @property
+    def qualified_name(self) -> str | None:
+        return self.effective_str("qualified_name")
+
+    @property
+    def documentation(self) -> str | None:
+        return self.effective_str("documentation")
+
+    def members(self) -> list[ElementView]:
+        return self.references("members")
+
+    def features(self) -> list[ElementView]:
+        return self.references("features")
+
+    def owner(self) -> list[ElementView]:
+        return self.references("owner")
+
+    def specializes(self) -> list[ElementView]:
+        return self.references("specializes")
+
+
+"#,
+        );
+    }
+
+    output.push_str("METAMODEL_CLASSES = (\n");
+    for class in ordered_metamodel_classes(&classes) {
+        output.push_str(&format!("    {},\n", class.class_name));
+    }
+    output.push_str(")\n\n");
+
+    output.push_str("METAMODEL_CLASS_BY_METATYPE = {\n");
+    for class in ordered_metamodel_classes(&classes) {
+        for metatype_id in &class.metatype_ids {
+            output.push_str(&format!("    {metatype_id:?}: {},\n", class.class_name));
+        }
+    }
+    output.push_str("}\n\n");
+
+    output.push_str("METAMODEL_CLASS_BY_KIND = {\n");
+    for class in ordered_metamodel_classes(&classes) {
+        for kind_name in &class.kind_names {
+            output.push_str(&format!("    {kind_name:?}: {},\n", class.class_name));
+        }
+    }
+    output.push_str(
+        r#"}
+
+
+def _call_or_value(element: Any, name: str):
+    value = getattr(element, name, None)
+    return value() if callable(value) else value
+
+
+def class_for(element: Any) -> type[ElementView]:
+    metatype_id = _call_or_value(element, "metatype_id")
+    if metatype_id in METAMODEL_CLASS_BY_METATYPE:
+        return METAMODEL_CLASS_BY_METATYPE[metatype_id]
+    kind = _call_or_value(element, "kind")
+    if kind in METAMODEL_CLASS_BY_KIND:
+        return METAMODEL_CLASS_BY_KIND[kind]
+    return ElementView
+
+
+def wrap(element: Any) -> ElementView:
+    return class_for(element).wrap(element)
+"#,
+    );
+    output
+}
+
+fn metamodel_classes(
+    document: &KirDocument,
+    profile: &LanguageProfile,
+) -> BTreeMap<String, PythonMetamodelClass> {
+    let mut classes = BTreeMap::<String, PythonMetamodelClass>::new();
+
+    for element in &document.elements {
+        if matches!(element.kind.as_str(), "Metaclass" | "MetadataDefinition") {
+            let class_name = metamodel_class_name_for_element(element);
+            let class = classes
+                .entry(class_name.clone())
+                .or_insert_with(|| PythonMetamodelClass {
+                    class_name,
+                    ..Default::default()
+                });
+            class.metatype_ids.insert(element.id.clone());
+        }
+    }
+
+    let id_to_class_name = document
+        .elements
+        .iter()
+        .filter(|element| matches!(element.kind.as_str(), "Metaclass" | "MetadataDefinition"))
+        .map(|element| (element.id.as_str(), metamodel_class_name_for_element(element)))
+        .collect::<BTreeMap<_, _>>();
+
+    for element in &document.elements {
+        if !matches!(element.kind.as_str(), "Metaclass" | "MetadataDefinition") {
+            continue;
+        }
+        let class_name = metamodel_class_name_for_element(element);
+        let base_class_names = specialization_ids(element)
+            .into_iter()
+            .filter_map(|base_id| id_to_class_name.get(base_id).cloned())
+            .filter(|base_class_name| base_class_name != &class_name)
+            .collect::<BTreeSet<_>>();
+        if !base_class_names.is_empty() {
+            classes
+                .entry(class_name.clone())
+                .or_insert_with(|| PythonMetamodelClass {
+                    class_name,
+                    ..Default::default()
+                })
+                .base_class_names
+                .extend(base_class_names);
+        }
+    }
+
+    for kind in document
+        .elements
+        .iter()
+        .map(|element| element.kind.as_str())
+        .collect::<BTreeSet<_>>()
+    {
+        let class_name = python_class_identifier(kind);
+        let class = classes
+            .entry(class_name.clone())
+            .or_insert_with(|| PythonMetamodelClass {
+                class_name,
+                ..Default::default()
+            });
+        class.kind_names.insert(kind.to_string());
+    }
+
+    for target in profile
+        .canonical_kinds
+        .values()
+        .chain(profile.aliases.values())
+        .collect::<BTreeSet<_>>()
+    {
+        let class_name = python_class_identifier(target.rsplit("::").next().unwrap_or(target));
+        let class = classes
+            .entry(class_name.clone())
+            .or_insert_with(|| PythonMetamodelClass {
+                class_name,
+                ..Default::default()
+            });
+        class.metatype_ids.insert(target.clone());
+    }
+
+    remove_redundant_bases(&mut classes);
+    classes
+}
+
+fn ordered_metamodel_classes(
+    classes: &BTreeMap<String, PythonMetamodelClass>,
+) -> Vec<&PythonMetamodelClass> {
+    let mut ordered = Vec::new();
+    let mut temporary = BTreeSet::new();
+    let mut permanent = BTreeSet::new();
+    for class_name in classes.keys() {
+        visit_metamodel_class(
+            class_name,
+            classes,
+            &mut temporary,
+            &mut permanent,
+            &mut ordered,
+        );
+    }
+    ordered
+}
+
+fn visit_metamodel_class<'a>(
+    class_name: &str,
+    classes: &'a BTreeMap<String, PythonMetamodelClass>,
+    temporary: &mut BTreeSet<String>,
+    permanent: &mut BTreeSet<String>,
+    ordered: &mut Vec<&'a PythonMetamodelClass>,
+) {
+    if permanent.contains(class_name) {
+        return;
+    }
+    if !temporary.insert(class_name.to_string()) {
+        return;
+    }
+    let Some(class) = classes.get(class_name) else {
+        return;
+    };
+    for base_class_name in &class.base_class_names {
+        visit_metamodel_class(base_class_name, classes, temporary, permanent, ordered);
+    }
+    temporary.remove(class_name);
+    permanent.insert(class_name.to_string());
+    ordered.push(class);
+}
+
+fn remove_redundant_bases(classes: &mut BTreeMap<String, PythonMetamodelClass>) {
+    let base_map = classes
+        .iter()
+        .map(|(class_name, class)| (class_name.clone(), class.base_class_names.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for class in classes.values_mut() {
+        let bases = class.base_class_names.iter().cloned().collect::<Vec<_>>();
+        for base in &bases {
+            if bases.iter().any(|other| {
+                other != base && class_reaches_base(other, base, &base_map, &mut BTreeSet::new())
+            }) {
+                class.base_class_names.remove(base);
+            }
+        }
+    }
+}
+
+fn class_reaches_base(
+    class_name: &str,
+    target_base: &str,
+    base_map: &BTreeMap<String, BTreeSet<String>>,
+    seen: &mut BTreeSet<String>,
+) -> bool {
+    if !seen.insert(class_name.to_string()) {
+        return false;
+    }
+    let Some(bases) = base_map.get(class_name) else {
+        return false;
+    };
+    bases.contains(target_base)
+        || bases
+            .iter()
+            .any(|base| class_reaches_base(base, target_base, base_map, seen))
+}
+
+fn metamodel_class_name_for_element(element: &KirElement) -> String {
+    python_class_identifier(
+        metadata_name(element)
+            .or_else(|| element.id.rsplit("::").next())
+            .unwrap_or(&element.id),
+    )
+}
+
+fn specialization_ids(element: &KirElement) -> Vec<&str> {
+    element
+        .properties
+        .get("specializes")
+        .map(value_string_list)
+        .unwrap_or_default()
+}
+
+fn value_string_list(value: &serde_json::Value) -> Vec<&str> {
+    if let Some(value) = value.as_str() {
+        return vec![value];
+    }
+    value
+        .as_array()
+        .map(|items| items.iter().filter_map(serde_json::Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+fn metadata_name(element: &KirElement) -> Option<&str> {
+    element
+        .properties
+        .get("metadata")
+        .and_then(|value| value.get("name"))
+        .and_then(serde_json::Value::as_str)
+}
+
 fn concepts_py(profile: &LanguageProfile) -> String {
     let package = python_string_literal(concept_anchor(profile, SemanticConcept::Package));
     let part_definition =
@@ -213,14 +604,15 @@ fn concepts_py(profile: &LanguageProfile) -> String {
     let constraint_usage =
         python_string_literal(concept_anchor(profile, SemanticConcept::ConstraintUsage));
     format!(
-        r#"from __future__ import annotations
+r#"from __future__ import annotations
 
+from . import metamodel as _metamodel
 from .base import ElementView
 from .stdlib.si import SINamespace
 from .stdlib.isq import ISQNamespace
 
 
-class Package(ElementView):
+class Package(_metamodel.Package):
     concept = "package"
     metatype_id = {package}
 
@@ -232,7 +624,7 @@ class Package(ElementView):
         return self.references("members") or self.references("features")
 
 
-class PartDefinition(ElementView):
+class PartDefinition(_metamodel.PartDefinition):
     concept = "part_definition"
     metatype_id = {part_definition}
 
@@ -248,7 +640,7 @@ class PartDefinition(ElementView):
         return self.references("features")
 
 
-class PartUsage(ElementView):
+class PartUsage(_metamodel.PartUsage):
     concept = "part_usage"
     metatype_id = {part_usage}
 
@@ -261,7 +653,7 @@ class PartUsage(ElementView):
         return self.effective_str("qualified_name")
 
 
-class AttributeUsage(ElementView):
+class AttributeUsage(_metamodel.AttributeUsage):
     concept = "attribute_usage"
     metatype_id = {attribute_usage}
 
@@ -270,7 +662,7 @@ class AttributeUsage(ElementView):
         return self.effective_str("name")
 
 
-class RequirementUsage(ElementView):
+class RequirementUsage(_metamodel.RequirementUsage):
     concept = "requirement_usage"
     metatype_id = {requirement_usage}
 
@@ -279,7 +671,7 @@ class RequirementUsage(ElementView):
         return self.effective_str("text") or self.effective_str("documentation")
 
 
-class VerificationCaseUsage(ElementView):
+class VerificationCaseUsage(_metamodel.VerificationCaseUsage):
     concept = "verification_case_usage"
     metatype_id = {verification_case_usage}
 
@@ -288,7 +680,7 @@ class VerificationCaseUsage(ElementView):
         return self.effective_str("name")
 
 
-class ConstraintUsage(ElementView):
+class ConstraintUsage(_metamodel.ConstraintUsage):
     concept = "constraint_usage"
     metatype_id = {constraint_usage}
 
@@ -408,6 +800,35 @@ fn python_string_literal(value: Option<&str>) -> String {
         .unwrap_or_else(|| "None".to_string())
 }
 
+fn python_tuple_literal(values: &BTreeSet<String>) -> String {
+    match values.len() {
+        0 => "()".to_string(),
+        1 => format!("({:?},)", values.first().expect("one value")),
+        _ => format!(
+            "({})",
+            values
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn python_class_identifier(value: &str) -> String {
+    let identifier = python_identifier(value);
+    let mut chars = identifier.chars();
+    let Some(first) = chars.next() else {
+        return "Element".to_string();
+    };
+    let mut result = first.to_ascii_uppercase().to_string();
+    result.push_str(chars.as_str());
+    if result.starts_with('_') {
+        result.insert_str(0, "Element");
+    }
+    result
+}
+
 fn python_identifier(value: &str) -> String {
     let mut result = String::new();
     for (index, ch) in value.chars().enumerate() {
@@ -423,6 +844,13 @@ fn python_identifier(value: &str) -> String {
     result = result.trim_matches('_').to_string();
     if result.is_empty() {
         result = "element".to_string();
+    }
+    if result
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_digit())
+    {
+        result.insert(0, '_');
     }
     if python_keywords().contains(result.as_str()) {
         result.push('_');
@@ -492,5 +920,87 @@ mod tests {
         assert!(
             generated.files["mercurio_sysml_test/concepts.py"].contains("class PartDefinition")
         );
+        assert!(
+            generated
+                .files
+                .contains_key("mercurio_sysml_test/metamodel.py")
+        );
+    }
+
+    #[test]
+    fn generates_metamodel_classes_for_metaclasses_metadata_definitions_and_kinds() {
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "KerML::Kernel::Package".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "metadata".to_string(),
+                        serde_json::json!({"name": "Package"}),
+                    )]),
+                },
+                KirElement {
+                    id: "SysML::Systems::ItemDefinition".to_string(),
+                    kind: "MetadataDefinition".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "metadata".to_string(),
+                        serde_json::json!({"name": "ItemDefinition"}),
+                    )]),
+                },
+                KirElement {
+                    id: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "MetadataDefinition".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "metadata".to_string(),
+                            serde_json::json!({"name": "PartDefinition"}),
+                        ),
+                        (
+                            "specializes".to_string(),
+                            serde_json::json!(["SysML::Systems::ItemDefinition"]),
+                        ),
+                    ]),
+                },
+                KirElement {
+                    id: "type.Demo.Vehicle".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        };
+        let profile = LanguageProfile {
+            id: "sysml-test".to_string(),
+            language: SourceLanguage::Sysml,
+            language_version: "2.0".to_string(),
+            metamodel_version: "2.0".to_string(),
+            stdlib_version: "test".to_string(),
+            stdlib_path: "stdlib.kir.json".to_string(),
+            kir_schema_version: "0.2".to_string(),
+            canonical_kinds: BTreeMap::from([(
+                SemanticConcept::PartDefinition,
+                "SysML::Systems::PartDefinition".to_string(),
+            )]),
+            aliases: BTreeMap::from([(
+                "SysML::PartDefinition".to_string(),
+                "SysML::Systems::PartDefinition".to_string(),
+            )]),
+        };
+
+        let generated = generate_python_wrappers(&document, &profile, "mercurio_sysml_test");
+        let metamodel = &generated.files["mercurio_sysml_test/metamodel.py"];
+        let concepts = &generated.files["mercurio_sysml_test/concepts.py"];
+
+        assert!(metamodel.contains("class Package(ElementView):"));
+        assert!(metamodel.contains("class ItemDefinition(ElementView):"));
+        assert!(metamodel.contains("class PartDefinition(ItemDefinition):"));
+        assert!(metamodel.contains(r#""SysML::Systems::PartDefinition": PartDefinition"#));
+        assert!(metamodel.contains(r#""PartDefinition": PartDefinition"#));
+        assert!(metamodel.contains("def class_for(element: Any) -> type[ElementView]:"));
+        assert!(concepts.contains("class PartDefinition(_metamodel.PartDefinition):"));
     }
 }

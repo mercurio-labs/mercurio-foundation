@@ -296,11 +296,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &args,
             &release_root,
             &locked_export_path,
-            &kir_path,
-            &rulepack_path,
-            &kpar_path,
-            &release_lock_path,
-        )?;
+        &kir_path,
+        &rulepack_path,
+        &mpack_path,
+        &release_lock_path,
+    )?;
     }
 
     if args.check_reproducible {
@@ -465,25 +465,6 @@ struct ReleaseProfile {
     mappings: Artifact,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pilot_grammars: BTreeMap<String, Artifact>,
-}
-
-#[derive(Serialize)]
-struct PromotedPackageManifest<'a> {
-    schema: &'a str,
-    name: &'a str,
-    version: &'a str,
-    kind: &'a str,
-    file: String,
-    digest: String,
-    created_at: String,
-    source: PromotedPackageSource,
-}
-
-#[derive(Serialize)]
-struct PromotedPackageSource {
-    kind: String,
-    path: String,
-    digest: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -959,7 +940,7 @@ fn promote_release(
     raw_export_path: &Path,
     kir_path: &Path,
     rulepack_path: &Path,
-    kpar_path: &Path,
+    mpack_path: &Path,
     release_lock_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resource_root = repo_path(&format!("resources/stdlib-sources/{}", args.profile_id));
@@ -970,7 +951,7 @@ fn promote_release(
     copy_if_different(kir_path, &resource_root.join("stdlib.full.kir.json"))?;
     copy_if_different(rulepack_path, &resource_root.join("stdlib.rulepack.json"))?;
     copy_if_different(release_lock_path, &resource_root.join("release.lock.json"))?;
-    promote_bundled_kpar(args, release_root, kpar_path)?;
+    promote_bundled_mpack(args, mpack_path)?;
     println!(
         "promoted stdlib resources: {}",
         path_to_slash_path(
@@ -983,43 +964,18 @@ fn promote_release(
     Ok(())
 }
 
-fn promote_bundled_kpar(
-    args: &Args,
-    release_root: &Path,
-    kpar_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let package_dir = repo_path("packages")
-        .join(path_from_slashes(&args.stdlib_package))
-        .join(&args.spec_version);
-    let file_name = kpar_path
-        .file_name()
-        .ok_or("KPAR path has no file name")?
-        .to_string_lossy()
-        .to_string();
-    let package_path = package_dir.join(&file_name);
-    copy_if_different(kpar_path, &package_path)?;
-    let package_digest = digest_file(&package_path)?;
-    let release_relative = path_to_slash_path(kpar_path.strip_prefix(release_root)?);
-    let manifest = PromotedPackageManifest {
-        schema: "dev.mercurio.local-package.v1",
-        name: &args.stdlib_package,
-        version: &args.spec_version,
-        kind: "kpar",
-        file: file_name,
-        digest: package_digest,
-        created_at: format!(
-            "release:{}",
-            args.source_id.as_deref().unwrap_or(&args.profile_id)
-        ),
-        source: PromotedPackageSource {
-            kind: "stdlib-release".to_string(),
-            path: release_relative,
-            digest: digest_file(kpar_path)?,
-        },
-    };
-    write_json(&package_dir.join("manifest.json"), &manifest)?;
+fn promote_bundled_mpack(args: &Args, mpack_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let package_dir = repo_path("packages/extensions")
+        .join(path_from_slashes(&args.mpack_id))
+        .join(&args.mpack_version);
+    let package_path = package_dir.join("plugin.mpack");
+    copy_if_different(mpack_path, &package_path)?;
+    unpack_mpack_archive(mpack_path, &package_dir)?;
+
+    let manifest = read_mpack_manifest_from_archive(mpack_path)?;
+    write_json(&package_dir.join("extension.json"), &manifest)?;
     println!(
-        "promoted bundled KPAR: {}",
+        "promoted bundled MPack: {}",
         path_to_slash_path(
             package_path
                 .strip_prefix(repo_root())
@@ -1027,6 +983,52 @@ fn promote_bundled_kpar(
         )
     );
     Ok(())
+}
+
+fn unpack_mpack_archive(
+    path: &Path,
+    target_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let file = File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        if !entry.is_file() {
+            continue;
+        }
+        let entry_name = entry.name().replace('\\', "/");
+        let relative = safe_archive_entry_path(&entry_name)?;
+        let target_path = target_dir.join(relative);
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut output = File::create(&target_path)?;
+        std::io::copy(&mut entry, &mut output)?;
+    }
+    Ok(())
+}
+
+fn safe_archive_entry_path(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let path = PathBuf::from(name);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!("unsafe MPack archive entry path `{name}`").into());
+    }
+    Ok(path)
+}
+
+fn read_mpack_manifest_from_archive(
+    path: &Path,
+) -> Result<MpackManifest, Box<dyn std::error::Error>> {
+    let file = File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut entry = archive.by_name("extension.json")?;
+    let mut input = String::new();
+    entry.read_to_string(&mut input)?;
+    Ok(serde_json::from_str(&input)?)
 }
 
 fn digest_file(path: &Path) -> Result<String, Box<dyn std::error::Error>> {

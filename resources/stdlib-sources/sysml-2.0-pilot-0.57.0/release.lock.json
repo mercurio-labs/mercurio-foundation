@@ -37,7 +37,7 @@
     },
     "mpack": {
       "path": "mpack/org.mercurio.sysml-stdlib-support-2.0.0.mpack",
-      "digest": "fnv1a64:d0a7b574a4e10009"
+      "digest": "fnv1a64:99e5e316516ecdb4"
     },
     "profile": {
       "path": "profiles/sysml-2.0-pilot-0.57.0/profile.json",
@@ -49,7 +49,7 @@
     },
     "python_wrappers": {
       "path": "python",
-      "digest": "fnv1a64:f90616fc4861fd73"
+      "digest": "fnv1a64:84905f9246cd7bfc"
     },
     "raw_export": {
       "path": "raw/pilot-stdlib-export.json",

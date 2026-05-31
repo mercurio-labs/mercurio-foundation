@@ -212,13 +212,16 @@ pub fn publish_plugin_package(
 }
 
 pub fn installed_plugin_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, PluginRegistryError> {
-    let installed = root.join("installed");
-    if !installed.exists() {
-        return Ok(Vec::new());
-    }
     let mut paths = Vec::new();
-    collect_installed_plugin_manifest_paths(&installed, &mut paths)?;
+    let installed = root.join("installed");
+    if installed.exists() {
+        collect_installed_plugin_manifest_paths(&installed, &mut paths)?;
+    }
+    if root.exists() {
+        collect_installed_plugin_manifest_paths(root, &mut paths)?;
+    }
     paths.sort();
+    paths.dedup();
     Ok(paths)
 }
 
@@ -520,6 +523,59 @@ mod tests {
                 .join("profile.json")
         );
         assert_eq!(index.python_packages[0].entry.module, "mercurio_sysml");
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mpack_activation_index_resolves_extension_repository_layout() {
+        let root = temp_dir("mercurio-mpack-extension-repo-core");
+        let extension_dir = root
+            .join("org.mercurio.sysml-stdlib-support")
+            .join("2.0.0");
+        std::fs::create_dir_all(&extension_dir).unwrap();
+        std::fs::write(extension_dir.join("plugin.mpack"), b"package").unwrap();
+        std::fs::write(
+            extension_dir.join("extension.json"),
+            r#"{
+  "id": "org.mercurio.sysml-stdlib-support",
+  "version": "2.0.0",
+  "name": "SysML Stdlib Support",
+  "libraries": [
+    {"id": "org.omg/sysml-stdlib", "path": "libraries/sysml.kpar"}
+  ],
+  "languageProfiles": [
+    {
+      "id": "sysml-2.0",
+      "path": "profiles/sysml/profile.json",
+      "pythonWrappers": {
+        "module": "mercurio_sysml",
+        "path": "python"
+      }
+    }
+  ],
+  "pythonPackages": [
+    {"module": "mercurio_sysml", "path": "python", "profile": "sysml-2.0"}
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let index = mpack_activation_index(&root).unwrap();
+
+        assert_eq!(index.installed.len(), 1);
+        assert_eq!(
+            index.installed[0].package_path.as_ref().unwrap(),
+            &extension_dir.join("plugin.mpack")
+        );
+        assert_eq!(
+            index.python_packages[0].asset_path.as_ref().unwrap(),
+            &extension_dir.join("python")
+        );
+        assert_eq!(
+            index.libraries[0].asset_path.as_ref().unwrap(),
+            &extension_dir.join("libraries").join("sysml.kpar")
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }
