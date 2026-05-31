@@ -16,7 +16,7 @@ use crate::frontend::resolver::{
 use crate::ir::{KirDocument, KirElement};
 use crate::language::SourceLanguage;
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PilotConstructSeed {
     #[serde(default)]
     pub keyword_registry: KeywordRegistrySeed,
@@ -31,13 +31,13 @@ pub struct PilotConstructSeed {
     pub constructs: Vec<PilotConstructEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PilotConstructEntry {
     pub construct: String,
     pub metaclass: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct KeywordRegistrySeed {
     #[serde(default)]
     pub definitions: BTreeMap<String, String>,
@@ -45,7 +45,7 @@ pub struct KeywordRegistrySeed {
     pub usages: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct DefaultSpecializationAnchorsSeed {
     #[serde(default)]
     pub packages: BTreeMap<String, String>,
@@ -55,7 +55,7 @@ pub struct DefaultSpecializationAnchorsSeed {
     pub usages: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct SemanticSpecializationDefaultsSeed {
     #[serde(default)]
     pub definitions: BTreeMap<String, Vec<String>>,
@@ -63,31 +63,31 @@ pub struct SemanticSpecializationDefaultsSeed {
     pub usages: BTreeMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageSemanticSpecializationOverrideSeed {
     #[serde(default)]
     pub usages: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct StdlibAliasSeed {
     #[serde(default)]
     pub ids: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct KirEmissionSeed {
     pub metaclasses: BTreeMap<String, EmissionRule>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct EmissionRule {
     pub kir_kind: String,
     pub id_template: String,
     pub emit: EmissionSpec,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct EmissionSpec {
     pub properties: BTreeMap<String, String>,
 }
@@ -118,32 +118,63 @@ struct ReferenceUsageSemantics {
 
 impl MappingBundle {
     pub fn load() -> Result<&'static Self, Diagnostic> {
-        static MAPPINGS: OnceLock<Result<MappingBundle, String>> = OnceLock::new();
+        Self::load_for_language(SourceLanguage::Sysml)
+    }
 
-        match MAPPINGS.get_or_init(|| Self::load_uncached().map_err(|err| err.message.clone())) {
+    pub fn load_for_language(_language: SourceLanguage) -> Result<&'static Self, Diagnostic> {
+        static KERML_MAPPINGS: OnceLock<Result<MappingBundle, String>> = OnceLock::new();
+        static SYSML_MAPPINGS: OnceLock<Result<MappingBundle, String>> = OnceLock::new();
+
+        let mappings = match _language {
+            SourceLanguage::Kerml => KERML_MAPPINGS.get_or_init(|| {
+                Self::load_uncached_for_language(SourceLanguage::Kerml)
+                    .map_err(|err| err.message.clone())
+            }),
+            SourceLanguage::Sysml => SYSML_MAPPINGS.get_or_init(|| {
+                Self::load_uncached_for_language(SourceLanguage::Sysml)
+                    .map_err(|err| err.message.clone())
+            }),
+        };
+
+        match mappings {
             Ok(bundle) => Ok(bundle),
             Err(message) => Err(Diagnostic::new(message.clone(), None)),
         }
     }
 
-    pub fn load_for_language(_language: SourceLanguage) -> Result<&'static Self, Diagnostic> {
-        Self::load()
-    }
-
     pub fn load_for_profile(_profile_id: &str) -> Result<&'static Self, Diagnostic> {
-        Self::load()
+        Self::load_for_language(SourceLanguage::Sysml)
     }
 
-    fn load_uncached() -> Result<Self, Diagnostic> {
-        let construct_seed: PilotConstructSeed =
-            serde_json::from_str(&load_pilot_constructs_seed()?).map_err(|err| {
-                Diagnostic::new(format!("failed to parse mapping file: {err}"), None)
-            })?;
-        let kir_emission: KirEmissionSeed = serde_json::from_str(&load_kir_emission_seed()?)
-            .map_err(|err| {
-                Diagnostic::new(format!("failed to parse emission file: {err}"), None)
-            })?;
+    fn load_uncached_for_language(language: SourceLanguage) -> Result<Self, Diagnostic> {
+        let construct_seed = match language {
+            SourceLanguage::Kerml => kerml_construct_seed(),
+            SourceLanguage::Sysml => {
+                let sysml_seed: PilotConstructSeed =
+                    serde_json::from_str(&load_pilot_constructs_seed()?).map_err(|err| {
+                        Diagnostic::new(format!("failed to parse mapping file: {err}"), None)
+                    })?;
+                merge_construct_seeds(kerml_construct_seed(), sysml_seed)
+            }
+        };
+        let kir_emission = match language {
+            SourceLanguage::Kerml => kerml_emission_seed(),
+            SourceLanguage::Sysml => {
+                let sysml_emission: KirEmissionSeed =
+                    serde_json::from_str(&load_kir_emission_seed()?).map_err(|err| {
+                        Diagnostic::new(format!("failed to parse emission file: {err}"), None)
+                    })?;
+                merge_emission_seeds(kerml_emission_seed(), sysml_emission)
+            }
+        };
 
+        Self::from_seeds(construct_seed, kir_emission)
+    }
+
+    fn from_seeds(
+        construct_seed: PilotConstructSeed,
+        kir_emission: KirEmissionSeed,
+    ) -> Result<Self, Diagnostic> {
         Ok(Self {
             package_default_specializations: construct_seed
                 .default_specialization_anchors
@@ -306,6 +337,201 @@ impl MappingBundle {
             ("breadth", "ISQSpaceTime::width"),
         ]
     }
+}
+
+fn kerml_construct_seed() -> PilotConstructSeed {
+    let mut definitions = BTreeMap::new();
+    for keyword in [
+        "assoc",
+        "association",
+        "behavior",
+        "class",
+        "classifier",
+        "datatype",
+        "function",
+        "interaction",
+        "metaclass",
+        "predicate",
+        "struct",
+    ] {
+        definitions.insert(keyword.to_string(), "Classifier".to_string());
+    }
+    definitions.insert("feature".to_string(), "FeatureDefinition".to_string());
+
+    let mut usages = BTreeMap::new();
+    for keyword in ["comment", "doc", "feature", "locale"] {
+        usages.insert(keyword.to_string(), "FeatureUsage".to_string());
+    }
+
+    let mut packages = BTreeMap::new();
+    packages.insert("Package".to_string(), "KerML::Kernel::Package".to_string());
+
+    PilotConstructSeed {
+        keyword_registry: KeywordRegistrySeed {
+            definitions,
+            usages,
+        },
+        default_specialization_anchors: DefaultSpecializationAnchorsSeed {
+            packages,
+            ..Default::default()
+        },
+        semantic_specialization_defaults: SemanticSpecializationDefaultsSeed::default(),
+        usage_semantic_specialization_overrides: UsageSemanticSpecializationOverrideSeed::default(),
+        stdlib_aliases: StdlibAliasSeed::default(),
+        constructs: vec![
+            PilotConstructEntry {
+                construct: "Package".to_string(),
+                metaclass: "KerML::Package".to_string(),
+            },
+            PilotConstructEntry {
+                construct: "Import".to_string(),
+                metaclass: "KerML::Import".to_string(),
+            },
+            PilotConstructEntry {
+                construct: "Classifier".to_string(),
+                metaclass: "KerML::Classifier".to_string(),
+            },
+            PilotConstructEntry {
+                construct: "FeatureDefinition".to_string(),
+                metaclass: "KerML::Classifier".to_string(),
+            },
+            PilotConstructEntry {
+                construct: "FeatureUsage".to_string(),
+                metaclass: "KerML::Feature".to_string(),
+            },
+        ],
+    }
+}
+
+fn kerml_emission_seed() -> KirEmissionSeed {
+    KirEmissionSeed {
+        metaclasses: BTreeMap::from([
+            (
+                "KerML::Package".to_string(),
+                emission_rule(
+                    "KerML::Package",
+                    "pkg.{qualified_name}",
+                    &[
+                        ("declared_name", "{declared_name}"),
+                        ("name", "{name}"),
+                        ("owner", "{owner_id}"),
+                        ("members", "{member_ids}"),
+                        ("metatype", "{metatype_ref}"),
+                    ],
+                ),
+            ),
+            (
+                "KerML::Import".to_string(),
+                emission_rule(
+                    "KerML::Import",
+                    "import.{owner_id}.{ordinal}",
+                    &[
+                        ("owner", "{owner_id}"),
+                        ("imports", "{target_ref}"),
+                        ("metatype", "{metatype_ref}"),
+                    ],
+                ),
+            ),
+            (
+                "KerML::Classifier".to_string(),
+                emission_rule(
+                    "KerML::Core::Type",
+                    "type.{qualified_name}",
+                    &[
+                        ("declared_name", "{declared_name}"),
+                        ("name", "{name}"),
+                        ("owner", "{owner_id}"),
+                        ("is_abstract", "{is_abstract}"),
+                        ("specializes", "{specializes_refs}"),
+                        ("members", "{member_ids}"),
+                        ("features", "{owned_feature_ids}"),
+                        ("metatype", "{metatype_ref}"),
+                    ],
+                ),
+            ),
+            (
+                "KerML::Feature".to_string(),
+                emission_rule(
+                    "KerML::Core::Feature",
+                    "feature.{owner_path}.{declared_name}",
+                    &[
+                        ("owner", "{owner_id}"),
+                        ("type", "{type_ref}"),
+                        ("declared_name", "{declared_name}"),
+                        ("specialized_features", "{specialized_feature_refs}"),
+                        ("subsetted_features", "{subsetted_feature_refs}"),
+                        ("redefined_features", "{redefined_feature_refs}"),
+                        ("members", "{member_ids}"),
+                        ("features", "{owned_feature_ids}"),
+                        ("metatype", "{metatype_ref}"),
+                    ],
+                ),
+            ),
+        ]),
+    }
+}
+
+fn emission_rule(kir_kind: &str, id_template: &str, properties: &[(&str, &str)]) -> EmissionRule {
+    EmissionRule {
+        kir_kind: kir_kind.to_string(),
+        id_template: id_template.to_string(),
+        emit: EmissionSpec {
+            properties: properties
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect(),
+        },
+    }
+}
+
+fn merge_construct_seeds(
+    mut base: PilotConstructSeed,
+    overlay: PilotConstructSeed,
+) -> PilotConstructSeed {
+    base.keyword_registry
+        .definitions
+        .extend(overlay.keyword_registry.definitions);
+    base.keyword_registry
+        .usages
+        .extend(overlay.keyword_registry.usages);
+    base.default_specialization_anchors
+        .packages
+        .extend(overlay.default_specialization_anchors.packages);
+    base.default_specialization_anchors
+        .definitions
+        .extend(overlay.default_specialization_anchors.definitions);
+    base.default_specialization_anchors
+        .usages
+        .extend(overlay.default_specialization_anchors.usages);
+    base.semantic_specialization_defaults
+        .definitions
+        .extend(overlay.semantic_specialization_defaults.definitions);
+    base.semantic_specialization_defaults
+        .usages
+        .extend(overlay.semantic_specialization_defaults.usages);
+    base.usage_semantic_specialization_overrides
+        .usages
+        .extend(overlay.usage_semantic_specialization_overrides.usages);
+    base.stdlib_aliases.ids.extend(overlay.stdlib_aliases.ids);
+
+    let mut constructs = base
+        .constructs
+        .into_iter()
+        .map(|entry| (entry.construct.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+    constructs.extend(
+        overlay
+            .constructs
+            .into_iter()
+            .map(|entry| (entry.construct.clone(), entry)),
+    );
+    base.constructs = constructs.into_values().collect();
+    base
+}
+
+fn merge_emission_seeds(mut base: KirEmissionSeed, overlay: KirEmissionSeed) -> KirEmissionSeed {
+    base.metaclasses.extend(overlay.metaclasses);
+    base
 }
 
 fn load_pilot_constructs_seed() -> Result<String, Diagnostic> {
@@ -2249,5 +2475,41 @@ fn disambiguate_duplicate_source_position_usage_ids(elements: &mut [KirElement])
             ordinal += 1;
         }
         element.id = candidate;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kerml_mapping_uses_base_kerml_metaclasses() {
+        let mappings = MappingBundle::load_for_language(SourceLanguage::Kerml).unwrap();
+
+        assert_eq!(mappings.metaclass_for("Package").unwrap(), "KerML::Package");
+        assert_eq!(mappings.metaclass_for("Import").unwrap(), "KerML::Import");
+        assert_eq!(
+            mappings.emission_for("KerML::Package").unwrap().kir_kind,
+            "KerML::Package"
+        );
+        assert_eq!(
+            mappings.emission_for("KerML::Classifier").unwrap().kir_kind,
+            "KerML::Core::Type"
+        );
+    }
+
+    #[test]
+    fn sysml_mapping_overlays_kerml_base() {
+        let mappings = MappingBundle::load_for_language(SourceLanguage::Sysml).unwrap();
+
+        assert_eq!(mappings.metaclass_for("Package").unwrap(), "SysML::Package");
+        assert_eq!(
+            mappings.metaclass_for("Classifier").unwrap(),
+            "KerML::Classifier"
+        );
+        assert_eq!(
+            mappings.emission_for("KerML::Package").unwrap().kir_kind,
+            "KerML::Package"
+        );
     }
 }
