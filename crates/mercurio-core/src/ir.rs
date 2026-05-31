@@ -6,11 +6,15 @@ pub use mercurio_kir::{
 use std::path::Path;
 
 use crate::language::{SourceLanguage, language_module};
-use crate::paths::default_sysml_library_path;
+use crate::paths::{default_sysml_delta_library_path, default_sysml_library_path};
 
 pub fn load_model_stack(model_path: &Path) -> Result<KirDocument, KirError> {
     let sysml_library_path = default_sysml_library_path();
-    if paths_equivalent(model_path, &sysml_library_path) || is_kir_json(model_path) {
+    let sysml_delta_library_path = default_sysml_delta_library_path();
+    if paths_equivalent(model_path, &sysml_library_path)
+        || paths_equivalent(model_path, &sysml_delta_library_path)
+        || is_kir_json(model_path)
+    {
         return KirDocument::from_path(model_path);
     }
 

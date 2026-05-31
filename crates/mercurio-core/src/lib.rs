@@ -159,8 +159,9 @@ pub use outline::{
 pub use paths::{
     bundled_package_repo_path, bundled_stdlib_package_set_path, default_kernel_library_path,
     default_package_kir_cache_path, default_package_repo_path, default_stdlib_path,
-    default_stdlib_rulepack_path, default_sysml_library_path, default_sysml_rulepack_path,
-    default_user_config_path, default_workspace_root, repo_path, repo_root,
+    default_stdlib_rulepack_path, default_sysml_delta_library_path, default_sysml_library_path,
+    default_sysml_rulepack_path, default_user_config_path, default_workspace_root, repo_path,
+    repo_root,
 };
 pub use performance::{
     CoreScalabilityCreationStrategy, CoreScalabilityMetricConfig, CoreScalabilityReport,

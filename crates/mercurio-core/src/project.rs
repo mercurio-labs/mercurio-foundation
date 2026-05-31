@@ -247,7 +247,23 @@ fn resolve_library_context_document(
                 resolved_libraries.push(resolved_library);
                 Vec::new()
             }
-            _ => vec![BaselineLibraryConfig::sysml_library_locator()],
+            _ => {
+                let document = language_module(SourceLanguage::Sysml)
+                    .default_baseline()
+                    .load()?;
+                let resolved_library = ResolvedProjectLibrary {
+                    id: "stdlib".to_string(),
+                    role: ProjectLibraryRole::Baseline,
+                    source_kind: "language_default".to_string(),
+                    source_path: Some(crate::paths::default_sysml_delta_library_path()),
+                    cache_metadata: None,
+                    cache_path: None,
+                    cached_element_count: Some(document.elements.len()),
+                    document,
+                };
+                resolved_libraries.push(resolved_library);
+                Vec::new()
+            }
         }
     } else {
         baseline_configs
@@ -584,7 +600,7 @@ mod tests {
         assert!(resolved.descriptor_path.is_none());
         assert_eq!(resolved.resolved_libraries.len(), 1);
         assert_eq!(resolved.resolved_libraries[0].id, "kernel");
-        assert_eq!(resolved.library_context_document.elements.len(), 0);
+        assert!(resolved.library_context_document.elements.len() > 1000);
         assert_eq!(
             resolved
                 .library_context_document

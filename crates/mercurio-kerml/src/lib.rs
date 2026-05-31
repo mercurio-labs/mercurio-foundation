@@ -2,7 +2,7 @@
 //!
 //! This crate is the public KerML-facing boundary while the parser/compiler
 //! implementation is still hosted in `mercurio-core`. Keep this surface narrow:
-//! parsing KerML, compiling KerML to KIR, and loading the KerML Kernel baseline.
+//! parsing KerML, compiling KerML to KIR, and loading the KerML/Kernel baseline.
 
 pub use mercurio_core::frontend::ast::{ParsedModule, QualifiedName, SourceSpan};
 pub use mercurio_core::frontend::diagnostics::Diagnostic;

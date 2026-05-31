@@ -19,6 +19,14 @@ pub use mercurio_core::language::sysml::parser::{
 pub use mercurio_core::{BaselineLibrary, KirDocument};
 
 pub fn default_sysml_library_path() -> std::path::PathBuf {
+    default_sysml_delta_library_path()
+}
+
+pub fn default_sysml_delta_library_path() -> std::path::PathBuf {
+    mercurio_core::default_sysml_delta_library_path()
+}
+
+pub fn legacy_monolithic_sysml_library_path() -> std::path::PathBuf {
     mercurio_core::default_sysml_library_path()
 }
 

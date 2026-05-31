@@ -25,12 +25,13 @@ KerML is the semantic foundation. It can parse without any library context and c
 - `mercurio-kerml` exposes the KerML facade contract: KerML parse/compile entrypoints and Kernel baseline helpers.
 - `mercurio-sysml` exposes the SysML facade contract: SysML parse/recovery/compile entrypoints and SysML baseline helpers.
 - `language::BaselineLibrary` distinguishes empty, Kernel, SysML, and custom library contexts.
-- `default_sysml_library_path()` and `default_sysml_rulepack_path()` name the current SysML artifacts directly; `default_stdlib_path()` and `default_stdlib_rulepack_path()` remain compatibility wrappers.
+- `default_sysml_library_path()` names the legacy monolithic SysML stdlib artifact; `default_stdlib_path()` remains a compatibility wrapper for it.
+- `default_sysml_delta_library_path()` names the split SysML-only delta artifact, which intentionally excludes KerML/Kernel elements.
 - `default_sysml_library_path()` prefers `MERCURIO_SYSML_LIBRARY_PATH` and falls back to the legacy `MERCURIO_STDLIB_PATH`.
 - `default_sysml_rulepack_path()` prefers `MERCURIO_SYSML_RULEPACK_PATH` and falls back to the legacy `MERCURIO_STDLIB_RULEPACK_PATH`.
-- `default_kernel_library_path()` points to the committed bootstrap Kernel KIR artifact and can be overridden with `MERCURIO_KERNEL_LIBRARY_PATH`.
+- `default_kernel_library_path()` points to the committed KerML/Kernel KIR artifact and can be overridden with `MERCURIO_KERNEL_LIBRARY_PATH`.
 - `mercurio-kerml` and `mercurio-sysml` are facade crates over the in-tree language modules. They establish the crate boundary before the parser implementation is physically moved out of `mercurio-core`.
-- `cargo run -p mercurio-tools --bin generate_kernel_baseline` regenerates the committed bootstrap Kernel `.kir.json` artifact.
+- `cargo run -p mercurio-tools --bin generate_kernel_baseline` regenerates both committed split artifacts from the legacy monolithic stdlib: `resources/kernel/kerml-kernel.kir.json` and `resources/sysml/sysml-library.kir.json`.
 
 ## Migration Rules
 
@@ -44,10 +45,10 @@ KerML is the semantic foundation. It can parse without any library context and c
 
 When no project descriptor or explicit standard-library override is present, source-oriented commands should load the baseline selected by the requested language module:
 
-- KerML: committed bootstrap Kernel baseline, or the file pointed to by `MERCURIO_KERNEL_LIBRARY_PATH`.
-- SysML: bundled SysML library, through the compatibility `default_stdlib_path()` path.
+- KerML: committed KerML/Kernel baseline, or the file pointed to by `MERCURIO_KERNEL_LIBRARY_PATH`.
+- SysML: merged KerML/Kernel baseline plus the committed SysML delta artifact.
 
-Project descriptors and explicit `--stdlib` options take precedence over language defaults. Descriptor resolution also has a language-aware entrypoint, `resolve_project_context_for_language`, so descriptor-less KerML uses the Kernel baseline while the compatibility `resolve_project_context` keeps SysML as the default.
+Project descriptors and explicit `--stdlib` options take precedence over language defaults. Descriptor resolution also has a language-aware entrypoint, `resolve_project_context_for_language`, so descriptor-less KerML uses the Kernel baseline while the compatibility `resolve_project_context` keeps SysML as the default. The legacy monolithic `default_stdlib_path()` artifact is still loadable as raw KIR for compatibility and release-pipeline tooling.
 
 ## Extraction Sequence
 

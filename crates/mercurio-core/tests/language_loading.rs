@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mercurio_core::{
-    KirDocument, PROJECT_DESCRIPTOR_FILE_NAME, SourceLanguage, default_kernel_library_path,
-    default_sysml_library_path, load_model_stack, load_model_stack_with_language,
-    resolve_project_context_for_language,
+    BaselineLibrary, KirDocument, PROJECT_DESCRIPTOR_FILE_NAME, SourceLanguage,
+    default_kernel_library_path, default_sysml_delta_library_path, default_sysml_library_path,
+    load_model_stack, load_model_stack_with_language, resolve_project_context_for_language,
 };
 use serde_json::json;
 
@@ -25,6 +25,7 @@ fn descriptorless_kerml_project_uses_kernel_baseline() {
         context.resolved_libraries[0].source_path.as_deref(),
         Some(default_kernel_library_path().as_path())
     );
+    assert!(context.library_context_document.elements.len() > 1000);
     assert_eq!(
         merged_library_id(&context.library_context_document),
         Some("org.omg/kerml-kernel")
@@ -46,7 +47,25 @@ fn descriptorless_sysml_project_uses_sysml_baseline() {
     assert!(context.descriptor_path.is_none());
     assert_eq!(context.resolved_libraries.len(), 1);
     assert_eq!(context.resolved_libraries[0].id, "stdlib");
+    assert_eq!(
+        context.resolved_libraries[0].source_path.as_deref(),
+        Some(default_sysml_delta_library_path().as_path())
+    );
     assert!(context.library_context_document.elements.len() > 100);
+    assert!(
+        context
+            .library_context_document
+            .elements
+            .iter()
+            .any(|element| element.id == "KerML::Core::Type")
+    );
+    assert!(
+        context
+            .library_context_document
+            .elements
+            .iter()
+            .any(|element| element.id == "SysML::Systems::PartDefinition")
+    );
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -148,6 +167,71 @@ fn legacy_json_model_stack_still_merges_sysml_baseline() {
 }
 
 #[test]
+fn kernel_baseline_contains_kerml_core_content() {
+    let document = KirDocument::from_path(&default_kernel_library_path())
+        .expect("Kernel baseline should load");
+
+    assert!(document.elements.len() > 1000);
+    assert!(
+        document
+            .elements
+            .iter()
+            .any(|element| element.id == "KerML")
+    );
+    assert!(
+        document
+            .elements
+            .iter()
+            .any(|element| element.id == "KerML::Core::Type")
+    );
+    assert!(
+        !document.elements.iter().any(|element| element.id == "SysML"
+            || element.id.starts_with("SysML::")
+            || pilot_library_group(element) != Some("Kernel Libraries"))
+    );
+}
+
+#[test]
+fn sysml_delta_excludes_kerml_core_content() {
+    let document = KirDocument::from_path(&default_sysml_delta_library_path())
+        .expect("SysML delta should load");
+
+    assert!(document.elements.len() > 1000);
+    assert!(
+        document
+            .elements
+            .iter()
+            .any(|element| element.id == "SysML::Systems::PartDefinition")
+    );
+    assert!(
+        !document.elements.iter().any(|element| element.id == "KerML"
+            || element.id.starts_with("KerML::")
+            || pilot_library_group(element) == Some("Kernel Libraries"))
+    );
+}
+
+#[test]
+fn sysml_baseline_merges_kernel_and_sysml_delta() {
+    let document = BaselineLibrary::Sysml
+        .load()
+        .expect("SysML baseline should merge Kernel and SysML delta");
+
+    assert!(
+        document
+            .elements
+            .iter()
+            .any(|element| element.id == "KerML::Core::Type")
+    );
+    assert!(
+        document
+            .elements
+            .iter()
+            .any(|element| element.id == "SysML::Systems::PartDefinition")
+    );
+    assert_eq!(document.elements.len(), 10262);
+}
+
+#[test]
 fn bundled_sysml_library_loads_as_raw_kir() {
     let document = load_model_stack(&default_sysml_library_path()).expect("SysML library loads");
 
@@ -159,6 +243,15 @@ fn bundled_sysml_library_loads_as_raw_kir() {
             .and_then(|value| value.as_array()),
         None
     );
+}
+
+fn pilot_library_group(element: &mercurio_core::KirElement) -> Option<&str> {
+    element
+        .properties
+        .get("metadata")
+        .and_then(|value| value.as_object())
+        .and_then(|metadata| metadata.get("pilot_library_group"))
+        .and_then(|value| value.as_str())
 }
 
 fn write_kir(path: &Path, library_id: &str, elements: Vec<serde_json::Value>) {
