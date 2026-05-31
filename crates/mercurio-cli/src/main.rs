@@ -13,8 +13,8 @@ use mercurio_core::{
     KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
     LintSeverity, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet, Runtime,
-    SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
-    resolve_project_context, write_kpar_package,
+    SemanticCompileStatus, SourceLanguage, default_stdlib_path, discover_project_descriptor_path,
+    language_module, lint_text, parse_query, resolve_project_context, write_kpar_package,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -545,17 +545,33 @@ fn run_compile(command: CompileCommand) -> Result<RunResult, CliError> {
         ));
     }
 
-    let library_context =
-        load_library_context(command.stdlib.as_deref(), compile_context_path(&command)?)?;
-    let mut response = if let Some(path) = &command.kpar {
-        compile_kpar_model_input(path, &library_context.document)?
+    let (mut response, library_context) = if let Some(path) = &command.kpar {
+        let library_context = load_library_context(
+            command.stdlib.as_deref(),
+            compile_context_path(&command)?,
+            None,
+        )?;
+        let response = compile_kpar_model_input(path, &library_context.document)?;
+        (response, library_context)
     } else if let Some(url) = &command.input.url
         && is_kpar_url(url)
     {
-        compile_kpar_url_model_input(url, &library_context.document)?
+        let library_context = load_library_context(
+            command.stdlib.as_deref(),
+            compile_context_path(&command)?,
+            None,
+        )?;
+        let response = compile_kpar_url_model_input(url, &library_context.document)?;
+        (response, library_context)
     } else {
         let source = read_single_input(&command.input, command.language)?;
-        compile_source(&source, &library_context.document)
+        let library_context = load_library_context(
+            command.stdlib.as_deref(),
+            compile_context_path(&command)?,
+            Some(source.language),
+        )?;
+        let response = compile_source(&source, &library_context.document);
+        (response, library_context)
     };
     response.project_descriptor = library_context.project_descriptor_output();
     let failed = response.status == "failed" || !response.diagnostics.is_empty();
@@ -688,8 +704,11 @@ fn run_query(command: QueryCommand) -> Result<RunResult, CliError> {
 
 fn run_lint(command: LintCommand) -> Result<RunResult, CliError> {
     let sources = read_lint_inputs(&command)?;
-    let library_context =
-        load_library_context(command.stdlib.as_deref(), lint_context_path(&command)?)?;
+    let library_context = load_library_context(
+        command.stdlib.as_deref(),
+        lint_context_path(&command)?,
+        default_source_language_for_sources(&sources),
+    )?;
     let context_modules = sources
         .iter()
         .filter_map(|source| parse_source(source).ok())
@@ -889,8 +908,11 @@ fn run_package_build(command: PackageBuildCommand) -> Result<RunResult, CliError
         sources,
         precompiled_kir,
     };
-    let library_context =
-        load_library_context(command.stdlib.as_deref(), package_context_path(&command)?)?;
+    let library_context = load_library_context(
+        command.stdlib.as_deref(),
+        package_context_path(&command)?,
+        None,
+    )?;
     let output_path = command.out.clone().unwrap_or_else(|| {
         std::env::temp_dir().join(LocalPackageRepository::package_file_name(
             &package.name,
@@ -1423,7 +1445,7 @@ fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliEr
     }
 
     if let Some(path) = &command.kpar {
-        let library_context = load_library_context(command.stdlib.as_deref(), path.clone())?;
+        let library_context = load_library_context(command.stdlib.as_deref(), path.clone(), None)?;
         let model = read_kpar_model_input(path, &library_context.document)?;
         return Ok(EvaluateInput {
             source: model.source,
@@ -1438,8 +1460,11 @@ fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliEr
     if let Some(url) = &command.input.url
         && is_kpar_url(url)
     {
-        let library_context =
-            load_library_context(command.stdlib.as_deref(), current_directory_context_path()?)?;
+        let library_context = load_library_context(
+            command.stdlib.as_deref(),
+            current_directory_context_path()?,
+            None,
+        )?;
         let model = read_kpar_url_model_input(url, &library_context.document)?;
         return Ok(EvaluateInput {
             source: model.source,
@@ -1455,6 +1480,7 @@ fn read_evaluate_input(command: &EvaluateCommand) -> Result<EvaluateInput, CliEr
     let library_context = load_library_context(
         command.stdlib.as_deref(),
         single_input_context_path(&command.input)?,
+        Some(source.language),
     )?;
     let response = compile_source(&source, &library_context.document);
     Ok(EvaluateInput {
@@ -1499,7 +1525,7 @@ fn read_query_model_input(command: &QueryCommand) -> Result<QueryModelInput, Cli
     }
 
     if let Some(path) = &command.kpar {
-        let library_context = load_library_context(command.stdlib.as_deref(), path.clone())?;
+        let library_context = load_library_context(command.stdlib.as_deref(), path.clone(), None)?;
         let model = read_kpar_model_input(path, &library_context.document)?;
         return Ok(QueryModelInput {
             source: model.source,
@@ -1511,8 +1537,11 @@ fn read_query_model_input(command: &QueryCommand) -> Result<QueryModelInput, Cli
     if let Some(url) = &command.input.url
         && is_kpar_url(url)
     {
-        let library_context =
-            load_library_context(command.stdlib.as_deref(), current_directory_context_path()?)?;
+        let library_context = load_library_context(
+            command.stdlib.as_deref(),
+            current_directory_context_path()?,
+            None,
+        )?;
         let model = read_kpar_url_model_input(url, &library_context.document)?;
         return Ok(QueryModelInput {
             source: model.source,
@@ -1525,6 +1554,7 @@ fn read_query_model_input(command: &QueryCommand) -> Result<QueryModelInput, Cli
     let library_context = load_library_context(
         command.stdlib.as_deref(),
         single_input_context_path(&command.input)?,
+        Some(source.language),
     )?;
     let response = compile_source(&source, &library_context.document);
     if response.status == "failed" || !response.diagnostics.is_empty() {
@@ -2122,12 +2152,31 @@ fn load_stdlib(path: Option<&Path>) -> Result<KirDocument, CliError> {
 fn load_library_context(
     stdlib: Option<&Path>,
     open_path: PathBuf,
+    default_language: Option<SourceLanguage>,
 ) -> Result<LibraryContext, CliError> {
     if let Some(stdlib) = stdlib {
         return load_stdlib(Some(stdlib)).map(|document| LibraryContext {
             document,
             project_descriptor: ProjectDescriptorUsage::OverriddenByStdlib,
         });
+    }
+
+    if discover_project_descriptor_path(&open_path).is_none()
+        && let Some(language) = default_language
+    {
+        let baseline = language_module(language).default_baseline();
+        return baseline
+            .load()
+            .map(|document| LibraryContext {
+                document,
+                project_descriptor: ProjectDescriptorUsage::NotFound,
+            })
+            .map_err(|err| {
+                CliError::execution(format!(
+                    "failed to load default {} library context: {err}",
+                    language.as_str()
+                ))
+            });
     }
 
     resolve_project_context(&open_path)
@@ -2144,6 +2193,15 @@ fn load_library_context(
                 open_path.display()
             ))
         })
+}
+
+fn default_source_language_for_sources(sources: &[SourceInput]) -> Option<SourceLanguage> {
+    let first = sources.first()?.language;
+    if sources.iter().all(|source| source.language == first) {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -3210,6 +3268,26 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert!(json["document"]["elements"].as_array().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn compile_kerml_text_uses_language_default_context() {
+        let result = run_args(&[
+            "compile",
+            "--text",
+            "package Demo { classifier Vehicle; }",
+            "--language",
+            "kerml",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(json["language"], "kerml");
         assert_eq!(json["status"], "ok");
         assert!(json["document"]["elements"].as_array().unwrap().len() > 0);
     }

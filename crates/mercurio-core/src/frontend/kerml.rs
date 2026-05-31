@@ -117,7 +117,7 @@ pub fn compile_kerml_module(
     library_context: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
     let mapping_start = compile_timer_start();
-    let mappings = MappingBundle::load()?;
+    let mappings = MappingBundle::load_for_language(crate::language::SourceLanguage::Kerml)?;
     log_compile_timed_event(
         "kerml.compile.mapping_load",
         mapping_start,
@@ -161,7 +161,7 @@ pub fn compile_kerml_module_with_context(
     library_context: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
     let mapping_start = compile_timer_start();
-    let mappings = MappingBundle::load()?;
+    let mappings = MappingBundle::load_for_language(crate::language::SourceLanguage::Kerml)?;
     log_compile_timed_event(
         "kerml.compile.mapping_load",
         mapping_start,

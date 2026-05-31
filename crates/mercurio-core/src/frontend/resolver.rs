@@ -5116,23 +5116,9 @@ fn build_stdlib_alias_map(
         aliases.entry(short_name).or_insert(target);
     }
 
-    add_compat_stdlib_alias(&mut aliases, stdlib, "Items::Item", "sysml.Item");
-    add_compat_stdlib_alias(&mut aliases, stdlib, "Base::DataValue", "sysml.DataValue");
-    add_compat_stdlib_alias(&mut aliases, stdlib, "Parts::Part", "sysml.Part");
-    add_compat_stdlib_alias(&mut aliases, stdlib, "Ports::Port", "sysml.Port");
-    add_compat_stdlib_alias(
-        &mut aliases,
-        stdlib,
-        "Interfaces::Interface",
-        "sysml.Interface",
-    );
-    add_compat_stdlib_alias(
-        &mut aliases,
-        stdlib,
-        "ISQSpaceTime::breadth",
-        "ISQSpaceTime::width",
-    );
-    add_compat_stdlib_alias(&mut aliases, stdlib, "breadth", "ISQSpaceTime::width");
+    for (alias, target) in mappings.compatibility_library_aliases() {
+        add_compat_stdlib_alias(&mut aliases, stdlib, alias, target);
+    }
 
     aliases
 }

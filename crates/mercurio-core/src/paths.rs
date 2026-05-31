@@ -16,6 +16,10 @@ const REPO_SENTINELS: [&str; 3] = [
 ];
 
 pub fn default_stdlib_path() -> PathBuf {
+    default_sysml_library_path()
+}
+
+pub fn default_sysml_library_path() -> PathBuf {
     if let Ok(path) = std::env::var("MERCURIO_STDLIB_PATH") {
         return PathBuf::from(path);
     }
@@ -24,11 +28,21 @@ pub fn default_stdlib_path() -> PathBuf {
 }
 
 pub fn default_stdlib_rulepack_path() -> PathBuf {
+    default_sysml_rulepack_path()
+}
+
+pub fn default_sysml_rulepack_path() -> PathBuf {
     if let Ok(path) = std::env::var("MERCURIO_STDLIB_RULEPACK_PATH") {
         return PathBuf::from(path);
     }
 
     repo_path(DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH)
+}
+
+pub fn default_kernel_library_path() -> Option<PathBuf> {
+    std::env::var("MERCURIO_KERNEL_LIBRARY_PATH")
+        .ok()
+        .map(PathBuf::from)
 }
 
 pub fn default_language_profile_path(profile_id: &str) -> PathBuf {

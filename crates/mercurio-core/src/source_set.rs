@@ -30,7 +30,7 @@ impl SourceCompileContext {
         library_context: &KirDocument,
     ) -> Result<Self, Diagnostic> {
         let context_modules = collect_context_modules(source_documents);
-        let mappings = MappingBundle::load()?;
+        let mappings = default_mappings_for_source_documents(source_documents)?;
         let resolver_context =
             ResolverContext::from_modules(&context_modules, library_context, mappings)?;
 
@@ -67,6 +67,23 @@ impl SourceDocument {
 pub fn parse_source_module(path: &str, content: &str) -> Result<ParsedModule, Diagnostic> {
     let language = SourceLanguage::from_path(Path::new(path)).unwrap_or(SourceLanguage::Sysml);
     parse_source_text(language, content)
+}
+
+fn default_mappings_for_source_documents(
+    source_documents: &[SourceDocument],
+) -> Result<&'static MappingBundle, Diagnostic> {
+    let first_language = source_documents
+        .first()
+        .and_then(|document| SourceLanguage::from_path(Path::new(&document.path)));
+    if let Some(language) = first_language
+        && source_documents
+            .iter()
+            .all(|document| SourceLanguage::from_path(Path::new(&document.path)) == Some(language))
+    {
+        return MappingBundle::load_for_language(language);
+    }
+
+    MappingBundle::load_for_language(SourceLanguage::Sysml)
 }
 
 pub fn parse_source_text(

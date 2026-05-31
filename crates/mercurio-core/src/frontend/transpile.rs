@@ -294,6 +294,18 @@ impl MappingBundle {
     pub fn stdlib_aliases(&self) -> &HashMap<String, String> {
         &self.stdlib_aliases
     }
+
+    pub fn compatibility_library_aliases(&self) -> &'static [(&'static str, &'static str)] {
+        &[
+            ("Items::Item", "sysml.Item"),
+            ("Base::DataValue", "sysml.DataValue"),
+            ("Parts::Part", "sysml.Part"),
+            ("Ports::Port", "sysml.Port"),
+            ("Interfaces::Interface", "sysml.Interface"),
+            ("ISQSpaceTime::breadth", "ISQSpaceTime::width"),
+            ("breadth", "ISQSpaceTime::width"),
+        ]
+    }
 }
 
 fn load_pilot_constructs_seed() -> Result<String, Diagnostic> {

@@ -1,5 +1,5 @@
 use crate::ir::KirDocument;
-use crate::paths::default_stdlib_path;
+use crate::paths::{default_kernel_library_path, default_sysml_library_path};
 
 #[derive(Debug, Clone)]
 pub enum BaselineLibrary {
@@ -12,11 +12,18 @@ pub enum BaselineLibrary {
 impl BaselineLibrary {
     pub fn load(&self) -> Result<KirDocument, crate::ir::KirError> {
         match self {
-            Self::Empty | Self::Kernel => Ok(KirDocument {
+            Self::Empty => Ok(KirDocument {
                 metadata: Default::default(),
                 elements: Vec::new(),
             }),
-            Self::Sysml => KirDocument::from_path(&default_stdlib_path()),
+            Self::Kernel => match default_kernel_library_path() {
+                Some(path) => KirDocument::from_path(&path),
+                None => Ok(KirDocument {
+                    metadata: Default::default(),
+                    elements: Vec::new(),
+                }),
+            },
+            Self::Sysml => KirDocument::from_path(&default_sysml_library_path()),
             Self::Custom(document) => Ok(document.clone()),
         }
     }

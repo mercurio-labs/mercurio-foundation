@@ -109,7 +109,7 @@ pub fn compile_sysml_module(
     stdlib: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
     let mapping_start = compile_timer_start();
-    let mappings = MappingBundle::load()?;
+    let mappings = MappingBundle::load_for_language(crate::language::SourceLanguage::Sysml)?;
     log_compile_timed_event(
         "sysml.compile.mapping_load",
         mapping_start,
@@ -236,7 +236,7 @@ pub(crate) fn compile_sysml_module_with_context_report_with_limit(
     stdlib: &KirDocument,
     max_attempts: usize,
 ) -> SemanticCompileReport {
-    let mappings = match MappingBundle::load() {
+    let mappings = match MappingBundle::load_for_language(crate::language::SourceLanguage::Sysml) {
         Ok(mappings) => mappings,
         Err(diagnostic) => {
             return SemanticCompileReport {
@@ -386,7 +386,7 @@ pub fn compile_sysml_module_with_context(
     stdlib: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
     let mapping_start = compile_timer_start();
-    let mappings = MappingBundle::load()?;
+    let mappings = MappingBundle::load_for_language(crate::language::SourceLanguage::Sysml)?;
     log_compile_timed_event(
         "sysml.compile.mapping_load",
         mapping_start,
