@@ -1004,11 +1004,7 @@ mod tests {
 
             let value = true.into_bound_py_any(py).unwrap();
             let result = builder
-                .set_attribute(
-                    "Demo.Vehicle".to_string(),
-                    "isAbstract".to_string(),
-                    &value,
-                )
+                .set_attribute("Demo.Vehicle".to_string(), "isAbstract".to_string(), &value)
                 .unwrap();
             assert!(result.validation_ok);
 

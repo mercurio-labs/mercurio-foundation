@@ -823,10 +823,24 @@ dependencies = [
 name = "mercurio-core"
 version = "0.1.0"
 dependencies = [
+ "mercurio-kerml",
  "mercurio-kir",
+ "mercurio-language-contracts",
+ "mercurio-language-frontend",
+ "mercurio-sysml",
  "serde",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "mercurio-kerml"
+version = "0.1.0"
+dependencies = [
+ "mercurio-kir",
+ "mercurio-language-contracts",
+ "mercurio-language-frontend",
+ "serde_json",
 ]
 
 [[package]]
@@ -838,11 +852,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "mercurio-language-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mercurio-language-frontend"
+version = "0.1.0"
+dependencies = [
+ "mercurio-kir",
+ "mercurio-language-contracts",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mercurio-python"
 version = "0.1.0"
 dependencies = [
  "mercurio-core",
  "pyo3",
+ "serde_json",
+]
+
+[[package]]
+name = "mercurio-sysml"
+version = "0.1.0"
+dependencies = [
+ "mercurio-kerml",
+ "mercurio-kir",
+ "mercurio-language-contracts",
+ "mercurio-language-frontend",
  "serde_json",
 ]
 

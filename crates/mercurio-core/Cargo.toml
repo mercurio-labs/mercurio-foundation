@@ -7,6 +7,10 @@ license.workspace = true
 
 [dependencies]
 mercurio-kir = { path = "../mercurio-kir" }
+mercurio-kerml = { path = "../mercurio-kerml" }
+mercurio-language-frontend = { path = "../mercurio-language-frontend" }
+mercurio-language-contracts = { path = "../mercurio-language-contracts" }
+mercurio-sysml = { path = "../mercurio-sysml" }
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true

@@ -416,7 +416,12 @@ fn metamodel_classes(
         .elements
         .iter()
         .filter(|element| matches!(element.kind.as_str(), "Metaclass" | "MetadataDefinition"))
-        .map(|element| (element.id.as_str(), metamodel_class_name_for_element(element)))
+        .map(|element| {
+            (
+                element.id.as_str(),
+                metamodel_class_name_for_element(element),
+            )
+        })
         .collect::<BTreeMap<_, _>>();
 
     for element in &document.elements {
@@ -604,7 +609,7 @@ fn concepts_py(profile: &LanguageProfile) -> String {
     let constraint_usage =
         python_string_literal(concept_anchor(profile, SemanticConcept::ConstraintUsage));
     format!(
-r#"from __future__ import annotations
+        r#"from __future__ import annotations
 
 from . import metamodel as _metamodel
 from .base import ElementView

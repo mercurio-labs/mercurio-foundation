@@ -83,10 +83,12 @@ pub use feasibility::{
     SemanticCapabilityOracle, workspace_revision_for_project,
 };
 pub use frontend::format::{FormatError, format_path_text, format_sysml_text, format_text};
-pub use frontend::kerml::{KermlError, compile_kerml_text, load_kerml_document, parse_kerml};
+pub use frontend::kerml::{
+    KermlError, compile_kerml_text, compile_kerml_text_with_empty_context, load_kerml_document,
+    parse_kerml,
+};
 pub use frontend::lint::{
-    LintDiagnostic, LintReport, LintSeverity, SourceLanguage, lint_kerml_text, lint_sysml_text,
-    lint_text,
+    LintDiagnostic, LintReport, LintSeverity, lint_kerml_text, lint_sysml_text, lint_text,
 };
 pub use frontend::pilot::{
     PilotDocumentationBlock, PilotExportDocument, PilotExportElement, PilotExportRelationship,
@@ -109,12 +111,14 @@ pub use identity::{
 };
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, load_model_stack,
+    KirFieldSpec, load_model_stack, load_model_stack_with_language,
 };
 pub use language::{
-    CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError, MetamodelConceptRegistry,
-    SemanticConcept, SourceLanguage as ProfileSourceLanguage, default_language_profile,
-    default_metamodel_registry, load_language_profile,
+    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, KermlLanguageModule, LanguageModule,
+    LanguageProfile, LanguageProfileError, LibraryContext, MetamodelConceptRegistry,
+    SemanticConcept, SourceLanguage, SysmlLanguageModule, default_language_profile,
+    default_metamodel_registry, language_module, language_module_for_path, language_modules,
+    load_language_profile,
 };
 pub use library::{
     BaselineLibraryConfig, KparLocator, KparPackageBuild, KparPackageSource, LibraryCacheMetadata,
@@ -154,9 +158,10 @@ pub use outline::{
 };
 pub use paths::{
     bundled_extension_repo_path, bundled_package_repo_path, bundled_stdlib_package_set_path,
-    default_package_kir_cache_path, default_package_repo_path, default_stdlib_path,
-    default_stdlib_rulepack_path, default_user_config_path, default_workspace_root, repo_path,
-    repo_root,
+    default_kernel_library_path, default_package_kir_cache_path, default_package_repo_path,
+    default_stdlib_path, default_stdlib_rulepack_path, default_sysml_delta_library_path,
+    default_sysml_library_path, default_sysml_rulepack_path, default_user_config_path,
+    default_workspace_root, repo_path, repo_root,
 };
 pub use performance::{
     CoreScalabilityCreationStrategy, CoreScalabilityMetricConfig, CoreScalabilityReport,
@@ -175,6 +180,7 @@ pub use project::{
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectDescriptorError, ProjectLibraryConfig,
     ProjectLibraryRole, ProjectPluginConfig, ResolvedProjectContext, ResolvedProjectLibrary,
     discover_project_descriptor_path, resolve_project_context,
+    resolve_project_context_for_language,
 };
 pub use project_cache::{
     PersistentCacheStatus, PersistentCompileResult, PersistentProjectCache,
@@ -205,6 +211,11 @@ pub use semantic_target::{
 pub use session::{
     CommitMode, CommitResult, CommitStrategy, ForkElement, KirOverlay, ModelFork, ModelSession,
     ModelWorkspace, SessionError, WorkspaceSnapshot,
+};
+pub use source_set::{
+    SourceCompileContext, SourceDocument, collect_context_modules,
+    compile_source_document_with_context, compile_source_documents, compile_source_text,
+    compile_source_text_with_context, parse_source_module, parse_source_text,
 };
 pub use syntax_compare::{
     SyntaxComparisonReport, SyntaxNodeMismatch, SyntaxSnapshot, SyntaxSnapshotNode,

@@ -530,9 +530,7 @@ mod tests {
     #[test]
     fn mpack_activation_index_resolves_extension_repository_layout() {
         let root = temp_dir("mercurio-mpack-extension-repo-core");
-        let extension_dir = root
-            .join("org.mercurio.sysml-stdlib-support")
-            .join("2.0.0");
+        let extension_dir = root.join("org.mercurio.sysml-stdlib-support").join("2.0.0");
         std::fs::create_dir_all(&extension_dir).unwrap();
         std::fs::write(extension_dir.join("plugin.mpack"), b"package").unwrap();
         std::fs::write(

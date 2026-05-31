@@ -1,5 +1,9 @@
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+
+use mercurio_core::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+use serde_json::{Value, json};
 
 pub const MERCURIO_WORKSPACE_ROOT_ENV: &str = "MERCURIO_WORKSPACE_ROOT";
 pub const MERCURIO_PILOT_ROOT_ENV: &str = "MERCURIO_PILOT_ROOT";
@@ -76,6 +80,81 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+pub struct LanguageBaselineSplit {
+    pub kernel: KirDocument,
+    pub sysml_delta: KirDocument,
+}
+
+pub fn split_language_baselines(
+    source: KirDocument,
+    source_path: impl Into<String>,
+) -> LanguageBaselineSplit {
+    let source_path = source_path.into();
+    let (kernel_elements, sysml_elements) = split_library_elements(source.elements);
+
+    LanguageBaselineSplit {
+        kernel: split_document(
+            "org.omg/kerml-kernel",
+            "KerML/Kernel baseline extracted from the bundled SysML pilot stdlib.",
+            &source_path,
+            kernel_elements,
+        ),
+        sysml_delta: split_document(
+            "org.omg/sysml-library",
+            "SysML library delta extracted from the bundled SysML pilot stdlib. KerML/Kernel elements are intentionally excluded.",
+            &source_path,
+            sysml_elements,
+        ),
+    }
+}
+
+fn split_library_elements(elements: Vec<KirElement>) -> (Vec<KirElement>, Vec<KirElement>) {
+    let mut kernel_elements = Vec::new();
+    let mut sysml_elements = Vec::new();
+
+    for element in elements {
+        if is_kernel_element(&element) {
+            kernel_elements.push(element);
+        } else {
+            sysml_elements.push(element);
+        }
+    }
+
+    (kernel_elements, sysml_elements)
+}
+
+fn is_kernel_element(element: &KirElement) -> bool {
+    element
+        .properties
+        .get("metadata")
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("pilot_library_group"))
+        .and_then(Value::as_str)
+        == Some("Kernel Libraries")
+}
+
+fn split_document(
+    library_id: &str,
+    note: &str,
+    source_path: &str,
+    elements: Vec<KirElement>,
+) -> KirDocument {
+    let metadata = BTreeMap::from([
+        ("element_count".to_string(), json!(elements.len())),
+        (
+            "generator".to_string(),
+            json!("cargo run -p mercurio-tools --bin generate_language_baselines"),
+        ),
+        ("kir_schema_version".to_string(), json!(KIR_SCHEMA_VERSION)),
+        ("library_id".to_string(), json!(library_id)),
+        ("library_version".to_string(), json!("0.0.0-bootstrap")),
+        ("note".to_string(), json!(note)),
+        ("source_path".to_string(), json!(source_path)),
+    ]);
+
+    KirDocument { metadata, elements }
 }
 
 struct Sha256 {

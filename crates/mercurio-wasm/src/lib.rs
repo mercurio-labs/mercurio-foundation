@@ -5,8 +5,8 @@ use mercurio_core::frontend::sysml::parse_sysml_recovering;
 use mercurio_core::{
     AssessmentSpec, AssessmentStatus, ExecutionContext, Fact, Graph, KirDocument,
     MetamodelAttributeRegistry, RulePack, Runtime, RuntimeAssessmentRequest, SourceLanguage,
-    compile_kerml_text, compile_sysml_text_with_context_report, format_text, lint_text,
-    load_default_rulepacks, parse_kerml, requirements_table_view, run_graph_assessment,
+    compile_kerml_text, compile_sysml_text_with_context_report, format_text, language_module,
+    lint_text, load_default_rulepacks, parse_kerml, requirements_table_view, run_graph_assessment,
     run_runtime_assessment, sysml_module_assessment_facts,
 };
 use mercurio_views::{DiagramError, DiagramRenderRequestDto, list_diagram_kinds, render_diagram};
@@ -31,7 +31,7 @@ pub fn version() -> String {
 pub fn compile_sysml(input: &str, options: JsValue) -> JsValue {
     json_response(|| {
         let options = CompileOptions::from_js(options)?;
-        let stdlib = load_stdlib(options.stdlib)?;
+        let stdlib = load_library_context(SourceLanguage::Sysml, options.stdlib)?;
         let report =
             compile_sysml_text_with_context_report(input, &options.source_name, &[], &stdlib);
         let value = json!({
@@ -55,7 +55,7 @@ pub fn compile_sysml(input: &str, options: JsValue) -> JsValue {
 pub fn compile_kerml(input: &str, options: JsValue) -> JsValue {
     json_response(|| {
         let options = CompileOptions::from_js(options)?;
-        let stdlib = load_stdlib(options.stdlib)?;
+        let stdlib = load_library_context(SourceLanguage::Kerml, options.stdlib)?;
         match compile_kerml_text(input, &options.source_name, &stdlib) {
             Ok(document) => Ok(success(
                 json!({ "status": "ok", "document": document }),
@@ -78,7 +78,7 @@ pub fn lint(input: &str, language: &str, options: JsValue) -> JsValue {
     json_response(|| {
         let options = CompileOptions::from_js(options)?;
         let language = parse_language(language)?;
-        let stdlib = load_stdlib(options.stdlib)?;
+        let stdlib = load_library_context(language, options.stdlib)?;
         let report = lint_text(input, &options.source_name, language, &[], &stdlib);
         Ok(Response {
             ok: !report.has_errors(),
@@ -794,6 +794,23 @@ fn load_stdlib(stdlib: Option<KirDocument>) -> Result<KirDocument, WasmError> {
             Ok(document)
         }
         None => KirDocument::from_str(DEFAULT_STDLIB).map_err(Into::into),
+    }
+}
+
+fn load_library_context(
+    language: SourceLanguage,
+    library_context: Option<KirDocument>,
+) -> Result<KirDocument, WasmError> {
+    match library_context {
+        Some(document) => {
+            document.validate()?;
+            Ok(document)
+        }
+        None if language == SourceLanguage::Sysml => load_stdlib(None),
+        None => language_module(language)
+            .default_baseline()
+            .load()
+            .map_err(Into::into),
     }
 }
 

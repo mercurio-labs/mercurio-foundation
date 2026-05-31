@@ -6,12 +6,12 @@ use std::process::Command;
 
 use mercurio_core::frontend::transpile::{KirEmissionSeed, PilotConstructSeed};
 use mercurio_core::{
-    Graph, KparPackageBuild, MpackLanguageProfile, MpackLibrary, MpackManifest, MpackPythonPackage,
-    MpackPythonWrapperBinding, MpackRequirements, MpackRulepack, RulePack,
+    Graph, KirDocument, KparPackageBuild, MpackLanguageProfile, MpackLibrary, MpackManifest,
+    MpackPythonPackage, MpackPythonWrapperBinding, MpackRequirements, MpackRulepack, RulePack,
     generate_python_wrappers, load_language_profile, load_pilot_export, normalize_pilot_export,
     repo_path, repo_root, validate_mpack_manifest, write_kpar_package,
 };
-use mercurio_tools::sha256_file;
+use mercurio_tools::{sha256_file, split_language_baselines};
 use serde::Serialize;
 use serde_json::{Value, json};
 use zip::write::FileOptions;
@@ -55,6 +55,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kir_path = release_root.join("kir/stdlib.full.kir.json");
     kir.write_pretty_to_path(&kir_path)?;
     let kir_digest = digest_file(&kir_path)?;
+    let split = split_language_baselines(kir.clone(), path_to_slash("kir/stdlib.full.kir.json"));
+    let kernel_kir_path = release_root.join("kir/kerml-kernel.kir.json");
+    split.kernel.write_pretty_to_path(&kernel_kir_path)?;
+    let kernel_kir_digest = digest_file(&kernel_kir_path)?;
+    let sysml_delta_kir_path = release_root.join("kir/sysml-library.kir.json");
+    split
+        .sysml_delta
+        .write_pretty_to_path(&sysml_delta_kir_path)?;
+    let sysml_delta_kir_digest = digest_file(&sysml_delta_kir_path)?;
 
     let rulepack = RulePack::metamodel_adapter_from_graph(&Graph::from_document(kir.clone())?);
     let rulepack_path = release_root.join("rules/stdlib.rulepack.json");
@@ -72,6 +81,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
     let kpar_digest = digest_file(&kpar_path)?;
+    let kernel_kpar_path =
+        release_root.join(format!("kpar/kerml-kernel-{}.kpar", args.spec_version));
+    write_kpar_package(
+        &kernel_kpar_path,
+        &KparPackageBuild {
+            name: "org.omg/kerml-kernel".to_string(),
+            version: Some(args.spec_version.clone()),
+            sources: Vec::new(),
+            precompiled_kir: Some(KirDocument::from_path(&kernel_kir_path)?),
+        },
+    )?;
+    let kernel_kpar_digest = digest_file(&kernel_kpar_path)?;
+    let sysml_delta_kpar_path =
+        release_root.join(format!("kpar/sysml-library-{}.kpar", args.spec_version));
+    write_kpar_package(
+        &sysml_delta_kpar_path,
+        &KparPackageBuild {
+            name: "org.omg/sysml-library".to_string(),
+            version: Some(args.spec_version.clone()),
+            sources: Vec::new(),
+            precompiled_kir: Some(KirDocument::from_path(&sysml_delta_kir_path)?),
+        },
+    )?;
+    let sysml_delta_kpar_digest = digest_file(&sysml_delta_kpar_path)?;
 
     let profile_source = repo_path(&format!(
         "resources/language-profiles/{}/profile.json",
@@ -124,6 +157,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &export_digest,
         &kir_digest,
         &kpar_digest,
+        &kernel_kpar_digest,
+        &sysml_delta_kpar_digest,
         &profile_digest,
         &profile_mappings_digest,
         &rulepack_digest,
@@ -147,6 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &release_root,
         &mpack_manifest,
         &kpar_path,
+        &[kernel_kpar_path.clone(), sysml_delta_kpar_path.clone()],
         &profile_target,
         &profile_mapping_targets,
         &rulepack_path,
@@ -190,6 +226,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         ),
         (
+            "kernel_kir".to_string(),
+            Artifact {
+                path: path_to_slash_path(kernel_kir_path.strip_prefix(&release_root)?),
+                digest: kernel_kir_digest.clone(),
+            },
+        ),
+        (
+            "sysml_delta_kir".to_string(),
+            Artifact {
+                path: path_to_slash_path(sysml_delta_kir_path.strip_prefix(&release_root)?),
+                digest: sysml_delta_kir_digest.clone(),
+            },
+        ),
+        (
             "rulepack".to_string(),
             Artifact {
                 path: path_to_slash("rules/stdlib.rulepack.json"),
@@ -201,6 +251,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Artifact {
                 path: path_to_slash_path(kpar_path.strip_prefix(&release_root)?),
                 digest: kpar_digest.clone(),
+            },
+        ),
+        (
+            "kernel_kpar".to_string(),
+            Artifact {
+                path: path_to_slash_path(kernel_kpar_path.strip_prefix(&release_root)?),
+                digest: kernel_kpar_digest.clone(),
+            },
+        ),
+        (
+            "sysml_delta_kpar".to_string(),
+            Artifact {
+                path: path_to_slash_path(sysml_delta_kpar_path.strip_prefix(&release_root)?),
+                digest: sysml_delta_kpar_digest.clone(),
             },
         ),
         (
@@ -296,11 +360,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &args,
             &release_root,
             &locked_export_path,
-        &kir_path,
-        &rulepack_path,
-        &mpack_path,
-        &release_lock_path,
-    )?;
+            &kir_path,
+            &kernel_kir_path,
+            &sysml_delta_kir_path,
+            &rulepack_path,
+            &mpack_path,
+            &release_lock_path,
+        )?;
     }
 
     if args.check_reproducible {
@@ -311,7 +377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: args.stdlib_package.clone(),
                 version: Some(args.spec_version.clone()),
                 sources: Vec::new(),
-                precompiled_kir: Some(kir),
+                precompiled_kir: Some(kir.clone()),
             },
         )?;
         let second_digest = digest_file(&second_kpar)?;
@@ -319,6 +385,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!(
                 "KPAR is not reproducible: first {}, second {}",
                 provenance.artifacts["kpar"].digest, second_digest
+            )
+            .into());
+        }
+        let second_kernel_kpar = release_root.join("target/repro/kerml-kernel.kpar");
+        write_kpar_package(
+            &second_kernel_kpar,
+            &KparPackageBuild {
+                name: "org.omg/kerml-kernel".to_string(),
+                version: Some(args.spec_version.clone()),
+                sources: Vec::new(),
+                precompiled_kir: Some(KirDocument::from_path(&kernel_kir_path)?),
+            },
+        )?;
+        let second_kernel_digest = digest_file(&second_kernel_kpar)?;
+        if second_kernel_digest != provenance.artifacts["kernel_kpar"].digest {
+            return Err(format!(
+                "Kernel KPAR is not reproducible: first {}, second {}",
+                provenance.artifacts["kernel_kpar"].digest, second_kernel_digest
+            )
+            .into());
+        }
+        let second_sysml_delta_kpar = release_root.join("target/repro/sysml-library.kpar");
+        write_kpar_package(
+            &second_sysml_delta_kpar,
+            &KparPackageBuild {
+                name: "org.omg/sysml-library".to_string(),
+                version: Some(args.spec_version.clone()),
+                sources: Vec::new(),
+                precompiled_kir: Some(KirDocument::from_path(&sysml_delta_kir_path)?),
+            },
+        )?;
+        let second_sysml_delta_digest = digest_file(&second_sysml_delta_kpar)?;
+        if second_sysml_delta_digest != provenance.artifacts["sysml_delta_kpar"].digest {
+            return Err(format!(
+                "SysML delta KPAR is not reproducible: first {}, second {}",
+                provenance.artifacts["sysml_delta_kpar"].digest, second_sysml_delta_digest
             )
             .into());
         }
@@ -740,6 +842,8 @@ fn build_mpack_manifest(
     export_digest: &str,
     kir_digest: &str,
     kpar_digest: &str,
+    kernel_kpar_digest: &str,
+    sysml_delta_kpar_digest: &str,
     profile_digest: &str,
     profile_mappings_digest: &str,
     rulepack_digest: &str,
@@ -758,13 +862,29 @@ fn build_mpack_manifest(
             kir: Some("0.2".to_string()),
             plugin_abi: Some("mpack-0.1".to_string()),
         }),
-        libraries: vec![MpackLibrary {
-            id: Some(args.stdlib_package.clone()),
-            path: Some(format!("libraries/sysml-stdlib-{}.kpar", args.spec_version)),
-            locator: Some(format!("kpar:{}:{}", args.stdlib_package, args.spec_version)),
-            sha256: None,
-            role: Some("baseline".to_string()),
-        }],
+        libraries: vec![
+            MpackLibrary {
+                id: Some(args.stdlib_package.clone()),
+                path: Some(format!("libraries/sysml-stdlib-{}.kpar", args.spec_version)),
+                locator: Some(format!("kpar:{}:{}", args.stdlib_package, args.spec_version)),
+                sha256: None,
+                role: Some("baseline".to_string()),
+            },
+            MpackLibrary {
+                id: Some("org.omg/kerml-kernel".to_string()),
+                path: Some(format!("libraries/kerml-kernel-{}.kpar", args.spec_version)),
+                locator: Some(format!("kpar:org.omg/kerml-kernel:{}", args.spec_version)),
+                sha256: None,
+                role: Some("baseline".to_string()),
+            },
+            MpackLibrary {
+                id: Some("org.omg/sysml-library".to_string()),
+                path: Some(format!("libraries/sysml-library-{}.kpar", args.spec_version)),
+                locator: Some(format!("kpar:org.omg/sysml-library:{}", args.spec_version)),
+                sha256: None,
+                role: Some("baseline".to_string()),
+            },
+        ],
         language_profiles: vec![MpackLanguageProfile {
             id: args.profile_id.clone(),
             path: format!("profiles/{}/profile.json", args.profile_id),
@@ -793,6 +913,8 @@ fn build_mpack_manifest(
                 "raw_export_digest": export_digest,
                 "kir_digest": kir_digest,
                 "kpar_digest": kpar_digest,
+                "kernel_kpar_digest": kernel_kpar_digest,
+                "sysml_delta_kpar_digest": sysml_delta_kpar_digest,
                 "profile_digest": profile_digest,
                 "profile_mappings_digest": profile_mappings_digest,
                 "rulepack_digest": rulepack_digest,
@@ -807,6 +929,7 @@ fn write_mpack(
     release_root: &Path,
     manifest: &MpackManifest,
     kpar_path: &Path,
+    split_kpar_paths: &[PathBuf],
     profile_path: &Path,
     profile_mapping_paths: &[PathBuf],
     rulepack_path: &Path,
@@ -828,6 +951,17 @@ fn write_mpack(
         kpar_path,
         options,
     )?;
+    for split_kpar_path in split_kpar_paths {
+        write_zip_file(
+            &mut archive,
+            &format!(
+                "libraries/{}",
+                split_kpar_path.file_name().unwrap().to_string_lossy()
+            ),
+            split_kpar_path,
+            options,
+        )?;
+    }
     write_zip_file(
         &mut archive,
         &path_to_slash_path(profile_path.strip_prefix(release_root)?),
@@ -939,6 +1073,8 @@ fn promote_release(
     release_root: &Path,
     raw_export_path: &Path,
     kir_path: &Path,
+    kernel_kir_path: &Path,
+    sysml_delta_kir_path: &Path,
     rulepack_path: &Path,
     mpack_path: &Path,
     release_lock_path: &Path,
@@ -949,6 +1085,14 @@ fn promote_release(
         &resource_root.join("pilot-stdlib-export.json"),
     )?;
     copy_if_different(kir_path, &resource_root.join("stdlib.full.kir.json"))?;
+    copy_if_different(
+        kernel_kir_path,
+        &repo_path("resources/kernel/kerml-kernel.kir.json"),
+    )?;
+    copy_if_different(
+        sysml_delta_kir_path,
+        &repo_path("resources/sysml/sysml-library.kir.json"),
+    )?;
     copy_if_different(rulepack_path, &resource_root.join("stdlib.rulepack.json"))?;
     copy_if_different(release_lock_path, &resource_root.join("release.lock.json"))?;
     promote_bundled_mpack(args, mpack_path)?;
@@ -985,10 +1129,7 @@ fn promote_bundled_mpack(args: &Args, mpack_path: &Path) -> Result<(), Box<dyn s
     Ok(())
 }
 
-fn unpack_mpack_archive(
-    path: &Path,
-    target_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn unpack_mpack_archive(path: &Path, target_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let file = File::open(path)?;
     let mut archive = zip::ZipArchive::new(file)?;
     for index in 0..archive.len() {
@@ -1030,7 +1171,6 @@ fn read_mpack_manifest_from_archive(
     entry.read_to_string(&mut input)?;
     Ok(serde_json::from_str(&input)?)
 }
-
 fn digest_file(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let mut file = File::open(path)?;
     let mut bytes = Vec::new();

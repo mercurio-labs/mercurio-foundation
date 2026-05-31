@@ -8,3 +8,5 @@ pub mod pilot;
 pub mod resolver;
 pub mod sysml;
 pub mod transpile;
+
+pub use mercurio_language_contracts::reports::{ParseReport, SemanticCompileStatus};
