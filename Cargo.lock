@@ -824,6 +824,7 @@ name = "mercurio-core"
 version = "0.1.0"
 dependencies = [
  "mercurio-kir",
+ "mercurio-language-contracts",
  "serde",
  "serde_json",
  "zip",
@@ -834,6 +835,7 @@ name = "mercurio-kerml"
 version = "0.1.0"
 dependencies = [
  "mercurio-core",
+ "mercurio-language-contracts",
 ]
 
 [[package]]
@@ -842,6 +844,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "mercurio-language-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -858,6 +867,7 @@ name = "mercurio-sysml"
 version = "0.1.0"
 dependencies = [
  "mercurio-core",
+ "mercurio-language-contracts",
 ]
 
 [[package]]

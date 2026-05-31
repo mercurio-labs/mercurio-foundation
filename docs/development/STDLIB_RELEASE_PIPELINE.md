@@ -56,6 +56,8 @@ The output directory contains:
 - `source.lock.json`
 - `raw/pilot-stdlib-export.json`
 - `kir/stdlib.full.kir.json`
+- `kir/kerml-kernel.kir.json`
+- `kir/sysml-library.kir.json`
 - `rules/stdlib.rulepack.json`
 - `kpar/sysml-stdlib-<version>.kpar`
 - `profiles/<profile-id>/profile.json`

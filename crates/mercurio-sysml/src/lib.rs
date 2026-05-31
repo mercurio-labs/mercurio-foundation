@@ -17,6 +17,7 @@ pub use mercurio_core::language::sysml::parser::{
     parse, parse_sysml, parse_sysml_recovering,
 };
 pub use mercurio_core::{BaselineLibrary, KirDocument};
+pub use mercurio_language_contracts::{SemanticConcept, SourceLanguage};
 
 pub fn default_sysml_library_path() -> std::path::PathBuf {
     default_sysml_delta_library_path()

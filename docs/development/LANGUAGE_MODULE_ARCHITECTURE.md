@@ -19,6 +19,7 @@ KerML is the semantic foundation. It can parse without any library context and c
 - `frontend::ast::ParsedModule` is the shared parsed module type.
 - `frontend::ast::SysmlModule` remains as a compatibility alias.
 - `language::SourceLanguage` is the single source language enum for linting, formatting, profiles, and registry dispatch.
+- `mercurio-language-contracts` owns the first extracted language-neutral contracts: `SourceLanguage` and `SemanticConcept`.
 - `language::LanguageModule` defines parse, compile, mappings, extensions, and default baseline behavior.
 - `language::kerml::parser` and `language::sysml::parser` are the language-facing parser/compiler entrypoint modules inside `mercurio-core`.
 - `language::KermlLanguageModule` and `language::SysmlLanguageModule` are in-tree module implementations that delegate through those parser modules.
@@ -31,7 +32,8 @@ KerML is the semantic foundation. It can parse without any library context and c
 - `default_sysml_rulepack_path()` prefers `MERCURIO_SYSML_RULEPACK_PATH` and falls back to the legacy `MERCURIO_STDLIB_RULEPACK_PATH`.
 - `default_kernel_library_path()` points to the committed KerML/Kernel KIR artifact and can be overridden with `MERCURIO_KERNEL_LIBRARY_PATH`.
 - `mercurio-kerml` and `mercurio-sysml` are facade crates over the in-tree language modules. They establish the crate boundary before the parser implementation is physically moved out of `mercurio-core`.
-- `cargo run -p mercurio-tools --bin generate_kernel_baseline` regenerates both committed split artifacts from the legacy monolithic stdlib: `resources/kernel/kerml-kernel.kir.json` and `resources/sysml/sysml-library.kir.json`.
+- `cargo run -p mercurio-tools --bin generate_language_baselines` regenerates both committed split artifacts from the legacy monolithic stdlib: `resources/kernel/kerml-kernel.kir.json` and `resources/sysml/sysml-library.kir.json`.
+- `build_stdlib_release` emits all three KPAR shapes during migration: the legacy monolithic stdlib KPAR, the KerML/Kernel KPAR, and the SysML delta KPAR.
 
 ## Migration Rules
 
@@ -57,7 +59,7 @@ The facade crates intentionally do not own parser implementation yet. A direct m
 Move implementation ownership in this order:
 
 1. Keep `mercurio-kerml` and `mercurio-sysml` as narrow facade crates and migrate external callers to those crates.
-2. Extract shared frontend contracts, such as AST, diagnostics, lexer, resolver context, and KIR-facing compile traits, into a lower-level crate with no language dependencies.
-3. Move KerML parser/compiler implementation into `mercurio-kerml`.
+2. Continue expanding `mercurio-language-contracts` from language concepts into AST, diagnostics, lexer contracts, resolver context, and KIR-facing compile traits.
+3. Move KerML parser/compiler implementation into `mercurio-kerml` once the shared AST/diagnostic/resolver contracts are independent of `mercurio-core`.
 4. Move SysML parser/compiler implementation into `mercurio-sysml`, depending on `mercurio-kerml` only for KerML foundation behavior where needed.
 5. Leave `mercurio-core` as the orchestration crate for project/library resolution, model stack loading, runtime, authoring, and compatibility re-exports.

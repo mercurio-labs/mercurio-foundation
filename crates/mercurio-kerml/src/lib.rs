@@ -15,6 +15,7 @@ pub use mercurio_core::language::kerml::parser::{
     parse_kerml,
 };
 pub use mercurio_core::{BaselineLibrary, KirDocument};
+pub use mercurio_language_contracts::{SemanticConcept, SourceLanguage};
 
 pub fn default_kernel_library_path() -> std::path::PathBuf {
     mercurio_core::default_kernel_library_path()

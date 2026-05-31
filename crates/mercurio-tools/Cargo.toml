@@ -57,8 +57,8 @@ name = "verify_core_contracts"
 path = "src/bin/verify_core_contracts.rs"
 
 [[bin]]
-name = "generate_kernel_baseline"
-path = "src/bin/generate_kernel_baseline.rs"
+name = "generate_language_baselines"
+path = "src/bin/generate_language_baselines.rs"
 
 [dependencies]
 mercurio-core = { path = "../mercurio-core" }

@@ -1,12 +1,12 @@
 {
   "metadata": {
     "element_count": 2204,
-    "generator": "cargo run -p mercurio-tools --bin generate_kernel_baseline",
+    "generator": "cargo run -p mercurio-tools --bin generate_language_baselines",
     "kir_schema_version": "0.2",
     "library_id": "org.omg/kerml-kernel",
     "library_version": "0.0.0-bootstrap",
     "note": "KerML/Kernel baseline extracted from the bundled SysML pilot stdlib.",
-    "source_path": "C:\\dev\\git\\mercurio\\mercurio-core-lang-modules\\resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.full.kir.json"
+    "source_path": "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.full.kir.json"
   },
   "elements": [
     {

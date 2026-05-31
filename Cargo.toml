@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/mercurio-kir",
+    "crates/mercurio-language-contracts",
     "crates/mercurio-core",
     "crates/mercurio-kerml",
     "crates/mercurio-sysml",

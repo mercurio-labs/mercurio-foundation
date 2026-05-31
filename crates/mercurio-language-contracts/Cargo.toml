@@ -1,0 +1,8 @@
+[package]
+name = "mercurio-language-contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
