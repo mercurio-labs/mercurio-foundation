@@ -102,6 +102,26 @@
     }
   },
   "usage_property_defaults": {
+    "AcceptActionUsage": [
+      {
+        "property_values": {
+          "source": "$owner_id",
+          "trigger": "$modifier_value_trigger",
+          "trigger_kind": "$modifier_value_trigger_kind",
+          "target": "$sibling_state_id_transition_target"
+        }
+      }
+    ],
+    "AllocationUsage": [
+      {
+        "property_values": {
+          "allocated": "$allocation_source",
+          "allocated_to": "$allocation_target",
+          "source": "$allocation_source",
+          "target": "$allocation_target"
+        }
+      }
+    ],
     "PartUsage": [
       {
         "owner_construct": "ItemDefinition",

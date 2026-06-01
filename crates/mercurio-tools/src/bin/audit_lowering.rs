@@ -1252,7 +1252,15 @@ fn semantic_default_placeholders(value: &str) -> Vec<String> {
 fn is_supported_semantic_default_placeholder(placeholder: &str) -> bool {
     matches!(
         placeholder,
-        "$declared_name" | "$owner_id" | "$owner_qualified_name" | "$qualified_name"
+        "$allocation_source"
+            | "$allocation_target"
+            | "$declared_name"
+            | "$modifier_value_trigger"
+            | "$modifier_value_trigger_kind"
+            | "$owner_id"
+            | "$owner_qualified_name"
+            | "$qualified_name"
+            | "$sibling_state_id_transition_target"
     )
 }
 

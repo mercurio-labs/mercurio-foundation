@@ -1998,47 +1998,6 @@ fn enrich_usage_semantics(
             .properties
             .insert("is_variable".to_string(), Value::Bool(defaults.is_variable));
     }
-    if usage.construct == "AcceptActionUsage" {
-        element
-            .properties
-            .insert("source".to_string(), Value::String(owner_id.to_string()));
-        if let Some(trigger) = modifier_value(&usage.modifiers, "trigger") {
-            element
-                .properties
-                .insert("trigger".to_string(), Value::String(trigger.to_string()));
-        }
-        if let Some(trigger_kind) = modifier_value(&usage.modifiers, "trigger_kind") {
-            element.properties.insert(
-                "trigger_kind".to_string(),
-                Value::String(trigger_kind.to_string()),
-            );
-        }
-        if let Some(target) = modifier_value(&usage.modifiers, "transition_target") {
-            if let Some(target_id) = sibling_state_id(&usage.owner_qualified_name, target) {
-                element
-                    .properties
-                    .insert("target".to_string(), Value::String(target_id));
-            }
-        }
-    }
-    if usage.construct == "AllocationUsage" {
-        if let Some(source) = &usage.allocation_source {
-            element
-                .properties
-                .insert("allocated".to_string(), Value::String(source.clone()));
-            element
-                .properties
-                .insert("source".to_string(), Value::String(source.clone()));
-        }
-        if let Some(target) = &usage.allocation_target {
-            element
-                .properties
-                .insert("allocated_to".to_string(), Value::String(target.clone()));
-            element
-                .properties
-                .insert("target".to_string(), Value::String(target.clone()));
-        }
-    }
     apply_usage_property_defaults(element, usage, owner_id, mappings);
     if !element.properties.contains_key("definition")
         && let Some(type_ref) = element.properties.get("type").cloned()
@@ -2085,10 +2044,11 @@ fn apply_usage_property_defaults(
             }
         }
         for (property, value) in &default.property_values {
-            element.properties.insert(
-                property.clone(),
-                Value::String(resolve_usage_property_default_value(value, usage, owner_id)),
-            );
+            if let Some(value) = resolve_usage_property_default_value(value, usage, owner_id) {
+                element
+                    .properties
+                    .insert(property.clone(), Value::String(value));
+            }
         }
     }
 }
@@ -2097,11 +2057,35 @@ fn resolve_usage_property_default_value(
     value: &str,
     usage: &ResolvedUsage,
     owner_id: &str,
-) -> String {
-    value
-        .replace("$owner_id", owner_id)
-        .replace("$qualified_name", &usage.qualified_name)
-        .replace("$declared_name", &usage.declared_name)
+) -> Option<String> {
+    let mut resolved = value.to_string();
+    for (placeholder, replacement) in [
+        ("$owner_id", Some(owner_id.to_string())),
+        ("$qualified_name", Some(usage.qualified_name.clone())),
+        ("$declared_name", Some(usage.declared_name.clone())),
+        ("$allocation_source", usage.allocation_source.clone()),
+        ("$allocation_target", usage.allocation_target.clone()),
+        (
+            "$modifier_value_trigger_kind",
+            modifier_value(&usage.modifiers, "trigger_kind").map(str::to_string),
+        ),
+        (
+            "$modifier_value_trigger",
+            modifier_value(&usage.modifiers, "trigger").map(str::to_string),
+        ),
+        (
+            "$sibling_state_id_transition_target",
+            modifier_value(&usage.modifiers, "transition_target")
+                .and_then(|target| sibling_state_id(&usage.owner_qualified_name, target)),
+        ),
+    ] {
+        if !resolved.contains(placeholder) {
+            continue;
+        }
+        let replacement = replacement?;
+        resolved = resolved.replace(placeholder, &replacement);
+    }
+    Some(resolved)
 }
 
 fn enrich_trace_relationship_semantics(
@@ -3263,5 +3247,44 @@ mod lowering_golden_tests {
         assert_eq!(child.properties["parent_state"], "state.root.parent");
         assert_eq!(succession.properties["target"], "state.root.next");
         assert_eq!(succession.properties["trigger_kind"], "completion");
+    }
+
+    #[test]
+    fn accept_and_allocation_properties_are_profile_backed_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut accept = reference_usage("acceptA");
+        accept.construct = "AcceptActionUsage".to_string();
+        accept.qualified_name = "root.acceptA".to_string();
+        accept.modifiers = vec![
+            "trigger=go".to_string(),
+            "trigger_kind=signal".to_string(),
+            "transition_target=done".to_string(),
+        ];
+
+        let mut allocation = reference_usage("allocA");
+        allocation.construct = "AllocationUsage".to_string();
+        allocation.qualified_name = "root.allocA".to_string();
+        allocation.allocation_source = Some("feature.source".to_string());
+        allocation.allocation_target = Some("feature.target".to_string());
+
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![accept, allocation],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let accept = element(&document, "accept.root.acceptA");
+        let allocation = element(&document, "allocation.root.allocA");
+
+        assert_eq!(accept.properties["source"], "pkg.root");
+        assert_eq!(accept.properties["trigger"], "go");
+        assert_eq!(accept.properties["trigger_kind"], "signal");
+        assert_eq!(accept.properties["target"], "state.root.done");
+        assert_eq!(allocation.properties["allocated"], "feature.source");
+        assert_eq!(allocation.properties["source"], "feature.source");
+        assert_eq!(allocation.properties["allocated_to"], "feature.target");
+        assert_eq!(allocation.properties["target"], "feature.target");
     }
 }
