@@ -249,6 +249,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
+        let semantic_defaults_without_lowering_rules = lowering_rules
+            .as_ref()
+            .map(|rules| {
+                let rule_constructs = lowering_rule_constructs(rules);
+                semantic_default_construct_refs(semantic_defaults)
+                    .difference(&rule_constructs)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         println!();
         println!("Semantic defaults");
@@ -314,6 +324,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  unsupported placeholder tokens: {}",
             unsupported_placeholders.len()
         );
+        if lowering_rules.is_some() {
+            println!(
+                "  semantic default constructs without declarative lowering rules: {}",
+                semantic_defaults_without_lowering_rules.len()
+            );
+        }
 
         if !unknown_usage_defaults.is_empty() {
             println!();
@@ -392,6 +408,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Unsupported semantic default placeholder tokens:");
             for gap in &unsupported_placeholders {
                 println!("  {}: {}", gap.path, gap.placeholder);
+            }
+        }
+
+        if !semantic_defaults_without_lowering_rules.is_empty() && args.verbose_rules {
+            println!();
+            println!("Semantic default constructs without declarative lowering rules:");
+            for construct in &semantic_defaults_without_lowering_rules {
+                println!("  {construct}");
             }
         }
     }
@@ -1234,6 +1258,19 @@ fn semantic_default_usage_action_rule_count(document: &Value) -> usize {
         .sum()
 }
 
+fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
+    let mut refs = BTreeSet::new();
+    refs.extend(semantic_default_definition_context_construct_refs(document));
+    refs.extend(semantic_default_usage_context_construct_refs(document));
+    refs.extend(semantic_default_usage_type_defaults(document));
+    refs.extend(semantic_default_usage_property_defaults(document));
+    refs.extend(semantic_default_usage_actions(document));
+    refs.extend(semantic_default_usage_subset_defaults(document));
+    refs.extend(semantic_default_usage_family_defaults(document));
+    refs.extend(semantic_default_owner_override_refs(document));
+    refs
+}
+
 fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> {
     document
         .get("usage_subset_defaults")
@@ -1242,6 +1279,42 @@ fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> 
         .flat_map(|defaults| defaults.keys())
         .cloned()
         .collect()
+}
+
+fn semantic_default_owner_override_refs(document: &Value) -> BTreeSet<String> {
+    let mut refs = BTreeSet::new();
+    collect_owner_override_refs(
+        document,
+        "usage_family_defaults",
+        "owner_subsetted_feature_refs",
+        &mut refs,
+    );
+    collect_owner_override_refs(
+        document,
+        "usage_type_defaults",
+        "owner_type_refs",
+        &mut refs,
+    );
+    collect_usage_property_default_owner_refs(document, &mut refs);
+    collect_owner_override_refs(
+        document,
+        "usage_subset_defaults",
+        "owner_subsetted_feature_refs",
+        &mut refs,
+    );
+    collect_owner_override_refs(
+        document,
+        "usage_subset_defaults",
+        "specialized_feature_subset.owner_append_refs",
+        &mut refs,
+    );
+    collect_nested_owner_override_refs(
+        document,
+        "usage_subset_defaults",
+        "modifier_owner_subsetted_feature_refs",
+        &mut refs,
+    );
+    refs
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1441,6 +1514,67 @@ fn collect_usage_property_default_owner_gaps(
                     owner_construct: owner_construct.to_string(),
                 });
             }
+        }
+    }
+}
+
+fn collect_usage_property_default_owner_refs(document: &Value, refs: &mut BTreeSet<String>) {
+    let Some(defaults) = document
+        .get("usage_property_defaults")
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    for rules in defaults.values() {
+        let Some(rules) = rules.as_array() else {
+            continue;
+        };
+        refs.extend(
+            rules
+                .iter()
+                .filter_map(|rule| rule.get("owner_construct"))
+                .filter_map(Value::as_str)
+                .map(str::to_string),
+        );
+    }
+}
+
+fn collect_owner_override_refs(
+    document: &Value,
+    section: &str,
+    owner_key: &str,
+    refs: &mut BTreeSet<String>,
+) {
+    let Some(defaults) = document.get(section).and_then(Value::as_object) else {
+        return;
+    };
+    for default in defaults.values() {
+        let Some(overrides) = nested_value(default, owner_key).and_then(Value::as_object) else {
+            continue;
+        };
+        refs.extend(overrides.keys().cloned());
+    }
+}
+
+fn collect_nested_owner_override_refs(
+    document: &Value,
+    section: &str,
+    owner_key: &str,
+    refs: &mut BTreeSet<String>,
+) {
+    let Some(defaults) = document.get(section).and_then(Value::as_object) else {
+        return;
+    };
+    for default in defaults.values() {
+        let Some(modifier_overrides) = nested_value(default, owner_key).and_then(Value::as_object)
+        else {
+            continue;
+        };
+        for owner_defaults in modifier_overrides.values() {
+            let Some(owner_defaults) = owner_defaults.as_object() else {
+                continue;
+            };
+            refs.extend(owner_defaults.keys().cloned());
         }
     }
 }

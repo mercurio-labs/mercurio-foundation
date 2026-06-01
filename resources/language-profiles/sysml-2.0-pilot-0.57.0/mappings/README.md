@@ -52,6 +52,10 @@ The lowering path is intentionally split into three profile-backed stages:
 3. `semantic_defaults.seed.json` fills semantic defaults and small elaboration
    policies that are not directly represented by syntax.
 
+The lowering audit checks this bridge in both directions: construct mappings,
+lowering rules, emission rules, and semantic-default construct references must
+line up before profile changes are considered repeatable.
+
 This is the current declarative lowering syntax. Future MMP input can generate
 these seed files, and compiled profile packages can include them with KIR
 libraries and generated wrappers.
