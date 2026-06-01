@@ -230,6 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>();
         let unknown_owner_overrides =
             semantic_default_owner_override_gaps(semantic_defaults, &construct_names);
+        let unsupported_placeholders = unsupported_semantic_default_placeholders(semantic_defaults);
         let unknown_usage_context_refs = usage_context_construct_refs
             .difference(&construct_names)
             .cloned()
@@ -288,6 +289,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  owner overrides without construct mappings: {}",
             unknown_owner_overrides.len()
         );
+        println!(
+            "  unsupported placeholder tokens: {}",
+            unsupported_placeholders.len()
+        );
 
         if !unknown_usage_defaults.is_empty() {
             println!();
@@ -342,6 +347,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Owner overrides without construct mappings:");
             for gap in &unknown_owner_overrides {
                 println!("  {} -> {}", gap.construct, gap.owner_construct);
+            }
+        }
+
+        if !unsupported_placeholders.is_empty() {
+            println!();
+            println!("Unsupported semantic default placeholder tokens:");
+            for gap in &unsupported_placeholders {
+                println!("  {}: {}", gap.path, gap.placeholder);
             }
         }
     }
@@ -1168,6 +1181,79 @@ fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> 
 struct OwnerOverrideGap {
     construct: String,
     owner_construct: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PlaceholderGap {
+    path: String,
+    placeholder: String,
+}
+
+fn unsupported_semantic_default_placeholders(document: &Value) -> Vec<PlaceholderGap> {
+    let mut gaps = Vec::new();
+    collect_unsupported_placeholders(document, "$", &mut gaps);
+    gaps.sort();
+    gaps.dedup();
+    gaps
+}
+
+fn collect_unsupported_placeholders(value: &Value, path: &str, gaps: &mut Vec<PlaceholderGap>) {
+    match value {
+        Value::String(text) => {
+            for placeholder in semantic_default_placeholders(text) {
+                if !is_supported_semantic_default_placeholder(&placeholder) {
+                    gaps.push(PlaceholderGap {
+                        path: path.to_string(),
+                        placeholder,
+                    });
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                collect_unsupported_placeholders(item, &format!("{path}[{index}]"), gaps);
+            }
+        }
+        Value::Object(entries) => {
+            for (key, item) in entries {
+                collect_unsupported_placeholders(item, &format!("{path}.{key}"), gaps);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn semantic_default_placeholders(value: &str) -> Vec<String> {
+    let mut placeholders = Vec::new();
+    let chars = value.char_indices().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let (offset, ch) = chars[index];
+        if ch != '$' {
+            index += 1;
+            continue;
+        }
+        let start = offset;
+        let mut end = offset + ch.len_utf8();
+        index += 1;
+        while index < chars.len() {
+            let (next_offset, next_ch) = chars[index];
+            if !(next_ch == '_' || next_ch.is_ascii_alphanumeric()) {
+                break;
+            }
+            end = next_offset + next_ch.len_utf8();
+            index += 1;
+        }
+        placeholders.push(value[start..end].to_string());
+    }
+    placeholders
+}
+
+fn is_supported_semantic_default_placeholder(placeholder: &str) -> bool {
+    matches!(
+        placeholder,
+        "$declared_name" | "$owner_id" | "$owner_qualified_name" | "$qualified_name"
+    )
 }
 
 fn semantic_default_owner_override_gaps(
