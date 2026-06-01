@@ -16,6 +16,45 @@
       "type_ref": "Ports::Port"
     }
   },
+  "usage_subset_defaults": {
+    "ItemUsage": {
+      "owner_subsetted_feature_refs": {
+        "ItemDefinition": [
+          "Items::Item::subitems"
+        ],
+        "PartUsage": [
+          "Items::Item::subitems"
+        ]
+      }
+    },
+    "PartUsage": {
+      "owner_subsetted_feature_refs": {
+        "Package": [
+          "Parts::parts"
+        ]
+      }
+    },
+    "PortUsage": {
+      "owner_subsetted_feature_refs": {
+        "PortDefinition": [
+          "Ports::Port::subports"
+        ],
+        "PortUsage": [
+          "Ports::Port::subports"
+        ]
+      },
+      "modifier_owner_subsetted_feature_refs": {
+        "ref": {
+          "PortDefinition": [
+            "Ports::ports"
+          ],
+          "PortUsage": [
+            "Ports::ports"
+          ]
+        }
+      }
+    }
+  },
   "usage_family_defaults": {
     "AcceptActionUsage": {
       "type_ref": "Actions::AcceptAction",

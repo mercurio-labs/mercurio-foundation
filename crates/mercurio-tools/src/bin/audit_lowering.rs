@@ -203,8 +203,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(semantic_defaults) = &semantic_defaults {
         let usage_type_defaults = semantic_default_usage_type_defaults(semantic_defaults);
+        let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_usage_subset_defaults = usage_subset_defaults
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
@@ -221,6 +226,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  usage type defaults without construct mappings: {}",
             unknown_usage_type_defaults.len()
+        );
+        println!("  usage subset defaults: {}", usage_subset_defaults.len());
+        println!(
+            "  usage subset defaults without construct mappings: {}",
+            unknown_usage_subset_defaults.len()
         );
         println!("  usage family defaults: {}", usage_family_defaults.len());
         println!(
@@ -244,6 +254,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("Usage type defaults without construct mappings:");
             for construct in &unknown_usage_type_defaults {
+                println!("  {construct}");
+            }
+        }
+
+        if !unknown_usage_subset_defaults.is_empty() {
+            println!();
+            println!("Usage subset defaults without construct mappings:");
+            for construct in &unknown_usage_subset_defaults {
                 println!("  {construct}");
             }
         }
@@ -1011,6 +1029,16 @@ fn semantic_default_usage_type_defaults(document: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> {
+    document
+        .get("usage_subset_defaults")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|defaults| defaults.keys())
+        .cloned()
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct OwnerOverrideGap {
     construct: String,
@@ -1033,6 +1061,20 @@ fn semantic_default_owner_override_gaps(
         document,
         "usage_type_defaults",
         "owner_type_refs",
+        construct_names,
+        &mut gaps,
+    );
+    collect_owner_override_gaps(
+        document,
+        "usage_subset_defaults",
+        "owner_subsetted_feature_refs",
+        construct_names,
+        &mut gaps,
+    );
+    collect_nested_owner_override_gaps(
+        document,
+        "usage_subset_defaults",
+        "modifier_owner_subsetted_feature_refs",
         construct_names,
         &mut gaps,
     );
@@ -1060,6 +1102,36 @@ fn collect_owner_override_gaps(
                     construct: construct.clone(),
                     owner_construct: owner_construct.clone(),
                 });
+            }
+        }
+    }
+}
+
+fn collect_nested_owner_override_gaps(
+    document: &Value,
+    section: &str,
+    owner_key: &str,
+    construct_names: &BTreeSet<String>,
+    gaps: &mut Vec<OwnerOverrideGap>,
+) {
+    let Some(defaults) = document.get(section).and_then(Value::as_object) else {
+        return;
+    };
+    for (construct, default) in defaults {
+        let Some(modifier_overrides) = default.get(owner_key).and_then(Value::as_object) else {
+            continue;
+        };
+        for owner_defaults in modifier_overrides.values() {
+            let Some(owner_defaults) = owner_defaults.as_object() else {
+                continue;
+            };
+            for owner_construct in owner_defaults.keys() {
+                if !construct_names.contains(owner_construct) {
+                    gaps.push(OwnerOverrideGap {
+                        construct: construct.clone(),
+                        owner_construct: owner_construct.clone(),
+                    });
+                }
             }
         }
     }

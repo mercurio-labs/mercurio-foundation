@@ -273,12 +273,45 @@ mod tests {
     #[test]
     fn sysml_mappings_load_usage_type_semantic_defaults() {
         let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
-        let usage = ResolvedUsage {
-            construct: "PartUsage".to_string(),
-            owner_construct: "Package".to_string(),
+        let usage = test_usage("PartUsage", "Package");
+
+        assert_eq!(
+            profile.mappings.usage_type_default(&usage).as_deref(),
+            Some("Parts::Part")
+        );
+    }
+
+    #[test]
+    fn sysml_mappings_load_usage_subset_semantic_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let mut usage = test_usage("PortUsage", "PortDefinition");
+
+        assert_eq!(
+            profile.mappings.usage_subset_default(&usage),
+            vec!["Ports::Port::subports"]
+        );
+
+        usage.modifiers.push("ref".to_string());
+        assert_eq!(
+            profile.mappings.usage_subset_default(&usage),
+            vec!["Ports::ports"]
+        );
+    }
+
+    #[test]
+    fn kerml_profile_has_no_sysml_lowering_rules() {
+        let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
+
+        assert!(profile.lowering_rules.is_none());
+    }
+
+    fn test_usage(construct: &str, owner_construct: &str) -> ResolvedUsage {
+        ResolvedUsage {
+            construct: construct.to_string(),
+            owner_construct: owner_construct.to_string(),
             owner_qualified_name: "root".to_string(),
-            qualified_name: "root.p".to_string(),
-            declared_name: "p".to_string(),
+            qualified_name: "root.x".to_string(),
+            declared_name: "x".to_string(),
             is_implicit_name: false,
             has_explicit_type: false,
             type_ref: None,
@@ -303,18 +336,6 @@ mod tests {
                 end_line: 1,
                 end_col: 1,
             },
-        };
-
-        assert_eq!(
-            profile.mappings.usage_type_default(&usage).as_deref(),
-            Some("Parts::Part")
-        );
-    }
-
-    #[test]
-    fn kerml_profile_has_no_sysml_lowering_rules() {
-        let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
-
-        assert!(profile.lowering_rules.is_none());
+        }
     }
 }

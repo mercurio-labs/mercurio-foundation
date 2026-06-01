@@ -86,6 +86,8 @@ pub struct SemanticDefaultsSeed {
     #[serde(default)]
     pub usage_type_defaults: BTreeMap<String, UsageTypeDefaultSeed>,
     #[serde(default)]
+    pub usage_subset_defaults: BTreeMap<String, UsageSubsetDefaultSeed>,
+    #[serde(default)]
     pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
 }
 
@@ -94,6 +96,16 @@ pub struct UsageTypeDefaultSeed {
     pub type_ref: Option<String>,
     #[serde(default)]
     pub owner_type_refs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageSubsetDefaultSeed {
+    #[serde(default)]
+    pub subsetted_feature_refs: Vec<String>,
+    #[serde(default)]
+    pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub modifier_owner_subsetted_feature_refs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -384,6 +396,31 @@ impl MappingBundle {
             .type_ref
             .as_ref()
             .map(|value| resolve_semantic_default_value(value, usage))
+    }
+
+    pub(crate) fn usage_subset_default(&self, usage: &ResolvedUsage) -> Vec<String> {
+        let Some(default) = self
+            .semantic_defaults
+            .usage_subset_defaults
+            .get(&usage.construct)
+        else {
+            return Vec::new();
+        };
+
+        for modifier in &usage.modifiers {
+            if let Some(owner_defaults) =
+                default.modifier_owner_subsetted_feature_refs.get(modifier)
+                && let Some(refs) = owner_defaults.get(&usage.owner_construct)
+            {
+                return refs.clone();
+            }
+        }
+
+        default
+            .owner_subsetted_feature_refs
+            .get(&usage.owner_construct)
+            .cloned()
+            .unwrap_or_else(|| default.subsetted_feature_refs.clone())
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -2530,19 +2567,12 @@ fn usage_subsetted_feature_refs(
             "PortDefinition" | "PortUsage"
         )
     {
-        subsetted_feature_refs.push(
-            if usage.modifiers.iter().any(|modifier| modifier == "ref") {
-                "Ports::ports"
-            } else {
-                "Ports::Port::subports"
-            }
-            .to_string(),
-        );
+        subsetted_feature_refs.extend(mappings.usage_subset_default(usage));
         return dedupe_refs(subsetted_feature_refs);
     }
 
     if usage.construct == "PartUsage" && usage.owner_construct == "Package" {
-        subsetted_feature_refs.push("Parts::parts".to_string());
+        subsetted_feature_refs.extend(mappings.usage_subset_default(usage));
         return dedupe_refs(subsetted_feature_refs);
     }
 
@@ -2552,7 +2582,7 @@ fn usage_subsetted_feature_refs(
             "PartUsage" | "ItemDefinition"
         )
     {
-        subsetted_feature_refs.push("Items::Item::subitems".to_string());
+        subsetted_feature_refs.extend(mappings.usage_subset_default(usage));
         return dedupe_refs(subsetted_feature_refs);
     }
 
