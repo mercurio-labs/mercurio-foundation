@@ -4,6 +4,7 @@
     "modifier_rules": [
       {
         "modifier": "payload",
+        "synthetic_declared_name": true,
         "subsetted_feature_refs": [
           "Objects::objects"
         ],
@@ -14,6 +15,7 @@
       },
       {
         "modifier": "source-output",
+        "synthetic_declared_name": true,
         "default_type_ref": "Ports::Port",
         "semantic_specializations": [],
         "redefined_feature_refs": [
@@ -23,6 +25,7 @@
       },
       {
         "modifier": "target-input",
+        "synthetic_declared_name": true,
         "default_type_ref": "Occurrences::Occurrence",
         "semantic_specializations": [],
         "redefined_feature_refs": [
@@ -33,6 +36,7 @@
       },
       {
         "modifier": "receiver",
+        "synthetic_declared_name": true,
         "default_type_ref": "Occurrences::Occurrence",
         "semantic_specializations": [],
         "redefined_feature_refs": [

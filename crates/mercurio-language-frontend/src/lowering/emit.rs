@@ -106,6 +106,8 @@ pub struct ReferenceUsageSemanticsSeed {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReferenceModifierSemanticsSeed {
     pub modifier: String,
+    #[serde(default)]
+    pub synthetic_declared_name: bool,
     pub default_type_ref: Option<String>,
     pub semantic_specializations: Option<Vec<String>>,
     #[serde(default)]
@@ -571,6 +573,25 @@ impl MappingBundle {
         }
 
         None
+    }
+
+    pub(crate) fn reference_usage_has_synthetic_declared_name(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> bool {
+        usage.construct == "ReferenceUsage"
+            && self
+                .semantic_defaults
+                .reference_usage_semantics
+                .modifier_rules
+                .iter()
+                .any(|rule| {
+                    rule.synthetic_declared_name
+                        && usage
+                            .modifiers
+                            .iter()
+                            .any(|modifier| modifier == &rule.modifier)
+                })
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -1480,7 +1501,7 @@ fn transpile_usage(
         &specialization_refs,
         &specialized_feature_refs,
     );
-    let declared_name_is_synthetic = usage_has_synthetic_declared_name(usage);
+    let declared_name_is_synthetic = mappings.reference_usage_has_synthetic_declared_name(usage);
     let usage_name = usage_display_name(usage, mappings);
     let metatype_ref = mappings
         .default_specialization_for_usage(&usage.construct)
@@ -1933,7 +1954,7 @@ fn enrich_usage_semantics(
     owner_id: &str,
     mappings: &MappingBundle,
 ) {
-    if usage.is_implicit_name || usage_has_synthetic_declared_name(usage) {
+    if usage.is_implicit_name || mappings.reference_usage_has_synthetic_declared_name(usage) {
         element.properties.remove("declared_name");
     }
 
@@ -2111,16 +2132,6 @@ fn enrich_trace_relationship_semantics(
         }
         _ => {}
     }
-}
-
-fn usage_has_synthetic_declared_name(usage: &ResolvedUsage) -> bool {
-    usage.construct == "ReferenceUsage"
-        && usage.modifiers.iter().any(|modifier| {
-            matches!(
-                modifier.as_str(),
-                "payload" | "receiver" | "source-output" | "target-input"
-            )
-        })
 }
 
 fn usage_display_name(usage: &ResolvedUsage, mappings: &MappingBundle) -> Option<String> {
@@ -3107,6 +3118,7 @@ mod lowering_golden_tests {
             vec!["source", "Transfers::sourceOutput"]
         );
         assert!(semantics.semantic_specializations.is_empty());
+        assert!(mappings.reference_usage_has_synthetic_declared_name(&usage));
     }
 
     #[test]
