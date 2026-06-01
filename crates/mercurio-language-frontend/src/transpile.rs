@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use mercurio_kir::{KirDocument, KirElement};
+use mercurio_kir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 use mercurio_language_contracts::SourceLanguage;
 use mercurio_language_contracts::ast::{BinaryOp, SourceSpan, UnaryOp};
 use mercurio_language_contracts::diagnostics::Diagnostic;
@@ -626,6 +626,7 @@ pub fn transpile_module_with_source(
             &package_ids,
             &definition_ids,
             source_file,
+            source_language,
             mappings,
         )?);
         append_documentation_elements(
@@ -645,7 +646,13 @@ pub fn transpile_module_with_source(
             .and_then(|qualified_name| package_ids.get(qualified_name))
             .cloned()
             .unwrap_or_else(|| "pkg.root".to_string());
-        elements.push(transpile_import(import, &owner_id, source_file, mappings)?);
+        elements.push(transpile_import(
+            import,
+            &owner_id,
+            source_file,
+            source_language,
+            mappings,
+        )?);
         let import_id = elements
             .last()
             .map(|element| element.id.clone())
@@ -681,6 +688,7 @@ pub fn transpile_module_with_source(
             &feature_ids,
             &member_ids,
             source_file,
+            source_language,
             mappings,
         )?);
         append_documentation_elements(
@@ -705,6 +713,7 @@ pub fn transpile_module_with_source(
                 conjugated_id,
                 &definition_id,
                 source_file,
+                source_language,
                 mappings,
             )?);
         }
@@ -731,6 +740,10 @@ pub fn transpile_module_with_source(
     Ok(KirDocument {
         metadata: [
             (
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            ),
+            (
                 "source".to_string(),
                 Value::String(source_language.to_string()),
             ),
@@ -742,7 +755,8 @@ pub fn transpile_module_with_source(
         .into_iter()
         .collect(),
         elements,
-    })
+    }
+    .normalized_for_persistence())
 }
 
 fn package_owner_id(usage: &ResolvedUsage, package_ids: &BTreeMap<String, String>) -> String {
@@ -762,6 +776,7 @@ fn transpile_package(
     package_ids: &BTreeMap<String, String>,
     definition_ids: &BTreeMap<String, String>,
     source_file: &str,
+    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Package")?;
@@ -805,13 +820,21 @@ fn transpile_package(
         ("metatype_ref".to_string(), metatype_ref),
     ]);
 
-    build_element(package_id, &package.span, source_file, emission, context)
+    build_element(
+        package_id,
+        &package.span,
+        source_file,
+        source_language,
+        emission,
+        context,
+    )
 }
 
 fn transpile_import(
     import: &ResolvedImport,
     owner_id: &str,
     source_file: &str,
+    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Import")?;
@@ -829,13 +852,20 @@ fn transpile_import(
         ("owner_id".to_string(), Value::String(owner_id.to_string())),
         (
             "target_ref".to_string(),
-            Value::String(import.target_id.clone()),
+            Value::Array(vec![Value::String(import.target_id.clone())]),
         ),
         ("ordinal".to_string(), json!(import.ordinal)),
         ("metatype_ref".to_string(), metatype_ref),
     ]);
 
-    build_element(&id, &import.span, source_file, emission, context)
+    build_element(
+        &id,
+        &import.span,
+        source_file,
+        source_language,
+        emission,
+        context,
+    )
 }
 
 fn transpile_definition(
@@ -844,6 +874,7 @@ fn transpile_definition(
     feature_ids: &[String],
     member_ids: &[String],
     source_file: &str,
+    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for(&definition.construct)?;
@@ -895,6 +926,7 @@ fn transpile_definition(
         definition_id,
         &definition.span,
         source_file,
+        source_language,
         emission,
         context,
     )
@@ -905,6 +937,7 @@ fn transpile_conjugated_port_definition(
     definition_id: &str,
     owner_id: &str,
     source_file: &str,
+    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("ConjugatedPortDefinition")?;
@@ -936,7 +969,14 @@ fn transpile_conjugated_port_definition(
         ("metatype_ref".to_string(), metatype_ref),
     ]);
 
-    build_element(definition_id, &span, source_file, emission, context)
+    build_element(
+        definition_id,
+        &span,
+        source_file,
+        source_language,
+        emission,
+        context,
+    )
 }
 
 fn transpile_usage(
@@ -957,6 +997,18 @@ fn transpile_usage(
     let specialized_feature_refs =
         usage_specialized_feature_refs(usage, reference_semantics.as_ref());
     let redefined_feature_refs = usage_redefined_feature_refs(usage, reference_semantics.as_ref());
+    let specialization_refs = usage_specialization_refs(
+        usage,
+        specializes,
+        &specialized_feature_refs,
+        &subsetted_feature_refs,
+        &redefined_feature_refs,
+    );
+    let materialized_specialization_refs = materialized_usage_specialization_refs(
+        usage,
+        &specialization_refs,
+        &specialized_feature_refs,
+    );
     let declared_name_is_synthetic = usage_has_synthetic_declared_name(usage);
     let usage_name = usage_display_name(usage);
     let metatype_ref = mappings
@@ -1001,16 +1053,11 @@ fn transpile_usage(
         (
             "specializes_refs".to_string(),
             Value::Array(
-                usage_specialization_refs(
-                    usage,
-                    specializes,
-                    &specialized_feature_refs,
-                    &subsetted_feature_refs,
-                    &redefined_feature_refs,
-                )
-                .into_iter()
-                .map(Value::String)
-                .collect(),
+                materialized_specialization_refs
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
             ),
         ),
         (
@@ -1127,6 +1174,7 @@ fn transpile_usage(
         usage_id,
         &usage_source_span(usage),
         source_file,
+        source_language,
         emission,
         context,
     )?;
@@ -1167,6 +1215,16 @@ fn transpile_usage(
                 .insert("direction".to_string(), Value::String(direction.clone()));
         }
     }
+    for specialization_ref in &materialized_specialization_refs {
+        append_unique_property_ref_list(&mut element.properties, "specializes", specialization_ref);
+    }
+    for subsetted_feature_ref in &subsetted_feature_refs {
+        append_unique_property_ref_list(
+            &mut element.properties,
+            "subsetted_features",
+            subsetted_feature_ref,
+        );
+    }
     enrich_usage_semantics(&mut element, usage, owner_id);
     enrich_trace_relationship_semantics(&mut element, usage, owner_id);
     Ok(element)
@@ -1176,6 +1234,7 @@ fn build_element(
     id: &str,
     span: &SourceSpan,
     source_file: &str,
+    source_language: &str,
     emission: &EmissionRule,
     context: BTreeMap<String, Value>,
 ) -> Result<KirElement, Diagnostic> {
@@ -1209,6 +1268,11 @@ fn build_element(
         Value::String(source_file.to_string()),
     );
     metadata.insert(
+        "source_language".to_string(),
+        Value::String(source_language.to_string()),
+    );
+    metadata.insert("generated".to_string(), Value::Bool(false));
+    metadata.insert(
         "source_span".to_string(),
         json!({
             "start_line": span.start_line,
@@ -1230,10 +1294,7 @@ fn build_element(
 }
 
 fn is_materialized_derived_property(key: &str) -> bool {
-    matches!(
-        key,
-        "name" | "short_name" | "qualified_name" | "shortName" | "qualifiedName"
-    )
+    matches!(key, "name" | "short_name" | "shortName" | "qualifiedName")
 }
 
 fn append_documentation_elements(
@@ -1258,6 +1319,11 @@ fn append_documentation_elements(
             "source_file".to_string(),
             Value::String(source_file.to_string()),
         );
+        metadata.insert(
+            "source_language".to_string(),
+            Value::String(source_language.to_string()),
+        );
+        metadata.insert("generated".to_string(), Value::Bool(true));
         metadata.insert(
             "source_span".to_string(),
             json!({
@@ -1356,29 +1422,35 @@ fn enrich_usage_semantics(element: &mut KirElement, usage: &ResolvedUsage, owner
         element.properties.remove("declared_name");
     }
 
+    if usage.construct == "CommentUsage" {
+        if let Some(body) = usage.metadata_properties.get("body") {
+            element
+                .properties
+                .insert("body".to_string(), Value::String(body.clone()));
+        }
+        if let Some(locale) = usage.metadata_properties.get("locale") {
+            element
+                .properties
+                .insert("locale".to_string(), Value::String(locale.clone()));
+        }
+        if let Some(target) = &usage.reference_target {
+            element.properties.insert(
+                "annotatedElement".to_string(),
+                Value::String(target.clone()),
+            );
+        }
+    }
+
     if let Some(defaults) = usage_family_defaults(usage) {
-        set_property_refs(
-            &mut element.properties,
-            "type",
-            &[defaults.type_ref.to_string()],
-        );
-        set_property_refs(
-            &mut element.properties,
-            "definition",
-            &[defaults.type_ref.to_string()],
-        );
-        let family_refs = defaults
-            .subsetted_feature_refs
-            .iter()
-            .map(|value| Value::String((*value).to_string()))
-            .collect::<Vec<_>>();
-        element.properties.insert(
-            "subsetted_features".to_string(),
-            Value::Array(family_refs.clone()),
-        );
-        element
-            .properties
-            .insert("specializes".to_string(), Value::Array(family_refs));
+        insert_property_ref_if_missing(&mut element.properties, "type", defaults.type_ref);
+        for family_ref in defaults.subsetted_feature_refs {
+            append_unique_property_ref_list(
+                &mut element.properties,
+                "subsetted_features",
+                family_ref,
+            );
+            append_unique_property_ref_list(&mut element.properties, "specializes", family_ref);
+        }
         element
             .properties
             .insert("is_unique".to_string(), Value::Bool(true));
@@ -1589,6 +1661,44 @@ fn append_unique_property_ref(properties: &mut BTreeMap<String, Value>, key: &st
             Value::Array(next)
         }
         Some(Value::Null) | None => Value::String(value.to_string()),
+        Some(other) => Value::Array(vec![other.clone(), Value::String(value.to_string())]),
+    };
+
+    properties.insert(key.to_string(), updated);
+}
+
+fn insert_property_ref_if_missing(
+    properties: &mut BTreeMap<String, Value>,
+    key: &str,
+    value: &str,
+) {
+    if !matches!(properties.get(key), Some(existing) if !existing.is_null()) {
+        properties.insert(key.to_string(), Value::String(value.to_string()));
+    }
+}
+
+fn append_unique_property_ref_list(
+    properties: &mut BTreeMap<String, Value>,
+    key: &str,
+    value: &str,
+) {
+    let updated = match properties.get(key) {
+        Some(Value::Array(values)) => {
+            if values.iter().any(|item| item.as_str() == Some(value)) {
+                return;
+            }
+            let mut next = values.clone();
+            next.push(Value::String(value.to_string()));
+            Value::Array(next)
+        }
+        Some(Value::String(existing)) if existing == value => {
+            Value::Array(vec![Value::String(existing.clone())])
+        }
+        Some(Value::String(existing)) => Value::Array(vec![
+            Value::String(existing.clone()),
+            Value::String(value.to_string()),
+        ]),
+        Some(Value::Null) | None => Value::Array(vec![Value::String(value.to_string())]),
         Some(other) => Value::Array(vec![other.clone(), Value::String(value.to_string())]),
     };
 
@@ -1931,6 +2041,30 @@ fn usage_specialization_refs(
     dedupe_refs(semantic_specializations)
 }
 
+fn materialized_usage_specialization_refs(
+    usage: &ResolvedUsage,
+    specialization_refs: &[String],
+    specialized_feature_refs: &[String],
+) -> Vec<String> {
+    if usage.construct == "PerformActionUsage" && usage.multiplicity.is_none() {
+        let specialized = specialized_feature_refs
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut refs = specialization_refs
+            .iter()
+            .filter(|value| !specialized.contains(*value))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !specialized.is_empty() {
+            refs.insert(0, "kerml.Feature".to_string());
+        }
+        return dedupe_refs(refs);
+    }
+
+    specialization_refs.to_vec()
+}
+
 fn usage_is_variable(usage: &ResolvedUsage) -> bool {
     !matches!(
         usage.owner_construct.as_str(),
@@ -2142,6 +2276,13 @@ fn usage_subsetted_feature_refs(
             mappings.semantic_specializations_for_usage(&usage.construct, &usage.modifiers),
         );
         return dedupe_refs(subsetted_feature_refs);
+    }
+
+    if usage.construct == "PerformActionUsage"
+        && usage.multiplicity.is_some()
+        && !usage.specialized_features.is_empty()
+    {
+        subsetted_feature_refs.extend(usage.specialized_features.clone());
     }
 
     if usage.construct == "PortUsage"
@@ -2366,7 +2507,7 @@ fn usage_family_defaults(usage: &ResolvedUsage) -> Option<UsageFamilyDefaults> {
     match usage.construct.as_str() {
         "ActionUsage" => Some(UsageFamilyDefaults {
             type_ref: "Actions::Action",
-            subsetted_feature_refs: &["Actions::ownedActions"],
+            subsetted_feature_refs: action_usage_subsetted_feature_refs(usage),
             is_variable: false,
         }),
         "PerformActionUsage" => Some(UsageFamilyDefaults {
@@ -2394,7 +2535,22 @@ fn usage_family_defaults(usage: &ResolvedUsage) -> Option<UsageFamilyDefaults> {
             subsetted_feature_refs: &["Actions::ownedActions", "Flows::successionFlows"],
             is_variable: false,
         }),
+        "FlowUsage" => Some(UsageFamilyDefaults {
+            type_ref: "Flows::Flow",
+            subsetted_feature_refs: &["Actions::Action::subactions", "Flows::flows"],
+            is_variable: false,
+        }),
         _ => None,
+    }
+}
+
+fn action_usage_subsetted_feature_refs(usage: &ResolvedUsage) -> &'static [&'static str] {
+    match usage.owner_construct.as_str() {
+        "Package" => &["Actions::actions"],
+        "ActionDefinition" | "ActionUsage" | "PerformActionUsage" => {
+            &["Actions::Action::subactions"]
+        }
+        _ => &["Parts::Part::ownedActions"],
     }
 }
 

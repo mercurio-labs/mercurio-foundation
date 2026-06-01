@@ -139,6 +139,99 @@ mod tests {
     }
 
     #[test]
+    fn comment_usage_trailing_doc_is_body() {
+        let stdlib = load_sysml_baseline().unwrap();
+        let document = compile_sysml_text(
+            "package Demo { comment cmt /* Named Comment */ comment about C /* About Definition */ part def C { comment /* Inner Comment */ comment about cmt locale \"en_US\" /* About Named */ comment about Demo /* About Package */ } }",
+            "inline.sysml",
+            &stdlib,
+        )
+        .unwrap();
+        let comment = document
+            .elements
+            .iter()
+            .find(|element| {
+                element.properties.get("metatype")
+                    == Some(&serde_json::json!("SysML::CommentUsage"))
+                    && element.properties.get("declared_name") == Some(&serde_json::json!("cmt"))
+            })
+            .unwrap();
+
+        assert_eq!(
+            comment.properties["body"],
+            serde_json::json!("Named Comment")
+        );
+
+        let inner_comment = document
+            .elements
+            .iter()
+            .find(|element| {
+                element.properties.get("metatype")
+                    == Some(&serde_json::json!("SysML::CommentUsage"))
+                    && element.properties.get("owner") == Some(&serde_json::json!("type.Demo.C"))
+            })
+            .unwrap();
+
+        assert_eq!(
+            inner_comment.properties["body"],
+            serde_json::json!("Inner Comment")
+        );
+
+        let about_comment = document
+            .elements
+            .iter()
+            .find(|element| {
+                element.properties.get("metatype")
+                    == Some(&serde_json::json!("SysML::CommentUsage"))
+                    && element.properties.get("body") == Some(&serde_json::json!("About Named"))
+            })
+            .unwrap();
+
+        assert_eq!(
+            about_comment.properties["annotatedElement"],
+            serde_json::json!(comment.id)
+        );
+        assert_eq!(
+            about_comment.properties["locale"],
+            serde_json::json!("en_US")
+        );
+
+        let definition = document
+            .elements
+            .iter()
+            .find(|element| element.id == "type.Demo.C")
+            .unwrap();
+        let about_definition = document
+            .elements
+            .iter()
+            .find(|element| {
+                element.properties.get("metatype")
+                    == Some(&serde_json::json!("SysML::CommentUsage"))
+                    && element.properties.get("body")
+                        == Some(&serde_json::json!("About Definition"))
+            })
+            .unwrap();
+        assert_eq!(
+            about_definition.properties["annotatedElement"],
+            serde_json::json!(definition.id)
+        );
+
+        let about_package = document
+            .elements
+            .iter()
+            .find(|element| {
+                element.properties.get("metatype")
+                    == Some(&serde_json::json!("SysML::CommentUsage"))
+                    && element.properties.get("body") == Some(&serde_json::json!("About Package"))
+            })
+            .unwrap();
+        assert_eq!(
+            about_package.properties["annotatedElement"],
+            serde_json::json!("pkg.Demo")
+        );
+    }
+
+    #[test]
     fn baseline_is_kernel_plus_sysml_delta() {
         let baseline = load_sysml_baseline().unwrap();
 

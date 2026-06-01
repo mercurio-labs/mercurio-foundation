@@ -204,10 +204,10 @@ pub use query::{
 };
 pub use runtime::{ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError};
 pub use semantic_compare::{
-    SemanticCompareError, SemanticComparisonReport, SemanticElementMismatch, SemanticSnapshot,
-    SemanticSnapshotAttribute, SemanticSnapshotElement, SemanticSourceSpan, SemanticValueMismatch,
-    SnapshotMode, build_semantic_snapshot, build_semantic_snapshot_with_registry,
-    compare_snapshots,
+    SemanticCompareError, SemanticCompareOptions, SemanticComparisonReport,
+    SemanticElementMismatch, SemanticSnapshot, SemanticSnapshotAttribute, SemanticSnapshotElement,
+    SemanticSourceSpan, SemanticValueMismatch, SnapshotMode, build_semantic_snapshot,
+    build_semantic_snapshot_with_registry, compare_snapshots, compare_snapshots_with_options,
 };
 pub use semantic_target::{
     IncludeSubtypes, ResolvedSemanticTarget, SemanticTarget, SemanticTargetError,

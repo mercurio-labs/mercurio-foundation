@@ -36,9 +36,10 @@ fn dump_decl(declaration: &Declaration, depth: usize) {
         }
         Declaration::PartUsage(usage) => {
             println!(
-                "{pad}part {}{}",
+                "{pad}part {}{}{}",
                 usage.name,
-                display_type(usage.ty.as_ref())
+                display_type(usage.ty.as_ref()),
+                display_usage_relations(&usage.specializes, &usage.subsets, &usage.redefines)
             );
             for member in &usage.body_members {
                 dump_decl(member, depth + 1);
@@ -52,10 +53,11 @@ fn dump_decl(declaration: &Declaration, depth: usize) {
         }
         Declaration::GenericUsage(usage) => {
             println!(
-                "{pad}{} {}{}",
+                "{pad}{} {}{}{}",
                 usage.keyword,
                 usage.name,
-                display_type(usage.ty.as_ref())
+                display_type(usage.ty.as_ref()),
+                display_usage_relations(&usage.specializes, &usage.subsets, &usage.redefines)
             );
             for member in &usage.body_members {
                 dump_decl(member, depth + 1);
@@ -78,4 +80,30 @@ fn display_name(name: &QualifiedName) -> String {
 fn display_type(name: Option<&QualifiedName>) -> String {
     name.map(|name| format!(" : {}", name.as_colon_string()))
         .unwrap_or_default()
+}
+
+fn display_usage_relations(
+    specializes: &[QualifiedName],
+    subsets: &[QualifiedName],
+    redefines: &[QualifiedName],
+) -> String {
+    let mut parts = Vec::new();
+    if !specializes.is_empty() {
+        parts.push(format!(" :> {}", display_names(specializes)));
+    }
+    if !subsets.is_empty() {
+        parts.push(format!(" subsets {}", display_names(subsets)));
+    }
+    if !redefines.is_empty() {
+        parts.push(format!(" :>> {}", display_names(redefines)));
+    }
+    parts.concat()
+}
+
+fn display_names(names: &[QualifiedName]) -> String {
+    names
+        .iter()
+        .map(QualifiedName::as_colon_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }

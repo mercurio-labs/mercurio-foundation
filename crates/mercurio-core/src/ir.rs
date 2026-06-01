@@ -60,7 +60,7 @@ fn load_document_for_language(
                 )
                 .map_err(|err| KirError::Frontend(err.to_string()))?
             }
-            None => KirDocument::from_path(model_path)?,
+            None => KirDocument::from_path_lenient(model_path)?,
         },
     )
 }

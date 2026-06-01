@@ -22,17 +22,19 @@ Implementation anchor:
 - `mercurio-core/src/graph.rs`: graph construction and reference discovery
 - `mercurio-core/src/frontend/transpile.rs`: source AST to KIR emission
 - `resources/language-profiles/<profile-id>/mappings/kir_emission.seed.json`: metaclass-to-KIR emission rules for the L2 subset
+- [KIR_SCHEMA.json](KIR_SCHEMA.json): persisted KIR schema artifact
 
 ## Document Shape
 
-A KIR document is a JSON object with:
+A persisted KIR document is a JSON object with:
 
-- `metadata`: optional object for document-level provenance and processing metadata
+- `metadata`: required object for document-level provenance and processing metadata
 - `elements`: required array of KIR elements
 
 ```json
 {
   "metadata": {
+    "kir_schema_version": "0.2",
     "source": "test_files/l2/minimal_vehicle.sysml"
   },
   "elements": [
@@ -47,6 +49,8 @@ A KIR document is a JSON object with:
   ]
 }
 ```
+
+`metadata.kir_schema_version` is required for persisted KIR and currently must be `"0.2"`. In-memory documents may be normalized before writing; persisted artifacts loaded with the strict KIR APIs must already carry the schema version.
 
 When multiple KIR documents are merged, element ids must be unique. The merge path sorts elements by `id` and preserves source document metadata under `metadata.merged_sources`.
 
@@ -80,11 +84,15 @@ The runtime adds `element_id` to each graph element's properties from the canoni
 
 Current validation rejects:
 
+- missing or unsupported `metadata.kir_schema_version` in persisted KIR
 - empty element ids
 - ids with leading or trailing whitespace
 - empty semantic kinds
 - unsupported layers outside `0`, `1`, or `2`
 - duplicate ids inside a loaded or merged document
+- unknown persisted properties, unless the property name starts with `x_`
+- missing `qualified_name` for standard id-prefixed elements
+- malformed registered field shapes, element metadata, source spans, or `expression_ir`
 
 Validation is intentionally structural. Semantic diagnostics such as unresolved required references belong to frontend compilation or semantic services.
 
@@ -119,6 +127,8 @@ feature.Demo.Vehicle.engine
 ```
 
 Ids should be deterministic across recompiles for unchanged source. If a source declaration has an explicit stable identifier in the future, the frontend may use it, but the resulting id still must be unique in the merged KIR document.
+
+Persisted elements using the standard prefixes `pkg.`, `type.`, `feature.`, `part.`, `item.`, `requirement.`, `case.`, `action.`, `state.`, `transition.`, `connection.`, `metadata.`, `relationship.`, or `doc.` must include a string `properties.qualified_name`. The normal writer fills this from the id when possible.
 
 ## Kind Conventions
 
@@ -201,6 +211,8 @@ Current source provenance commonly uses:
 {
   "metadata": {
     "source_file": "test_files/l2/minimal_vehicle.sysml",
+    "source_language": "sysml",
+    "generated": false,
     "source_span": {
       "start_line": 1,
       "start_col": 1,
@@ -211,7 +223,7 @@ Current source provenance commonly uses:
 }
 ```
 
-Line and column values are 1-based. Frontends should preserve source provenance for user-authored elements so editor diagnostics, outline navigation, and semantic inspection can link runtime elements back to source.
+Line and column values are 1-based. Persisted source spans require at least `start_line` and `end_line`; columns are recommended when available. Frontends should preserve source provenance for user-authored elements so editor diagnostics, outline navigation, and semantic inspection can link runtime elements back to source. Generated helper elements should set `metadata.generated` to `true`.
 
 ## Expressions
 
@@ -326,8 +338,10 @@ Frontends that emit KIR should:
 - parse source syntax
 - normalize identifiers and references
 - emit deterministic ids
+- emit complete persisted KIR with `metadata.kir_schema_version`
 - emit semantic `kind` values from mapping policy
 - preserve source provenance in metadata
+- emit `qualified_name` for standard id-prefixed elements
 - emit direct semantic relationships such as ownership, specialization, typing, subsetting, and redefinition
 - report diagnostics for unresolved required references
 
@@ -356,6 +370,9 @@ The runtime should not depend on whether an element came from `.sysml`, `.kerml`
 
 ```json
 {
+  "metadata": {
+    "kir_schema_version": "0.2"
+  },
   "elements": [
     {
       "id": "type.Demo.Engine",
@@ -363,6 +380,7 @@ The runtime should not depend on whether an element came from `.sysml`, `.kerml`
       "layer": 2,
       "properties": {
         "declared_name": "Engine",
+        "qualified_name": "Demo.Engine",
         "specializes": ["SysML::Systems::PartDefinition"]
       }
     },
@@ -372,6 +390,7 @@ The runtime should not depend on whether an element came from `.sysml`, `.kerml`
       "layer": 2,
       "properties": {
         "declared_name": "engine",
+        "qualified_name": "Demo.Vehicle.engine",
         "owner": "type.Demo.Vehicle",
         "type": "type.Demo.Engine"
       }
@@ -382,6 +401,7 @@ The runtime should not depend on whether an element came from `.sysml`, `.kerml`
       "layer": 2,
       "properties": {
         "declared_name": "Vehicle",
+        "qualified_name": "Demo.Vehicle",
         "features": ["feature.Demo.Vehicle.engine"],
         "specializes": ["SysML::Systems::PartDefinition"]
       }
@@ -399,19 +419,15 @@ KIR should remain stable enough that:
 - UI features can inspect elements without knowing the source language
 - project repositories and server workflows can validate and compare semantic changes across revisions
 
-Breaking changes to KIR should be handled deliberately. A future stricter schema should add explicit version metadata, define field contracts for semantic properties, and invalidate generated artifacts and caches when the schema changes. During the current tightening phase, old KIR artifacts should be regenerated from source rather than migrated.
+Breaking changes to KIR should be handled deliberately. Schema-bearing persisted artifacts should be regenerated or migrated when the version changes. During the current tightening phase, old non-schema KIR artifacts are only accepted through explicit legacy loaders.
 
 ## Open Tightening Work
 
-The current implementation allows flexible JSON properties. The next specification work should define:
+The current implementation still allows flexible JSON values behind registered properties. The next specification work should define:
 
-- a formal JSON Schema for `KirDocument`
-- a field contract that distinguishes scalar fields, reference fields, expression data, metadata, and extension data
 - canonical id templates for all supported construct classes
-- complete `expression_ir` schema
+- a complete JSON Schema for every registered property field
 - recursive or typed reference fields, if needed
-- document-level schema/version metadata
-- validation rules for precompiled KIR artifacts
 - metamodel-derived capability validation instead of hand-maintained kind-profile tables
 
 The staged schema plan is tracked in [KIR Schema Roadmap](KIR_SCHEMA_ROADMAP.md).

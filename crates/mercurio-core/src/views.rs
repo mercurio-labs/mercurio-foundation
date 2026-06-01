@@ -1209,7 +1209,7 @@ mod tests {
 
     #[test]
     fn extracts_requirement_rows_from_example_model() {
-        let document = KirDocument::from_path(&repo_path(
+        let document = KirDocument::from_path_lenient(&repo_path(
             "test_files/examples/requirements_table_model.json",
         ))
         .unwrap();

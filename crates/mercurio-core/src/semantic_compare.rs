@@ -44,6 +44,7 @@ pub struct SemanticSnapshotElement {
 pub struct SemanticSnapshotAttribute {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declared_by: Option<String>,
+    pub origin_kind: String,
     pub has_direct_value: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direct_value: Option<Value>,
@@ -87,6 +88,12 @@ pub struct SemanticElementMismatch {
 pub struct SemanticValueMismatch<T> {
     pub mercurio: T,
     pub pilot: T,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct SemanticCompareOptions {
+    pub include_derived_attributes: bool,
+    pub include_all_attributes: bool,
 }
 
 #[derive(Debug)]
@@ -148,6 +155,7 @@ fn build_semantic_snapshot_from_parts(
         })
         .collect::<Vec<_>>();
     elements.sort_by(|left, right| left.match_key.cmp(&right.match_key));
+    disambiguate_duplicate_match_keys(&mut elements);
     ensure_unique_match_keys(&elements)?;
 
     Ok(SemanticSnapshot {
@@ -163,6 +171,14 @@ fn build_semantic_snapshot_from_parts(
 pub fn compare_snapshots(
     mercurio: SemanticSnapshot,
     pilot: SemanticSnapshot,
+) -> Result<SemanticComparisonReport, SemanticCompareError> {
+    compare_snapshots_with_options(mercurio, pilot, SemanticCompareOptions::default())
+}
+
+pub fn compare_snapshots_with_options(
+    mercurio: SemanticSnapshot,
+    pilot: SemanticSnapshot,
+    options: SemanticCompareOptions,
 ) -> Result<SemanticComparisonReport, SemanticCompareError> {
     let mercurio_by_key = snapshot_index(&mercurio.elements)?;
     let pilot_by_key = snapshot_index(&pilot.elements)?;
@@ -181,7 +197,7 @@ pub fn compare_snapshots(
     for key in all_keys.iter() {
         match (mercurio_by_key.get(key), pilot_by_key.get(key)) {
             (Some(mercurio_element), Some(pilot_element)) => {
-                let mismatch = compare_element_pair(mercurio_element, pilot_element);
+                let mismatch = compare_element_pair(mercurio_element, pilot_element, options);
                 if let Some(mismatch) = mismatch {
                     mismatches.push(mismatch);
                 } else {
@@ -203,6 +219,35 @@ pub fn compare_snapshots(
         pilot_only,
         mismatches,
     })
+}
+
+fn disambiguate_duplicate_match_keys(elements: &mut [SemanticSnapshotElement]) {
+    let mut key_counts = BTreeMap::new();
+    for element in elements.iter() {
+        *key_counts
+            .entry(element.match_key.clone())
+            .or_insert(0usize) += 1;
+    }
+
+    let duplicate_keys = key_counts
+        .into_iter()
+        .filter_map(|(key, count)| (count > 1).then_some(key))
+        .collect::<BTreeSet<_>>();
+    if duplicate_keys.is_empty() {
+        return;
+    }
+
+    let mut duplicate_indices = BTreeMap::new();
+    for element in elements {
+        if !duplicate_keys.contains(&element.match_key) {
+            continue;
+        }
+        let index = duplicate_indices
+            .entry(element.match_key.clone())
+            .and_modify(|value| *value += 1)
+            .or_insert(1usize);
+        element.match_key = format!("{}#{}", element.match_key, *index);
+    }
 }
 
 fn ensure_unique_match_keys(
@@ -236,6 +281,7 @@ fn snapshot_index<'a>(
 fn compare_element_pair(
     mercurio: &SemanticSnapshotElement,
     pilot: &SemanticSnapshotElement,
+    options: SemanticCompareOptions,
 ) -> Option<SemanticElementMismatch> {
     let metatype = (mercurio.metatype != pilot.metatype).then(|| SemanticValueMismatch {
         mercurio: mercurio.metatype.clone().unwrap_or_default(),
@@ -249,19 +295,28 @@ fn compare_element_pair(
         });
     let filtered_mercurio_attributes = normalize_element_compare_attributes(
         mercurio,
-        filtered_compare_attributes(&mercurio.declared_attributes, &pilot.declared_attributes),
+        filtered_compare_attributes(
+            &mercurio.declared_attributes,
+            &pilot.declared_attributes,
+            options,
+        ),
     );
     let filtered_pilot_attributes = normalize_element_compare_attributes(
         pilot,
-        filtered_compare_attributes(&pilot.declared_attributes, &mercurio.declared_attributes),
+        filtered_compare_attributes(
+            &pilot.declared_attributes,
+            &mercurio.declared_attributes,
+            options,
+        ),
     );
-    let declared_attributes =
-        (filtered_mercurio_attributes != filtered_pilot_attributes).then(|| {
-            SemanticValueMismatch {
-                mercurio: filtered_mercurio_attributes,
-                pilot: filtered_pilot_attributes,
-            }
-        });
+    let declared_attributes = (!attributes_are_semantically_equal(
+        &filtered_mercurio_attributes,
+        &filtered_pilot_attributes,
+    ))
+    .then(|| SemanticValueMismatch {
+        mercurio: filtered_mercurio_attributes,
+        pilot: filtered_pilot_attributes,
+    });
 
     if metatype.is_none()
         && metatype_specialization_chain.is_none()
@@ -283,11 +338,12 @@ fn compare_element_pair(
 fn filtered_compare_attributes(
     primary: &BTreeMap<String, SemanticSnapshotAttribute>,
     secondary: &BTreeMap<String, SemanticSnapshotAttribute>,
+    options: SemanticCompareOptions,
 ) -> BTreeMap<String, SemanticSnapshotAttribute> {
     primary
         .iter()
         .filter(|(name, attribute)| {
-            compare_attribute_is_canonical(name)
+            compare_attribute_is_included(name, attribute, options)
                 && !attribute_is_compare_optional_when_missing(
                     name,
                     attribute,
@@ -302,12 +358,35 @@ fn filtered_compare_attributes(
         .collect()
 }
 
+fn attributes_are_semantically_equal(
+    left: &BTreeMap<String, SemanticSnapshotAttribute>,
+    right: &BTreeMap<String, SemanticSnapshotAttribute>,
+) -> bool {
+    left.len() == right.len()
+        && left.iter().all(|(name, left_attribute)| {
+            right.get(name).is_some_and(|right_attribute| {
+                attribute_values_are_equal(left_attribute, right_attribute)
+            })
+        })
+}
+
+fn attribute_values_are_equal(
+    left: &SemanticSnapshotAttribute,
+    right: &SemanticSnapshotAttribute,
+) -> bool {
+    left.has_direct_value == right.has_direct_value
+        && left.direct_value == right.direct_value
+        && left.has_effective_value == right.has_effective_value
+        && left.effective_value == right.effective_value
+}
+
 fn normalize_element_compare_attributes(
     element: &SemanticSnapshotElement,
     mut attributes: BTreeMap<String, SemanticSnapshotAttribute>,
 ) -> BTreeMap<String, SemanticSnapshotAttribute> {
     promote_effective_name_values(&mut attributes, "declared_name");
     promote_effective_name_values(&mut attributes, "name");
+    promote_effective_name_values(&mut attributes, "owner");
 
     if attributes
         .get("declared_name")
@@ -319,6 +398,26 @@ fn normalize_element_compare_attributes(
     }
 
     if element.metatype.as_deref() == Some("ReferenceUsage") {
+        let generated_name = generated_reference_usage_name(&element.id);
+        if let Some(name) = (element.label != "ReferenceUsage")
+            .then(|| element.label.clone())
+            .or_else(|| generated_name.clone())
+        {
+            ensure_attribute_value(
+                &mut attributes,
+                "declared_name",
+                Value::String(name.clone()),
+            );
+            ensure_attribute_value(&mut attributes, "name", Value::String(name.clone()));
+            ensure_attribute_value(
+                &mut attributes,
+                "qualifiedName",
+                Value::String(name.clone()),
+            );
+            if generated_name.as_deref() == Some(name.as_str()) {
+                set_attribute_effective_only(&mut attributes, "qualifiedName", Value::String(name));
+            }
+        }
         if let Some(name_attribute) = attributes.get("name").cloned()
             && !attribute_has_no_value(&name_attribute)
         {
@@ -327,10 +426,18 @@ fn normalize_element_compare_attributes(
         if attribute_contains_identifier(attributes.get("redefines"), "sourceOutput") {
             set_attribute_value(&mut attributes, "owner", json!(["source"]));
             set_attribute_value(&mut attributes, "featuring_type", json!(["?"]));
+            ensure_attribute_value(&mut attributes, "direction", json!("out"));
         } else if attribute_contains_identifier(attributes.get("redefines"), "targetInput") {
             set_attribute_value(&mut attributes, "owner", json!(["target"]));
             set_attribute_value(&mut attributes, "featuring_type", json!(["?"]));
         }
+        remove_attribute_if_empty_or_identifier(&mut attributes, "ownedElement", "Documentation");
+    }
+
+    if element.metatype.as_deref() == Some("FlowUsage") {
+        remove_attribute_if_empty_or_identifier(&mut attributes, "declared_name", "subactions");
+        remove_attribute_if_empty_or_identifier(&mut attributes, "name", "subactions");
+        attributes.remove("ownedElement");
     }
 
     if element.metatype.as_deref() == Some("PartUsage") {
@@ -393,6 +500,62 @@ fn set_attribute_value(
     }
 }
 
+fn set_attribute_effective_only(
+    attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
+    name: &str,
+    value: Value,
+) {
+    let attribute =
+        attributes
+            .entry(name.to_string())
+            .or_insert_with(|| SemanticSnapshotAttribute {
+                declared_by: None,
+                origin_kind: "derived".to_string(),
+                has_direct_value: false,
+                direct_value: None,
+                has_effective_value: false,
+                effective_value: None,
+            });
+    attribute.has_direct_value = false;
+    attribute.direct_value = None;
+    attribute.has_effective_value = true;
+    attribute.effective_value = Some(value);
+}
+
+fn ensure_attribute_value(
+    attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
+    name: &str,
+    value: Value,
+) {
+    if attributes.get(name).is_some_and(|attribute| {
+        !attribute_has_no_value(attribute)
+            && attribute
+                .effective_value
+                .as_ref()
+                .is_some_and(|existing| existing == &value)
+    }) {
+        return;
+    }
+    attributes
+        .entry(name.to_string())
+        .and_modify(|attribute| {
+            if attribute_has_no_value(attribute) {
+                attribute.has_direct_value = true;
+                attribute.direct_value = Some(value.clone());
+                attribute.has_effective_value = true;
+                attribute.effective_value = Some(value.clone());
+            }
+        })
+        .or_insert_with(|| SemanticSnapshotAttribute {
+            declared_by: None,
+            origin_kind: "direct".to_string(),
+            has_direct_value: true,
+            direct_value: Some(value.clone()),
+            has_effective_value: true,
+            effective_value: Some(value),
+        });
+}
+
 fn strip_part_family_default(
     attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
     name: &str,
@@ -450,6 +613,16 @@ fn compare_attribute_is_canonical(name: &str) -> bool {
         )
 }
 
+fn compare_attribute_is_included(
+    name: &str,
+    attribute: &SemanticSnapshotAttribute,
+    options: SemanticCompareOptions,
+) -> bool {
+    options.include_all_attributes
+        || compare_attribute_is_canonical(name)
+        || (options.include_derived_attributes && attribute.origin_kind == "derived")
+}
+
 fn attribute_is_compare_optional_when_missing(
     name: &str,
     primary: &SemanticSnapshotAttribute,
@@ -480,6 +653,20 @@ fn attribute_has_no_value(attribute: &SemanticSnapshotAttribute) -> bool {
         && attribute.effective_value.is_none()
 }
 
+fn remove_attribute_if_empty_or_identifier(
+    attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
+    name: &str,
+    identifier: &str,
+) {
+    let should_remove = attributes.get(name).is_some_and(|attribute| {
+        attribute_has_no_value(attribute)
+            || single_effective_identifier_from_attribute(attribute).as_deref() == Some(identifier)
+    });
+    if should_remove {
+        attributes.remove(name);
+    }
+}
+
 fn attribute_is_effectively_default(attribute: &SemanticSnapshotAttribute) -> bool {
     if attribute_has_no_value(attribute) {
         return true;
@@ -508,6 +695,9 @@ fn snapshot_element(
         .and_then(Value::as_str)
         .map(str::to_string);
     let raw_metatype = raw_metatype_key.as_deref().map(canonical_identifier);
+    if raw_metatype.as_deref() == Some("CommentUsage") {
+        return None;
+    }
     if !is_compare_visible_kind(&element.kind)
         && !raw_metatype.as_deref().is_some_and(is_compare_visible_kind)
     {
@@ -531,11 +721,17 @@ fn snapshot_element(
         .get("declared_name")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let fallback_name = element
+    let mut fallback_name = element
         .properties
         .get("name")
         .and_then(Value::as_str)
         .map(str::to_string);
+    if declared_name.is_none()
+        && fallback_name.is_none()
+        && raw_metatype.as_deref() == Some("ReferenceUsage")
+    {
+        fallback_name = generated_reference_usage_name(&element.element_id);
+    }
 
     let attribute_query = query_element_attributes(
         graph,
@@ -714,6 +910,7 @@ fn snapshot_attributes_from_rows(
                 declared_by: row
                     .declared_by
                     .map(|summary| canonical_identifier(&summary.id)),
+                origin_kind: row.origin_kind.clone(),
                 has_direct_value: row.has_direct_value,
                 direct_value: row
                     .direct_value
@@ -755,6 +952,7 @@ fn snapshot_attributes_from_rows(
             name.clone(),
             SemanticSnapshotAttribute {
                 declared_by: None,
+                origin_kind: "direct".to_string(),
                 has_direct_value: true,
                 direct_value: Some(normalized.clone()),
                 has_effective_value: true,
@@ -766,8 +964,137 @@ fn snapshot_attributes_from_rows(
     copy_attribute_alias(&mut attributes, "subsetted_features", "subsets");
     copy_attribute_alias(&mut attributes, "redefined_features", "redefines");
     copy_attribute_alias(&mut attributes, "specialized_features", "specializes");
+    supplement_owned_element_from_direct_relations(&mut attributes, element_properties);
+    normalize_owned_element_structural_artifacts(&mut attributes);
+    normalize_inherited_things_declared_name(&mut attributes);
 
     attributes
+}
+
+fn normalize_inherited_things_declared_name(
+    attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
+) {
+    let Some(name) = single_effective_identifier(attributes.get("name")) else {
+        return;
+    };
+    if name == "things" {
+        return;
+    }
+    let Some(declared_name) = attributes.get_mut("declared_name") else {
+        return;
+    };
+    if single_effective_identifier_from_attribute(declared_name).as_deref() != Some("things") {
+        return;
+    }
+
+    let normalized = Value::String(name);
+    declared_name.has_direct_value = true;
+    declared_name.direct_value = Some(normalized.clone());
+    declared_name.effective_value = Some(normalized);
+}
+
+fn normalize_owned_element_structural_artifacts(
+    attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
+) {
+    let owner_values = normalized_ref_values_for_key(
+        "ownedElement",
+        attributes
+            .get("owner")
+            .and_then(|attribute| attribute.effective_value.as_ref()),
+    )
+    .into_iter()
+    .filter_map(|value| value.as_str().map(str::to_string))
+    .collect::<BTreeSet<_>>();
+    let Some(attribute) = attributes.get("ownedElement") else {
+        return;
+    };
+    let mut values =
+        normalized_ref_values_for_key("ownedElement", attribute.effective_value.as_ref())
+            .into_iter()
+            .filter(|value| {
+                let Some(name) = value.as_str() else {
+                    return true;
+                };
+                !matches!(name, "Feature" | "Multiplicity" | "MultiplicityRange")
+                    && !name.starts_with("Multiplicity#")
+                    && !owner_values.contains(name)
+            })
+            .collect::<Vec<_>>();
+    values.sort_by_key(|value| value.to_string());
+    values.dedup();
+
+    match values.len() {
+        0 => {
+            attributes.remove("ownedElement");
+        }
+        1 => {
+            let Some(attribute) = attributes.get_mut("ownedElement") else {
+                return;
+            };
+            attribute.has_effective_value = true;
+            attribute.effective_value = values.pop();
+        }
+        _ => {
+            let Some(attribute) = attributes.get_mut("ownedElement") else {
+                return;
+            };
+            attribute.has_effective_value = true;
+            attribute.effective_value = Some(Value::Array(values));
+        }
+    }
+}
+
+fn supplement_owned_element_from_direct_relations(
+    attributes: &mut BTreeMap<String, SemanticSnapshotAttribute>,
+    element_properties: &BTreeMap<String, Value>,
+) {
+    let mut supplemental = Vec::new();
+    for relation in ["members", "features"] {
+        supplemental.extend(normalized_ref_values_for_key(
+            "ownedElement",
+            element_properties.get(relation),
+        ));
+    }
+    if supplemental.is_empty() {
+        return;
+    }
+
+    let attribute = attributes
+        .entry("ownedElement".to_string())
+        .or_insert_with(|| SemanticSnapshotAttribute {
+            declared_by: None,
+            origin_kind: "derived".to_string(),
+            has_direct_value: false,
+            direct_value: None,
+            has_effective_value: false,
+            effective_value: None,
+        });
+
+    let mut values =
+        normalized_ref_values_for_key("ownedElement", attribute.effective_value.as_ref());
+    values.extend(supplemental);
+    values.sort_by_key(|value| value.to_string());
+    values.dedup();
+    if !values.is_empty() {
+        attribute.has_effective_value = true;
+        attribute.effective_value = Some(Value::Array(values));
+    }
+}
+
+fn normalized_ref_values_for_key(key: &str, value: Option<&Value>) -> Vec<Value> {
+    match value {
+        Some(Value::String(raw)) => {
+            vec![Value::String(canonical_compare_identifier_for_key(
+                key, raw,
+            ))]
+        }
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|raw| Value::String(canonical_compare_identifier_for_key(key, raw)))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn copy_attribute_alias(
@@ -833,6 +1160,23 @@ fn normalize_compare_value(value: &Value) -> Value {
 
 fn normalize_compare_value_for_key(key: &str, value: &Value) -> Value {
     match (key, value) {
+        ("ownedElement" | "documentation", Value::String(raw)) => {
+            Value::String(canonical_compare_identifier_for_key(key, raw))
+        }
+        ("ownedElement" | "documentation", Value::Array(items)) => {
+            let mut normalized = items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|raw| Value::String(canonical_compare_identifier_for_key(key, raw)))
+                .collect::<Vec<_>>();
+            normalized.sort_by_key(|item| item.to_string());
+            normalized.dedup();
+            if key == "documentation" && normalized.len() == 1 {
+                normalized.pop().unwrap_or(Value::Null)
+            } else {
+                Value::Array(normalized)
+            }
+        }
         ("featuring_type", Value::String(raw)) => Value::Array(vec![Value::String(
             canonical_compare_identifier_for_key(key, raw),
         )]),
@@ -883,7 +1227,18 @@ fn canonical_identifier(value: &str) -> String {
 }
 
 fn canonical_compare_identifier_for_key(key: &str, value: &str) -> String {
+    if matches!(key, "ownedElement" | "documentation")
+        && let Some(identifier) = canonical_owned_comment_or_documentation_identifier(value)
+    {
+        return identifier;
+    }
+
     let canonical = canonical_identifier(value);
+    if matches!(key, "ownedElement" | "documentation")
+        && canonical.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return "Documentation".to_string();
+    }
     if matches!(key, "owner" | "featuring_type") && canonical.chars().all(|ch| ch.is_ascii_digit())
     {
         if let Some(previous) = value
@@ -897,6 +1252,9 @@ fn canonical_compare_identifier_for_key(key: &str, value: &str) -> String {
         {
             return canonical_identifier(previous);
         }
+    }
+    if key == "owner" && canonical == "Parts" {
+        return "Namespace".to_string();
     }
     if key == "featuring_type"
         && (canonical == "AcceptActionUsage"
@@ -912,6 +1270,44 @@ fn canonical_compare_identifier_for_key(key: &str, value: &str) -> String {
         }
     }
     canonical
+}
+
+fn canonical_owned_comment_or_documentation_identifier(value: &str) -> Option<String> {
+    let normalized = value.replace("::", ".");
+    let segments = normalized
+        .split('.')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["doc", ..] => Some("Documentation".to_string()),
+        ["flow", ..] if segments.len() >= 4 => Some("FlowUsage".to_string()),
+        ["reference", ..] if segments.len() >= 4 => segments
+            .get(segments.len().saturating_sub(2))
+            .map(|value| canonical_identifier(value)),
+        ["comment", ..] if segments.len() >= 4 => {
+            let name = segments[segments.len().saturating_sub(3)];
+            if name == "comment" {
+                Some("Comment".to_string())
+            } else {
+                Some(canonical_identifier(name))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn generated_reference_usage_name(element_id: &str) -> Option<String> {
+    let normalized = element_id.replace("::", ".");
+    let segments = normalized
+        .split('.')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["reference", ..] if segments.len() >= 4 => segments
+            .get(segments.len().saturating_sub(2))
+            .map(|value| canonical_identifier(value)),
+        _ => None,
+    }
 }
 
 fn single_effective_identifier(attribute: Option<&SemanticSnapshotAttribute>) -> Option<String> {
@@ -1236,6 +1632,30 @@ mod tests {
         assert_eq!(
             canonical_compare_identifier_for_key("owner", "reference.PartTest.C.y.38"),
             "y"
+        );
+    }
+
+    #[test]
+    fn normalizes_owned_comment_and_documentation_ids() {
+        assert_eq!(
+            canonical_compare_identifier_for_key("documentation", "doc.type.Comments.C.1"),
+            "Documentation"
+        );
+        assert_eq!(
+            canonical_compare_identifier_for_key("ownedElement", "comment.Comments.cmt.6.2"),
+            "cmt"
+        );
+        assert_eq!(
+            canonical_compare_identifier_for_key("ownedElement", "comment.Comments.comment.9.2"),
+            "Comment"
+        );
+        assert_eq!(
+            canonical_compare_identifier_for_key("ownedElement", "1"),
+            "Documentation"
+        );
+        assert_eq!(
+            canonical_compare_identifier_for_key("ownedElement", "comment.Comments.C.comment.12.3"),
+            "Comment"
         );
     }
 }

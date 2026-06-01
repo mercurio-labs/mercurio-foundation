@@ -16,6 +16,7 @@ pub enum TokenKind {
     Specializes,
     Redefines,
     Doc(String),
+    BlockDoc(String),
     Identifier(String),
     Number(String),
     String(String),
@@ -65,6 +66,7 @@ struct Lexer<'a> {
     index: usize,
     line: usize,
     col: usize,
+    comment_doc_candidate: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -75,6 +77,7 @@ impl<'a> Lexer<'a> {
             index: 0,
             line: 1,
             col: 1,
+            comment_doc_candidate: false,
         }
     }
 
@@ -211,6 +214,9 @@ impl<'a> Lexer<'a> {
                     self.advance_char();
                     TokenKind::Minus
                 }
+                '/' if self.peek_next_char() == Some('*') && self.comment_doc_candidate => {
+                    TokenKind::BlockDoc(self.consume_doc_block()?)
+                }
                 '/' => {
                     self.advance_char();
                     TokenKind::Slash
@@ -265,6 +271,7 @@ impl<'a> Lexer<'a> {
                 }
             };
 
+            self.update_comment_doc_candidate(&kind);
             tokens.push(Token {
                 kind,
                 span: SourceSpan {
@@ -385,6 +392,9 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+                Some('/') if self.peek_next_char() == Some('*') && self.comment_doc_candidate => {
+                    return Ok(());
+                }
                 Some('/') if self.peek_next_char() == Some('*') => {
                     self.consume_block_comment()?;
                 }
@@ -471,6 +481,28 @@ impl<'a> Lexer<'a> {
         }
 
         Err(Diagnostic::new("unterminated doc block", None))
+    }
+
+    fn update_comment_doc_candidate(&mut self, kind: &TokenKind) {
+        match kind {
+            TokenKind::Identifier(value) if value == "comment" => {
+                self.comment_doc_candidate = true;
+            }
+            TokenKind::Doc(_)
+            | TokenKind::BlockDoc(_)
+            | TokenKind::Semicolon
+            | TokenKind::LBrace
+            | TokenKind::RBrace
+            | TokenKind::Eof
+            | TokenKind::Package
+            | TokenKind::Import
+            | TokenKind::Part
+            | TokenKind::At
+            | TokenKind::Hash => {
+                self.comment_doc_candidate = false;
+            }
+            _ => {}
+        }
     }
 
     fn skip_plain_whitespace(&mut self) {

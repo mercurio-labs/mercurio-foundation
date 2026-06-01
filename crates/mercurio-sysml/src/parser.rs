@@ -106,7 +106,7 @@ pub fn default_sysml_library_path() -> PathBuf {
 
 pub fn load_sysml_baseline() -> Result<KirDocument, KirError> {
     let kernel = mercurio_kerml::load_kernel_baseline()?;
-    let sysml_delta = KirDocument::from_path(&default_sysml_delta_library_path())?;
+    let sysml_delta = KirDocument::from_path_lenient(&default_sysml_delta_library_path())?;
     KirDocument::merge([kernel, sysml_delta])
 }
 
@@ -1179,7 +1179,7 @@ impl Parser {
 
     fn parse_package(
         &mut self,
-        docs: Vec<String>,
+        mut docs: Vec<String>,
         modifiers: Vec<String>,
     ) -> Result<PackageDecl, Diagnostic> {
         let start = self.expect(TokenKind::Package, "expected `package`")?;
@@ -1204,6 +1204,9 @@ impl Parser {
         let mut definitions = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
             self.collect_docs();
+            if !self.pending_docs.is_empty() && self.next_declaration_is_comment_usage() {
+                docs.append(&mut self.pending_docs);
+            }
             let declaration = match self.parse_declaration().and_then(|declaration| {
                 declaration.ok_or_else(|| self.error_here("expected declaration inside package"))
             }) {
@@ -1621,6 +1624,41 @@ impl Parser {
             }
             force_implicit_name = true;
             Some("AcceptActionUsage".to_string())
+        } else if keyword == "flow"
+            && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "of")
+        {
+            self.expect_identifier_named("of", "expected `of` after `flow`")?;
+            let _payload_type = self.parse_qualified_name()?;
+            self.expect_identifier_named("from", "expected `from` before flow source")?;
+            let source = self.parse_qualified_name()?;
+            self.expect_identifier_named("to", "expected `to` between flow ends")?;
+            let target = self.parse_qualified_name()?;
+            let source_name = source
+                .segments
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "source".to_string());
+            let target_name = target
+                .segments
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "target".to_string());
+            synthetic_body_members.push(synthetic_reference_usage(
+                &source_name,
+                None,
+                Some(source),
+                &["source-output", "out"],
+                &start.span,
+            ));
+            synthetic_body_members.push(synthetic_reference_usage(
+                &target_name,
+                None,
+                Some(target),
+                &["target-input", "in"],
+                &start.span,
+            ));
+            force_implicit_name = true;
+            Some("FlowUsage".to_string())
         } else if keyword == "succession"
             && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "flow")
         {
@@ -1673,7 +1711,7 @@ impl Parser {
             && matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "action")
         {
             self.expect_identifier_named("action", "expected `action` after `perform`")?;
-            effective_keyword = "action".to_string();
+            effective_keyword = "perform".to_string();
             if matches!(
                 self.peek_kind(),
                 TokenKind::Specializes
@@ -1874,6 +1912,7 @@ impl Parser {
             None
         };
 
+        let mut about_target = None;
         if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "about") {
             end = self
                 .expect_identifier_named("about", "expected `about` after comment name")?
@@ -1884,22 +1923,28 @@ impl Parser {
                     kind: TokenKind::Identifier(
                         target.segments.last().cloned().unwrap_or_default(),
                     ),
-                    span: target.span,
+                    span: target.span.clone(),
                 };
+                about_target = Some(target);
             }
         }
 
+        let mut locale = None;
         if matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "locale") {
             end = self
                 .expect_identifier_named("locale", "expected `locale` after comment target")?
                 .clone();
             if matches!(self.peek_kind(), TokenKind::String(_)) {
                 end = self.expect_string_literal("expected locale string after `locale`")?;
+                if let TokenKind::String(value) = &end.kind {
+                    locale = Some(value.clone());
+                }
             }
         }
 
-        while let TokenKind::Doc(text) = self.peek_kind().clone() {
-            docs.push(text);
+        let mut comment_body = Vec::new();
+        while let TokenKind::BlockDoc(text) = self.peek_kind().clone() {
+            comment_body.push(text);
             end = self.current().clone();
             self.advance();
         }
@@ -1919,15 +1964,23 @@ impl Parser {
 
         let is_implicit_name = explicit_name.is_none();
 
+        let mut metadata_properties = BTreeMap::new();
+        if !comment_body.is_empty() {
+            metadata_properties.insert("body".to_string(), comment_body.join("\n\n"));
+        }
+        if let Some(locale) = locale {
+            metadata_properties.insert("locale".to_string(), locale);
+        }
+
         Ok(Declaration::GenericUsage(GenericUsageDecl {
             keyword: "comment".to_string(),
             name: explicit_name.unwrap_or_else(|| "comment".to_string()),
             is_implicit_name,
             ty: None,
-            reference_target: None,
+            reference_target: about_target,
             allocation_source: None,
             allocation_target: None,
-            metadata_properties: Default::default(),
+            metadata_properties,
             multiplicity: None,
             expression: None,
             additional_types: Vec::new(),
@@ -2715,6 +2768,9 @@ impl Parser {
 
         while !matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
             self.collect_docs();
+            if !self.pending_docs.is_empty() && self.next_declaration_is_comment_usage() {
+                owner_docs.append(&mut self.pending_docs);
+            }
             if !self.block_starts_with_declaration() {
                 owner_docs.append(&mut self.pending_docs);
                 self.consume_opaque_statement_in_block()?;
@@ -2748,7 +2804,7 @@ impl Parser {
 
         while matches!(
             self.tokens.get(index).map(|token| &token.kind),
-            Some(TokenKind::Doc(_))
+            Some(TokenKind::Doc(_) | TokenKind::BlockDoc(_))
         ) {
             index += 1;
         }
@@ -2792,10 +2848,14 @@ impl Parser {
                     )
                 ) || matches!(next_kind, Some(TokenKind::LAngle) if is_feature_keyword(value))
                     || matches!(next_kind, Some(TokenKind::LBracket) if value == "connect" || value == "end")
-                    || matches!(next_kind, Some(TokenKind::Doc(_)) if value == "comment")
+                    || matches!(next_kind, Some(TokenKind::Doc(_) | TokenKind::BlockDoc(_)) if value == "comment")
             }
             _ => false,
         }
+    }
+
+    fn next_declaration_is_comment_usage(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Identifier(value) if value == "comment")
     }
 
     fn consume_opaque_block_contents(&mut self) -> Result<Token, Diagnostic> {
@@ -3082,7 +3142,7 @@ impl Parser {
     fn should_parse_as_feature_keyword(&self, keyword: &str) -> bool {
         match self.next_kind() {
             Some(TokenKind::Def | TokenKind::Identifier(_) | TokenKind::LAngle) => true,
-            Some(TokenKind::Doc(_)) => keyword == "comment",
+            Some(TokenKind::Doc(_) | TokenKind::BlockDoc(_)) => keyword == "comment",
             Some(TokenKind::Colon) => {
                 matches!(keyword, "connection") || is_feature_keyword(keyword)
             }
@@ -3457,7 +3517,10 @@ fn append_package_member(
 }
 
 fn implicit_usage_keyword(modifiers: &[String]) -> &'static str {
-    if modifiers.iter().any(|modifier| modifier == "ref") {
+    if modifiers
+        .iter()
+        .any(|modifier| matches!(modifier.as_str(), "ref" | "in" | "out" | "inout"))
+    {
         "reference"
     } else {
         "feature"

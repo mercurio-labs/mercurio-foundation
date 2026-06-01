@@ -16,6 +16,11 @@ domain rulepacks, or UI workflows.
 
 ## Target Repository Shape
 
+The immediate goal is to organize `mercurio-core` into clear internal layers
+inside this repository. A later split into a separate modeling-kernel repository
+may make sense once the APIs, generated artifacts, and release boundaries are
+stable, but that should not be the first migration step.
+
 ```text
 mercurio-core/
   Cargo.toml
@@ -117,6 +122,44 @@ members = [
 ]
 resolver = "2"
 ```
+
+## Layering Model
+
+The repository should be organized as layered crates, even while those crates
+remain in one workspace:
+
+```text
+MMP / metamodel package layer
+  design-time metamodel definitions, similar to .ecore
+  concept, field, inheritance, derived-property, and rule declarations
+
+Generated registry and wrapper layer
+  concept IDs, field IDs, validation tables, reflection metadata
+  generated Rust/Python typed views and builders over KIR
+
+KIR / modeling-kernel layer
+  canonical model instance format
+  identity, elements, fields, references, containment, metadata
+  JSON artifact IO, future binary KIR artifact IO
+
+Runtime/index layer
+  immutable snapshots, graph indexes, query engine, derived values
+  rule execution infrastructure, cache and delta/fork support
+
+KerML layer
+  KerML metamodel package, textual syntax, compiler mappings, semantic rules
+
+SysML layer
+  SysML metamodel package, textual syntax, compiler mappings, standard library
+
+Access layer
+  CLI, WASM, Python, and developer tools
+```
+
+This layering is an internal organization rule first. The modeling-kernel and
+runtime layers may eventually become a separate project, but only after the
+workspace-level crate boundaries are strict enough that extraction is a packaging
+operation rather than an architecture redesign.
 
 ## Crate Responsibilities
 

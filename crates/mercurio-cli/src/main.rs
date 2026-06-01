@@ -3410,7 +3410,12 @@ mod tests {
 
     fn sample_evaluation_document() -> KirDocument {
         KirDocument {
-            metadata: Default::default(),
+            metadata: [(
+                "kir_schema_version".to_string(),
+                serde_json::json!(mercurio_core::KIR_SCHEMA_VERSION),
+            )]
+            .into_iter()
+            .collect(),
             elements: vec![
                 mercurio_core::KirElement {
                     id: "type.EvalDemo.Engine".to_string(),
@@ -4288,7 +4293,7 @@ mod tests {
 
     #[test]
     fn package_verify_checks_bundled_stdlib_package() {
-        let repo = mercurio_core::bundled_package_repo_path();
+        let repo = mercurio_core::repo_path("packages");
         let result = run_args(&[
             "package",
             "verify",

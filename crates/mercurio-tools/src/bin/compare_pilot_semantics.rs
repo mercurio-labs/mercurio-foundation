@@ -8,9 +8,10 @@ use mercurio_core::source_set::{
     SourceCompileContext, SourceDocument, compile_source_document_with_context,
 };
 use mercurio_core::{
-    Graph, KirDocument, MetamodelAttributeRegistry, PilotExportDocument, SnapshotMode,
-    build_semantic_snapshot, build_semantic_snapshot_with_registry, compare_snapshots,
-    default_stdlib_path, load_pilot_export, normalize_pilot_export_for_compare, repo_path,
+    Graph, KirDocument, MetamodelAttributeRegistry, PilotExportDocument, SemanticCompareOptions,
+    SnapshotMode, build_semantic_snapshot, build_semantic_snapshot_with_registry,
+    compare_snapshots_with_options, default_stdlib_path, load_pilot_export,
+    normalize_pilot_export_for_compare, repo_path,
 };
 use mercurio_tools::default_pilot_root;
 use serde::{Deserialize, Serialize};
@@ -22,7 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let corpus_seed = PilotCorpusSeed::load()?;
     match &args.relative_path {
         Some(relative_path) => {
-            let output = run_compare_case(&args.pilot_root, relative_path, &corpus_seed)?;
+            let output = run_compare_case(
+                &args.pilot_root,
+                relative_path,
+                &corpus_seed,
+                args.compare_options,
+            )?;
 
             if let Some(parent) = args.output_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -59,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     relative_path,
                     &corpus_seed,
                     &pilot_cases,
+                    args.compare_options,
                 ) {
                     Ok(output) => {
                         println!(
@@ -89,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 corpus_name,
                 case_count: cases.len(),
                 shared_timings,
+                compare_options: args.compare_options,
                 aggregate: CorpusAggregate::from_cases(&cases),
                 cases,
             };
@@ -142,6 +150,7 @@ struct Args {
     corpus_name: Option<String>,
     paths_file: Option<PathBuf>,
     output_path: PathBuf,
+    compare_options: SemanticCompareOptions,
 }
 
 impl Args {
@@ -182,6 +191,7 @@ struct CompareOutput {
     relative_path: String,
     support_paths: Vec<String>,
     pilot_export_path: String,
+    compare_options: SemanticCompareOptions,
     timings: CompareTimings,
     mercurio_snapshot: mercurio_core::SemanticSnapshot,
     pilot_snapshot: mercurio_core::SemanticSnapshot,
@@ -196,6 +206,7 @@ struct CorpusCompareOutput {
     case_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     shared_timings: Option<CorpusSharedTimings>,
+    compare_options: SemanticCompareOptions,
     aggregate: CorpusAggregate,
     cases: Vec<CorpusCaseSummary>,
 }
@@ -447,6 +458,7 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut corpus_name = None;
     let mut paths_file = None;
     let mut output_path = repo_path("target/pilot_semantic_compare.json");
+    let mut compare_options = SemanticCompareOptions::default();
     let args = env::args().skip(1).collect::<Vec<_>>();
     let mut index = 0;
 
@@ -483,6 +495,12 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                 index += 1;
                 output_path = PathBuf::from(args.get(index).ok_or("missing value for --out")?);
             }
+            "--include-derived-properties" => {
+                compare_options.include_derived_attributes = true;
+            }
+            "--all-attributes" => {
+                compare_options.include_all_attributes = true;
+            }
             "--help" | "-h" => {
                 print_usage();
                 std::process::exit(0);
@@ -505,12 +523,13 @@ fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
         corpus_name,
         paths_file,
         output_path,
+        compare_options,
     })
 }
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p mercurio-tools --bin compare_pilot_semantics -- (--relative-path PATH | --corpus NAME|all | --paths-file PATH) [--pilot-root PATH] [--out PATH]"
+        "Usage: cargo run -p mercurio-tools --bin compare_pilot_semantics -- (--relative-path PATH | --corpus NAME|all | --paths-file PATH) [--pilot-root PATH] [--out PATH] [--include-derived-properties] [--all-attributes]"
     );
 }
 
@@ -518,6 +537,7 @@ fn run_compare_case(
     pilot_root: &Path,
     relative_path: &str,
     corpus_seed: &PilotCorpusSeed,
+    compare_options: SemanticCompareOptions,
 ) -> Result<CompareOutput, Box<dyn std::error::Error>> {
     let mercurio = build_mercurio_case(pilot_root, relative_path, corpus_seed)?;
     let support_paths = mercurio.support_paths.clone();
@@ -566,6 +586,7 @@ fn run_compare_case(
             ],
         },
         "Rust timings currently include loading prebuilt stdlib KIR JSON plus L2 compile/snapshot. Pilot timings currently include Java exporter wall-clock time for loading source libraries plus L2 export/snapshot.".to_string(),
+        compare_options,
     )
 }
 
@@ -574,6 +595,7 @@ fn run_compare_case_from_batch(
     relative_path: &str,
     corpus_seed: &PilotCorpusSeed,
     pilot_cases: &BTreeMap<String, PilotBatchExportCase>,
+    compare_options: SemanticCompareOptions,
 ) -> Result<CompareOutput, Box<dyn std::error::Error>> {
     let mercurio = build_mercurio_case(pilot_root, relative_path, corpus_seed)?;
     let support_paths = mercurio.support_paths.clone();
@@ -613,6 +635,7 @@ fn run_compare_case_from_batch(
             ],
         },
         "Rust timings currently include loading prebuilt stdlib KIR JSON plus L2 compile/snapshot. Pilot corpus timings exclude shared batch setup and JSON load; see shared_timings for those costs.".to_string(),
+        compare_options,
     )
 }
 
@@ -724,9 +747,14 @@ fn build_compare_output(
     pilot_snapshot: mercurio_core::SemanticSnapshot,
     pilot_timings: EngineTimings,
     note: String,
+    compare_options: SemanticCompareOptions,
 ) -> Result<CompareOutput, Box<dyn std::error::Error>> {
     let compare_start = Instant::now();
-    let report = compare_snapshots(mercurio.snapshot.clone(), pilot_snapshot.clone())?;
+    let report = compare_snapshots_with_options(
+        mercurio.snapshot.clone(),
+        pilot_snapshot.clone(),
+        compare_options,
+    )?;
     let compare_ms = elapsed_ms(compare_start);
 
     Ok(CompareOutput {
@@ -735,6 +763,7 @@ fn build_compare_output(
         relative_path: relative_path.to_string(),
         support_paths,
         pilot_export_path,
+        compare_options,
         timings: CompareTimings {
             note,
             mercurio: mercurio.timings,

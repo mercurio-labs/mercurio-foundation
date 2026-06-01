@@ -927,19 +927,26 @@ fn derived_owner(graph: &Graph, element: &Element) -> Option<DerivedPropertyValu
 }
 
 fn derived_owned_element(graph: &Graph, element: &Element) -> Option<DerivedPropertyValue> {
-    let mut ids = Vec::new();
+    let mut ids: Vec<Value> = Vec::new();
     for relation in ["members", "features", "ownedElement"] {
         for edge in graph.outgoing(element.id, relation) {
-            if let Some(element_id) = graph.element_id(edge.target)
-                && !ids.iter().any(|existing| existing == element_id)
+            let Some(target) = graph.element(edge.target) else {
+                continue;
+            };
+            if is_namespace_membership_element(target) || is_import_element(target) {
+                continue;
+            }
+            if !ids
+                .iter()
+                .any(|existing| existing.as_str() == Some(&target.element_id))
             {
-                ids.push(Value::String(element_id.to_string()));
+                ids.push(Value::String(target.element_id.clone()));
             }
         }
     }
 
     let had_forward_relations = !ids.is_empty();
-    for child_id in owned_children_from_owner(graph, element, None) {
+    for child_id in owned_children_from_owner(graph, element, Some(is_owned_element_candidate)) {
         if !ids
             .iter()
             .any(|existing| existing.as_str() == Some(&child_id))
@@ -1435,6 +1442,26 @@ fn is_feature_membership_element(element: &Element) -> bool {
             .any(|type_ref| type_ref == "KerML::Core::FeatureMembership")
 }
 
+fn is_owned_element_candidate(element: &Element) -> bool {
+    !is_namespace_membership_element(element) && !is_import_element(element)
+}
+
+fn is_namespace_membership_element(element: &Element) -> bool {
+    element.kind == "KerML::Root::Membership"
+        || element.kind == "Membership"
+        || property_refs(&element.properties, "type")
+            .into_iter()
+            .any(|type_ref| type_ref == "KerML::Root::Membership")
+}
+
+fn is_import_element(element: &Element) -> bool {
+    element.kind == "KerML::Root::Import"
+        || element.kind.ends_with("::Import")
+        || property_refs(&element.properties, "type")
+            .into_iter()
+            .any(|type_ref| type_ref == "KerML::Root::Import" || type_ref.ends_with("::Import"))
+}
+
 fn is_conjugation_element(element: &Element) -> bool {
     element.kind == "KerML::Core::Conjugation"
         || element.kind.ends_with("::Conjugation")
@@ -1709,6 +1736,65 @@ mod tests {
                 .derived_property(&registry, &graph, documentation, "annotatedElement")
                 .map(|value| value.value),
             Some(Value::String("type.Demo.A".to_string()))
+        );
+    }
+
+    #[test]
+    fn owned_element_excludes_namespace_membership_relationships() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Demo".to_string(),
+                    kind: "KerML::Root::Namespace".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("members".to_string(), json!(["type.Demo.A"])),
+                        ("membership".to_string(), json!(["member.Demo.A"])),
+                    ]),
+                },
+                KirElement {
+                    id: "member.Demo.A".to_string(),
+                    kind: "KerML::Root::Membership".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("owner".to_string(), json!("pkg.Demo")),
+                        ("memberElement".to_string(), json!("type.Demo.A")),
+                    ]),
+                },
+                KirElement {
+                    id: "type.Demo.A".to_string(),
+                    kind: "KerML::Root::Element".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([("owner".to_string(), json!("pkg.Demo"))]),
+                },
+                KirElement {
+                    id: "import.Demo.A".to_string(),
+                    kind: "KerML::Root::Import".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("owner".to_string(), json!("pkg.Demo")),
+                        ("target".to_string(), json!("type.Demo.A")),
+                    ]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = DerivedFeatureRegistry::with_builtin_core_specs();
+        let cache = DerivedFeatureCache::new("revision-membership");
+        let package = graph.element_by_element_id("pkg.Demo").unwrap();
+
+        assert_eq!(
+            cache
+                .derived_property(&registry, &graph, package, "ownedElement")
+                .map(|value| value.value),
+            Some(json!(["type.Demo.A"]))
+        );
+        assert_eq!(
+            cache
+                .derived_property(&registry, &graph, package, "membership")
+                .map(|value| value.value),
+            Some(json!(["member.Demo.A"]))
         );
     }
 

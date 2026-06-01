@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mercurio.local/schemas/kir-0.2.json",
+  "title": "Mercurio KIR Document",
+  "type": "object",
+  "required": ["metadata", "elements"],
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["kir_schema_version"],
+      "properties": {
+        "kir_schema_version": {
+          "const": "0.2"
+        }
+      },
+      "additionalProperties": true
+    },
+    "elements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/kirElement"
+      }
+    }
+  },
+  "$defs": {
+    "kirElement": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "layer": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/propertyValue"
+          }
+        }
+      }
+    },
+    "propertyValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array"
+        },
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sourceSpan": {
+      "type": "object",
+      "required": ["start_line", "end_line"],
+      "properties": {
+        "start_line": {
+          "type": "number"
+        },
+        "start_col": {
+          "type": "number"
+        },
+        "end_line": {
+          "type": "number"
+        },
+        "end_col": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "elementMetadata": {
+      "type": "object",
+      "properties": {
+        "source_file": {
+          "type": "string"
+        },
+        "source_language": {
+          "type": "string"
+        },
+        "generated": {
+          "type": "boolean"
+        },
+        "source_span": {
+          "$ref": "#/$defs/sourceSpan"
+        }
+      },
+      "additionalProperties": true
+    },
+    "expressionIr": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["literal", "self", "path", "tuple", "unary", "binary", "call"]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

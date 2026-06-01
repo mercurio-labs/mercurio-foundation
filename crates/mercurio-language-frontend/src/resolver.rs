@@ -1874,7 +1874,35 @@ fn resolve_usage(
     let reference_target = effective_reference_target
         .as_ref()
         .map(|name| {
-            if matches!(usage.construct.as_str(), "SatisfyUsage" | "VerifyUsage") {
+            if usage.construct == "CommentUsage" {
+                resolve_comment_annotation_target(&usage, name, local_definitions, local_usage_map)
+                    .or_else(|| {
+                        resolve_type_reference_in_scope(
+                            name,
+                            &usage.owner_qualified_name,
+                            stdlib_ids,
+                            stdlib_aliases,
+                            local_definitions,
+                            local_aliases,
+                            import_aliases,
+                        )
+                    })
+                    .or_else(|| {
+                        resolve_reference_usage_target(
+                            &usage,
+                            name,
+                            stdlib_ids,
+                            stdlib_feature_index,
+                            stdlib_aliases,
+                            local_definitions,
+                            local_aliases,
+                            import_aliases,
+                            definition_index,
+                            local_feature_index,
+                            local_usage_map,
+                        )
+                    })
+            } else if matches!(usage.construct.as_str(), "SatisfyUsage" | "VerifyUsage") {
                 resolve_type_reference_in_scope(
                     name,
                     &usage.owner_qualified_name,
@@ -2975,6 +3003,14 @@ fn resolve_feature_reference_with_seen(
         }
     }
 
+    if let Some(local_usage) =
+        resolve_local_usage_qualified_name(name, local_aliases, import_aliases, local_usage_map)
+    {
+        if local_usage != usage.qualified_name {
+            return Some(feature_id_from_qualified_name(&local_usage));
+        }
+    }
+
     if usage.owner_construct.ends_with("Definition") {
         if let Some(inherited) = resolve_inherited_definition_feature_reference(
             &usage.owner_qualified_name,
@@ -3036,6 +3072,25 @@ fn resolve_feature_reference_with_seen(
     }
 
     None
+}
+
+fn resolve_local_usage_qualified_name(
+    name: &QualifiedName,
+    local_aliases: &BTreeMap<String, QualifiedName>,
+    import_aliases: &ImportAliases,
+    local_usage_map: &BTreeMap<String, CollectedUsage>,
+) -> Option<String> {
+    if let Some(expanded) = expand_import_namespace_prefix(name, local_aliases, import_aliases) {
+        return resolve_local_usage_qualified_name(
+            &expanded,
+            local_aliases,
+            import_aliases,
+            local_usage_map,
+        );
+    }
+
+    let dotted = name.as_dot_string();
+    local_usage_map.contains_key(&dotted).then_some(dotted)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4078,6 +4133,62 @@ fn usage_construct_stdlib_owner(construct: &str) -> Option<&'static str> {
 
 fn feature_id_from_qualified_name(qualified_name: &str) -> String {
     format!("feature.{qualified_name}")
+}
+
+fn resolve_comment_annotation_target(
+    usage: &CollectedUsage,
+    name: &QualifiedName,
+    local_definitions: &BTreeMap<String, String>,
+    local_usage_map: &BTreeMap<String, CollectedUsage>,
+) -> Option<String> {
+    let target_name = name.as_dot_string();
+    for candidate in scoped_reference_candidates(&target_name, &usage.owner_qualified_name) {
+        if let Some(target_usage) = local_usage_map.get(&candidate) {
+            return Some(collected_usage_element_id(target_usage));
+        }
+        if let Some(target_definition) = local_definitions.get(&candidate) {
+            return Some(target_definition.clone());
+        }
+    }
+
+    if usage.owner_qualified_name == target_name
+        || usage
+            .owner_qualified_name
+            .strip_prefix(&target_name)
+            .is_some_and(|rest| rest.starts_with('.'))
+    {
+        return Some(format!("pkg.{target_name}"));
+    }
+
+    None
+}
+
+fn scoped_reference_candidates(target_name: &str, owner_qualified_name: &str) -> Vec<String> {
+    if target_name.contains('.') {
+        return vec![target_name.to_string()];
+    }
+
+    let mut candidates = Vec::new();
+    let mut scope = Some(owner_qualified_name);
+    while let Some(current) = scope {
+        candidates.push(format!("{current}.{target_name}"));
+        scope = current.rsplit_once('.').map(|(parent, _)| parent);
+    }
+    candidates.push(target_name.to_string());
+    candidates
+}
+
+fn collected_usage_element_id(usage: &CollectedUsage) -> String {
+    match usage.construct.as_str() {
+        "CommentUsage" => format!(
+            "comment.{}.{}.{}.{}",
+            usage.owner_qualified_name,
+            usage.declared_name,
+            usage.span.start_line,
+            usage.span.start_col
+        ),
+        _ => feature_id_from_qualified_name(&usage.qualified_name),
+    }
 }
 
 fn normalize_feature_target_id(target: &str) -> String {

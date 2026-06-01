@@ -16,10 +16,11 @@ impl BaselineLibrary {
                 metadata: Default::default(),
                 elements: Vec::new(),
             }),
-            Self::Kernel => KirDocument::from_path(&default_kernel_library_path()),
+            Self::Kernel => KirDocument::from_path_lenient(&default_kernel_library_path()),
             Self::Sysml => {
-                let kernel = KirDocument::from_path(&default_kernel_library_path())?;
-                let sysml_delta = KirDocument::from_path(&default_sysml_delta_library_path())?;
+                let kernel = KirDocument::from_path_lenient(&default_kernel_library_path())?;
+                let sysml_delta =
+                    KirDocument::from_path_lenient(&default_sysml_delta_library_path())?;
                 KirDocument::merge([kernel, sysml_delta])
             }
             Self::Custom(document) => Ok(document.clone()),

@@ -1068,7 +1068,8 @@ pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(),
         writer
             .start_file(KPAR_PRECOMPILED_KIR_ENTRY, options)
             .map_err(zip_error_to_kir_error)?;
-        writer.write_all(serde_json::to_string_pretty(document)?.as_bytes())?;
+        let document = document.clone().normalized_for_persistence();
+        writer.write_all(serde_json::to_string_pretty(&document)?.as_bytes())?;
     }
 
     for source in &sources {
@@ -1332,7 +1333,7 @@ fn collect_kpar_archive_content(path: &Path) -> Result<KparArchiveContent, KirEr
         if entry_name == KPAR_PRECOMPILED_KIR_ENTRY {
             let mut content = String::new();
             entry.read_to_string(&mut content)?;
-            precompiled_kir = Some(serde_json::from_str(&content).map_err(KirError::Json)?);
+            precompiled_kir = Some(KirDocument::from_str(&content)?);
             continue;
         }
 
@@ -1392,7 +1393,7 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
         if entry_name == KPAR_PRECOMPILED_KIR_ENTRY {
             let mut content = String::new();
             entry.read_to_string(&mut content)?;
-            let document = serde_json::from_str::<KirDocument>(&content)?;
+            let document = KirDocument::from_str(&content)?;
             precompiled_kir_element_count = Some(document.elements.len());
             continue;
         }
@@ -1739,13 +1740,13 @@ mod tests {
         let artifact = BaselineLibraryConfig::stdlib_locator().resolve().unwrap();
 
         assert_eq!(artifact.library_id, "stdlib");
-        assert_eq!(artifact.source_kind, "kpar_locator");
+        assert_eq!(artifact.source_kind, "bundled_stdlib");
         assert_eq!(
             artifact
                 .cache_metadata
                 .as_ref()
                 .and_then(|metadata| metadata.source_version.as_deref()),
-            Some("2.0.0")
+            None
         );
         assert!(
             artifact
@@ -1753,7 +1754,7 @@ mod tests {
                 .as_ref()
                 .and_then(|path| path.file_name())
                 .and_then(|name| name.to_str())
-                == Some("sysml-stdlib-2.0.0.kpar")
+                == Some("stdlib.full.kir.json")
         );
         assert!(!artifact.document.elements.is_empty());
 
@@ -1783,7 +1784,7 @@ mod tests {
             .source_fingerprint("stdlib", None)
             .unwrap();
 
-        assert_eq!(fingerprint.source_kind, "kpar_locator");
+        assert_eq!(fingerprint.source_kind, "package_set_directory");
         assert_eq!(
             fingerprint.cache_metadata.source_version.as_deref(),
             Some("2.0.0")
@@ -1792,7 +1793,7 @@ mod tests {
             fingerprint
                 .cache_metadata
                 .source_identity
-                .ends_with("org.omg/sysml-stdlib:2.0.0")
+                .contains("sysml.library.kpar")
         );
 
         unsafe {

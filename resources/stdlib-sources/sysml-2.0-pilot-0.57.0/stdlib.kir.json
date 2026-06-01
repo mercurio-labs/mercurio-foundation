@@ -1,4 +1,7 @@
 {
+  "metadata": {
+    "kir_schema_version": "0.2"
+  },
   "elements": [
     {
       "id": "kerml.Anything",

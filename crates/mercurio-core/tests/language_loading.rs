@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mercurio_core::{
-    BaselineLibrary, KirDocument, PROJECT_DESCRIPTOR_FILE_NAME, SourceLanguage,
+    BaselineLibrary, KIR_SCHEMA_VERSION, KirDocument, PROJECT_DESCRIPTOR_FILE_NAME, SourceLanguage,
     default_kernel_library_path, default_sysml_delta_library_path, default_sysml_library_path,
     load_model_stack, load_model_stack_with_language, resolve_project_context_for_language,
 };
@@ -251,6 +251,24 @@ fn bundled_sysml_library_loads_as_raw_kir() {
     );
 }
 
+#[test]
+fn bundled_kir_resources_satisfy_persisted_contract() {
+    for path in [
+        default_kernel_library_path(),
+        default_sysml_delta_library_path(),
+        default_sysml_library_path(),
+        repo_path("resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.kir.json"),
+    ] {
+        KirDocument::from_path(&path).unwrap_or_else(|error| {
+            panic!(
+                "bundled KIR resource should satisfy strict persisted contract: {}\n{}",
+                path.display(),
+                error
+            )
+        });
+    }
+}
+
 fn pilot_library_group(element: &mercurio_core::KirElement) -> Option<&str> {
     element
         .properties
@@ -266,9 +284,27 @@ fn pilot_library_group(element: &mercurio_core::KirElement) -> Option<&str> {
         })
 }
 
-fn write_kir(path: &Path, library_id: &str, elements: Vec<serde_json::Value>) {
+fn write_kir(path: &Path, library_id: &str, mut elements: Vec<serde_json::Value>) {
+    for element in &mut elements {
+        let Some(id) = element.get("id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(qualified_name) = id.split_once('.').map(|(_, value)| value.to_string()) else {
+            continue;
+        };
+        if let Some(properties) = element
+            .get_mut("properties")
+            .and_then(|value| value.as_object_mut())
+        {
+            properties
+                .entry("qualified_name".to_string())
+                .or_insert_with(|| json!(qualified_name));
+        }
+    }
+
     let document = json!({
         "metadata": {
+            "kir_schema_version": KIR_SCHEMA_VERSION,
             "library_id": library_id
         },
         "elements": elements
