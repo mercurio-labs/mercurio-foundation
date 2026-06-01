@@ -209,9 +209,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let usage_context_construct_refs =
             semantic_default_usage_context_construct_refs(semantic_defaults);
         let usage_type_defaults = semantic_default_usage_type_defaults(semantic_defaults);
+        let usage_property_defaults = semantic_default_usage_property_defaults(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_usage_property_defaults = usage_property_defaults
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
@@ -261,6 +266,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  usage type defaults without construct mappings: {}",
             unknown_usage_type_defaults.len()
         );
+        println!(
+            "  usage property defaults: {}",
+            usage_property_defaults.len()
+        );
+        println!(
+            "  usage property defaults without construct mappings: {}",
+            unknown_usage_property_defaults.len()
+        );
         println!("  usage subset defaults: {}", usage_subset_defaults.len());
         println!(
             "  usage subset defaults without construct mappings: {}",
@@ -288,6 +301,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("Usage type defaults without construct mappings:");
             for construct in &unknown_usage_type_defaults {
+                println!("  {construct}");
+            }
+        }
+
+        if !unknown_usage_property_defaults.is_empty() {
+            println!();
+            println!("Usage property defaults without construct mappings:");
+            for construct in &unknown_usage_property_defaults {
                 println!("  {construct}");
             }
         }
@@ -1123,6 +1144,16 @@ fn semantic_default_usage_type_defaults(document: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+fn semantic_default_usage_property_defaults(document: &Value) -> BTreeSet<String> {
+    document
+        .get("usage_property_defaults")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|defaults| defaults.keys())
+        .cloned()
+        .collect()
+}
+
 fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> {
     document
         .get("usage_subset_defaults")
@@ -1158,6 +1189,7 @@ fn semantic_default_owner_override_gaps(
         construct_names,
         &mut gaps,
     );
+    collect_usage_property_default_owner_gaps(document, construct_names, &mut gaps);
     collect_owner_override_gaps(
         document,
         "usage_subset_defaults",
@@ -1181,6 +1213,35 @@ fn semantic_default_owner_override_gaps(
     );
     gaps.sort();
     gaps
+}
+
+fn collect_usage_property_default_owner_gaps(
+    document: &Value,
+    construct_names: &BTreeSet<String>,
+    gaps: &mut Vec<OwnerOverrideGap>,
+) {
+    let Some(defaults) = document
+        .get("usage_property_defaults")
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    for (construct, rules) in defaults {
+        let Some(rules) = rules.as_array() else {
+            continue;
+        };
+        for rule in rules {
+            let Some(owner_construct) = rule.get("owner_construct").and_then(Value::as_str) else {
+                continue;
+            };
+            if !construct_names.contains(owner_construct) {
+                gaps.push(OwnerOverrideGap {
+                    construct: construct.clone(),
+                    owner_construct: owner_construct.to_string(),
+                });
+            }
+        }
+    }
 }
 
 fn collect_owner_override_gaps(

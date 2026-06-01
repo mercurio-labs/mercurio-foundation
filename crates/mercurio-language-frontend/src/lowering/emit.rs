@@ -95,6 +95,8 @@ pub struct SemanticDefaultsSeed {
     pub usage_subset_defaults: BTreeMap<String, UsageSubsetDefaultSeed>,
     #[serde(default)]
     pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
+    #[serde(default)]
+    pub usage_property_defaults: BTreeMap<String, Vec<UsagePropertyDefaultSeed>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -113,6 +115,15 @@ pub struct UsageContextDefaultSeed {
     pub non_owned_member_constructs: Vec<String>,
     #[serde(default)]
     pub direction_modifiers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsagePropertyDefaultSeed {
+    pub owner_construct: Option<String>,
+    #[serde(default)]
+    pub absent_modifiers: Vec<String>,
+    #[serde(default)]
+    pub property_refs: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -670,6 +681,20 @@ impl MappingBundle {
             .map(String::as_str)
     }
 
+    pub(crate) fn usage_property_defaults(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> Vec<UsagePropertyDefaultSeed> {
+        self.semantic_defaults
+            .usage_property_defaults
+            .get(&usage.construct)
+            .into_iter()
+            .flatten()
+            .filter(|default| usage_property_default_applies(default, usage))
+            .cloned()
+            .collect()
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -1018,6 +1043,21 @@ fn reference_direction_from_modifiers(
                 .any(|modifier| modifier == *direction)
         })
         .cloned()
+}
+
+fn usage_property_default_applies(
+    default: &UsagePropertyDefaultSeed,
+    usage: &ResolvedUsage,
+) -> bool {
+    if let Some(owner_construct) = &default.owner_construct
+        && owner_construct != &usage.owner_construct
+    {
+        return false;
+    }
+    default
+        .absent_modifiers
+        .iter()
+        .all(|absent| !usage.modifiers.iter().any(|modifier| modifier == absent))
 }
 
 fn all_data_value_like_refs(type_refs: &[String]) -> bool {
@@ -2136,24 +2176,13 @@ fn enrich_usage_semantics(
         );
     }
 
-    if usage.construct == "PartUsage"
-        && usage.owner_construct == "ItemDefinition"
-        && !usage.modifiers.iter().any(|modifier| modifier == "ref")
-    {
-        append_unique_property_ref(&mut element.properties, "type", "Parts::Part");
-    }
+    apply_usage_property_defaults(element, usage, mappings);
     if !element.properties.contains_key("definition")
         && let Some(type_ref) = element.properties.get("type").cloned()
     {
         element
             .properties
             .insert("definition".to_string(), type_ref);
-    }
-    if usage.construct == "PartUsage"
-        && usage.owner_construct == "ItemDefinition"
-        && !usage.modifiers.iter().any(|modifier| modifier == "ref")
-    {
-        append_unique_property_ref(&mut element.properties, "definition", "Parts::Part");
     }
 
     if mappings.usage_has_type_context(usage) {
@@ -2176,6 +2205,20 @@ fn enrich_usage_semantics(
                 "owning_definition".to_string(),
                 Value::String(owner_id.to_string()),
             );
+        }
+    }
+}
+
+fn apply_usage_property_defaults(
+    element: &mut KirElement,
+    usage: &ResolvedUsage,
+    mappings: &MappingBundle,
+) {
+    for default in mappings.usage_property_defaults(usage) {
+        for (property, refs) in &default.property_refs {
+            for value in refs {
+                append_unique_property_ref(&mut element.properties, property, value);
+            }
         }
     }
 }

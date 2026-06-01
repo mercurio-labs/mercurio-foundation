@@ -349,6 +349,24 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_load_usage_property_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let usage = test_usage("PartUsage", "ItemDefinition");
+        let mut ref_usage = test_usage("PartUsage", "ItemDefinition");
+        ref_usage.modifiers.push("ref".to_string());
+
+        let defaults = profile.mappings.usage_property_defaults(&usage);
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].property_refs["definition"], vec!["Parts::Part"]);
+        assert!(
+            profile
+                .mappings
+                .usage_property_defaults(&ref_usage)
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn sysml_mappings_load_definition_context_defaults() {
         let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
         let enumeration = test_definition("EnumerationDefinition");

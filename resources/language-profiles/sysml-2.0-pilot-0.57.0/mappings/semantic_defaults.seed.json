@@ -101,6 +101,24 @@
       "type_ref": "Ports::Port"
     }
   },
+  "usage_property_defaults": {
+    "PartUsage": [
+      {
+        "owner_construct": "ItemDefinition",
+        "absent_modifiers": [
+          "ref"
+        ],
+        "property_refs": {
+          "type": [
+            "Parts::Part"
+          ],
+          "definition": [
+            "Parts::Part"
+          ]
+        }
+      }
+    ]
+  },
   "usage_subset_defaults": {
     "ItemUsage": {
       "owner_subsetted_feature_refs": {
