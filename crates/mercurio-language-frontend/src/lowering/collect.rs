@@ -12,6 +12,7 @@ use mercurio_language_contracts::diagnostics::Diagnostic;
 use crate::lowering::elaborate::should_annotate_connection_end_direction;
 use crate::lowering::emit::MappingBundle;
 use crate::lowering::ir::ResolvedPackage;
+use crate::lowering::rules::LoweringRule;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CollectedModule {
@@ -447,42 +448,91 @@ fn collect_generic_definition(
 ) -> Result<CollectedDefinition, Diagnostic> {
     let qualified_name = qualify_name(owner_package_segments, &definition.name);
     let construct = mappings.definition_construct_for(&definition.keyword);
-    let mut members = definition
-        .members
-        .iter()
-        .filter_map(|member| match member {
-            Declaration::PartUsage(usage) => Some(collect_part_usage(
-                usage,
-                &qualified_name,
-                &construct,
-                mappings,
-            )),
-            Declaration::GenericUsage(usage) => Some(collect_generic_usage(
-                usage,
-                &qualified_name,
-                &construct,
-                mappings,
-            )),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let plan = collect_generic_definition_plan(
+        mappings.lowering_rule_for_construct(&construct),
+        definition,
+        &qualified_name,
+        &construct,
+        mappings,
+    )?;
+    let mut members = plan.members;
     annotate_connection_definition_members(&construct, &mut members, mappings);
-    let specializes =
-        definition_specializations_with_default(&construct, &definition.specializes, mappings);
 
     Ok(CollectedDefinition {
         construct,
         qualified_name,
+        declared_name: plan.declared_name,
+        is_abstract: plan.is_abstract,
+        specializes: plan.specializes,
+        members,
+        docs: plan.docs,
+        span: definition.span.clone(),
+    })
+}
+
+struct GenericDefinitionCollectPlan {
+    declared_name: String,
+    is_abstract: bool,
+    specializes: Vec<QualifiedName>,
+    members: Vec<CollectedUsage>,
+    docs: Vec<String>,
+}
+
+fn collect_generic_definition_plan(
+    rule: Option<&LoweringRule>,
+    definition: &GenericDefinitionDecl,
+    qualified_name: &str,
+    construct: &str,
+    mappings: &MappingBundle,
+) -> Result<GenericDefinitionCollectPlan, Diagnostic> {
+    let mut plan = GenericDefinitionCollectPlan {
         declared_name: definition.name.clone(),
         is_abstract: definition
             .modifiers
             .iter()
             .any(|modifier| modifier == "abstract"),
-        specializes,
-        members,
+        specializes: definition_specializations_with_default(
+            construct,
+            &definition.specializes,
+            mappings,
+        ),
+        members: collect_usage_members(&definition.members, qualified_name, construct, mappings),
         docs: definition.docs.clone(),
-        span: definition.span.clone(),
-    })
+    };
+
+    let Some(rule) = rule else {
+        return Ok(plan);
+    };
+    require_collect_expression(rule, "name", "$ast.name")?;
+    for (field, expression) in &rule.collect.fields {
+        match (field.as_str(), expression.as_str()) {
+            ("is_abstract", "$ast.modifiers contains abstract") => {
+                plan.is_abstract = definition
+                    .modifiers
+                    .iter()
+                    .any(|modifier| modifier == "abstract");
+            }
+            ("specializes", "$ast.specializes or semantic_default") => {
+                plan.specializes = definition_specializations_with_default(
+                    construct,
+                    &definition.specializes,
+                    mappings,
+                );
+            }
+            ("specializes", "$ast.specializes") => {
+                plan.specializes = definition.specializes.clone();
+            }
+            ("members", "$ast.members[usage]") | ("end_members", "$ast.members[modifier=end]") => {
+                plan.members =
+                    collect_usage_members(&definition.members, qualified_name, construct, mappings);
+            }
+            ("docs", "$ast.docs") => {
+                plan.docs = definition.docs.clone();
+            }
+            _ => return Err(unsupported_collect_expression(rule, field, expression)),
+        }
+    }
+    Ok(plan)
 }
 
 fn definition_specializations_with_default(
@@ -572,48 +622,200 @@ fn collect_generic_usage(
 ) -> CollectedUsage {
     let construct = mappings.usage_construct_for(&usage.keyword);
     let qualified_name = usage_qualified_name(owner_qualified_name, &usage.name);
-    let members = usage
-        .body_members
-        .iter()
-        .filter_map(|member| match member {
-            Declaration::PartUsage(usage) => Some(collect_part_usage(
-                usage,
-                &qualified_name,
-                &construct,
-                mappings,
-            )),
-            Declaration::GenericUsage(usage) => Some(collect_generic_usage(
-                usage,
-                &qualified_name,
-                &construct,
-                mappings,
-            )),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let plan = collect_generic_usage_plan(
+        mappings.lowering_rule_for_construct(&construct),
+        usage,
+        &qualified_name,
+        &construct,
+        mappings,
+    )
+    .unwrap_or_else(|_| generic_usage_plan_from_ast(usage, &qualified_name, &construct, mappings));
     CollectedUsage {
         construct,
         owner_construct: owner_construct.to_string(),
         owner_qualified_name: owner_qualified_name.to_string(),
         qualified_name,
-        declared_name: usage.name.clone(),
+        declared_name: plan.declared_name,
         is_implicit_name: usage.is_implicit_name,
-        ty: usage.ty.clone(),
+        ty: plan.ty,
         additional_types: usage.additional_types.clone(),
+        reference_target: plan.reference_target,
+        allocation_source: plan.allocation_source,
+        allocation_target: plan.allocation_target,
+        metadata_properties: usage.metadata_properties.clone(),
+        multiplicity: plan.multiplicity,
+        expression: plan.expression,
+        specializes: plan.specializes,
+        subsets: plan.subsets,
+        redefines: plan.redefines,
+        members: plan.members,
+        modifiers: plan.modifiers,
+        docs: plan.docs,
+        span: usage.span.clone(),
+    }
+}
+
+struct GenericUsageCollectPlan {
+    declared_name: String,
+    ty: Option<QualifiedName>,
+    reference_target: Option<QualifiedName>,
+    allocation_source: Option<QualifiedName>,
+    allocation_target: Option<QualifiedName>,
+    multiplicity: Option<MultiplicityRange>,
+    expression: Option<Expr>,
+    specializes: Vec<QualifiedName>,
+    subsets: Vec<QualifiedName>,
+    redefines: Vec<QualifiedName>,
+    members: Vec<CollectedUsage>,
+    modifiers: Vec<String>,
+    docs: Vec<String>,
+}
+
+fn generic_usage_plan_from_ast(
+    usage: &GenericUsageDecl,
+    qualified_name: &str,
+    construct: &str,
+    mappings: &MappingBundle,
+) -> GenericUsageCollectPlan {
+    GenericUsageCollectPlan {
+        declared_name: usage.name.clone(),
+        ty: usage.ty.clone(),
         reference_target: usage.reference_target.clone(),
         allocation_source: usage.allocation_source.clone(),
         allocation_target: usage.allocation_target.clone(),
-        metadata_properties: usage.metadata_properties.clone(),
         multiplicity: usage.multiplicity.clone(),
         expression: usage.expression.clone(),
         specializes: usage.specializes.clone(),
         subsets: usage.subsets.clone(),
         redefines: usage.redefines.clone(),
-        members,
+        members: collect_usage_members(&usage.body_members, qualified_name, construct, mappings),
         modifiers: usage.modifiers.clone(),
         docs: usage.docs.clone(),
-        span: usage.span.clone(),
     }
+}
+
+fn collect_generic_usage_plan(
+    rule: Option<&LoweringRule>,
+    usage: &GenericUsageDecl,
+    qualified_name: &str,
+    construct: &str,
+    mappings: &MappingBundle,
+) -> Result<GenericUsageCollectPlan, Diagnostic> {
+    let mut plan = generic_usage_plan_from_ast(usage, qualified_name, construct, mappings);
+    let Some(rule) = rule else {
+        return Ok(plan);
+    };
+    require_collect_expression(rule, "name", "$ast.name")?;
+    for (field, expression) in &rule.collect.fields {
+        match (field.as_str(), expression.as_str()) {
+            ("allocation_source", "$ast.allocation_source") => {
+                plan.allocation_source = usage.allocation_source.clone();
+            }
+            ("allocation_target", "$ast.allocation_target") => {
+                plan.allocation_target = usage.allocation_target.clone();
+            }
+            ("annotation_target", "$ast.reference_target")
+            | ("reference_target", "$ast.reference_target") => {
+                plan.reference_target = usage.reference_target.clone();
+            }
+            ("body", "$ast.expression") => {
+                plan.expression = usage.expression.clone();
+            }
+            ("docs", "$ast.docs") => {
+                plan.docs = usage.docs.clone();
+            }
+            ("members", "$ast.body_members[usage]") => {
+                plan.members =
+                    collect_usage_members(&usage.body_members, qualified_name, construct, mappings);
+            }
+            ("modifiers", "$ast.modifiers + end") => {
+                plan.modifiers = usage.modifiers.clone();
+                if !plan.modifiers.iter().any(|modifier| modifier == "end") {
+                    plan.modifiers.push("end".to_string());
+                }
+            }
+            ("multiplicity", "$ast.multiplicity") => {
+                plan.multiplicity = usage.multiplicity.clone();
+            }
+            ("reference_target", "$ast.reference_target or $ast.name") => {
+                plan.reference_target = usage.reference_target.clone().or_else(|| {
+                    (!usage.name.is_empty()).then(|| QualifiedName {
+                        segments: vec![usage.name.clone()],
+                        span: usage.span.clone(),
+                    })
+                });
+            }
+            ("redefines", "$ast.redefines") => {
+                plan.redefines = usage.redefines.clone();
+            }
+            ("specializes", "$ast.specializes or semantic_default")
+            | ("specializes", "$ast.specializes") => {
+                plan.specializes = usage.specializes.clone();
+            }
+            ("subsets", "$ast.subsets") => {
+                plan.subsets = usage.subsets.clone();
+            }
+            ("type", "$ast.ty") => {
+                plan.ty = usage.ty.clone();
+            }
+            _ => return Err(unsupported_collect_expression(rule, field, expression)),
+        }
+    }
+    Ok(plan)
+}
+
+fn collect_usage_members(
+    declarations: &[Declaration],
+    qualified_name: &str,
+    construct: &str,
+    mappings: &MappingBundle,
+) -> Vec<CollectedUsage> {
+    declarations
+        .iter()
+        .filter_map(|member| match member {
+            Declaration::PartUsage(usage) => Some(collect_part_usage(
+                usage,
+                qualified_name,
+                construct,
+                mappings,
+            )),
+            Declaration::GenericUsage(usage) => Some(collect_generic_usage(
+                usage,
+                qualified_name,
+                construct,
+                mappings,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn require_collect_expression(
+    rule: &LoweringRule,
+    slot: &str,
+    expected: &str,
+) -> Result<(), Diagnostic> {
+    let actual = match slot {
+        "name" => rule.collect.name.as_str(),
+        "owner" => rule.collect.owner.as_str(),
+        "element" => rule.collect.element.as_str(),
+        _ => "",
+    };
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(unsupported_collect_expression(rule, slot, actual))
+    }
+}
+
+fn unsupported_collect_expression(rule: &LoweringRule, slot: &str, expression: &str) -> Diagnostic {
+    Diagnostic::new(
+        format!(
+            "lowering rule `{}` collect expression `{}` in `{}` is not executable here",
+            rule.construct, expression, slot
+        ),
+        None,
+    )
 }
 
 fn annotate_connection_definition_members(
