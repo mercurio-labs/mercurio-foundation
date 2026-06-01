@@ -889,6 +889,20 @@ fn validate_rule_emission_compatibility(
     Ok(())
 }
 
+fn id_template_for_construct<'a>(
+    construct: &str,
+    metaclass: &str,
+    emission: &'a EmissionRule,
+    mappings: &'a MappingBundle,
+) -> Result<&'a str, Diagnostic> {
+    if let Some(rule) = mappings.lowering_rule_for_construct(construct) {
+        validate_rule_emission_compatibility(rule, metaclass, emission)?;
+        Ok(rule.emit.id_template.as_str())
+    } else {
+        Ok(emission.id_template.as_str())
+    }
+}
+
 fn transpile_import(
     import: &ResolvedImport,
     owner_id: &str,
@@ -902,8 +916,9 @@ fn transpile_import(
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
     let metatype_ref = Value::String(metaclass.to_string());
+    let id_template = id_template_for_construct("Import", metaclass, emission, mappings)?;
     let id = render_string(
-        &emission.id_template,
+        id_template,
         &BTreeMap::from([
             ("owner_id".to_string(), Value::String(owner_id.to_string())),
             ("ordinal".to_string(), json!(import.ordinal)),
@@ -1453,8 +1468,9 @@ fn render_package_id(
 ) -> Result<String, Diagnostic> {
     let metaclass = mappings.metaclass_for("Package")?;
     let emission = mappings.emission_for(metaclass)?;
+    let id_template = id_template_for_construct("Package", metaclass, emission, mappings)?;
     render_string(
-        &emission.id_template,
+        id_template,
         &BTreeMap::from([(
             "qualified_name".to_string(),
             Value::String(package.qualified_name.clone()),
@@ -1893,8 +1909,10 @@ fn render_definition_id(
 ) -> Result<String, Diagnostic> {
     let metaclass = mappings.metaclass_for(&definition.construct)?;
     let emission = mappings.emission_for(metaclass)?;
+    let id_template =
+        id_template_for_construct(&definition.construct, metaclass, emission, mappings)?;
     render_string(
-        &emission.id_template,
+        id_template,
         &BTreeMap::from([(
             "qualified_name".to_string(),
             Value::String(definition.qualified_name.clone()),
@@ -1909,8 +1927,9 @@ fn render_usage_id(
 ) -> Result<String, Diagnostic> {
     let metaclass = mappings.metaclass_for(&usage.construct)?;
     let emission = mappings.emission_for(metaclass)?;
+    let id_template = id_template_for_construct(&usage.construct, metaclass, emission, mappings)?;
     let mut id = render_string(
-        &emission.id_template,
+        id_template,
         &BTreeMap::from([
             ("owner_id".to_string(), Value::String(owner_id.to_string())),
             (
@@ -1937,8 +1956,10 @@ fn render_conjugated_port_definition_id(
 ) -> Result<String, Diagnostic> {
     let metaclass = mappings.metaclass_for("ConjugatedPortDefinition")?;
     let emission = mappings.emission_for(metaclass)?;
+    let id_template =
+        id_template_for_construct("ConjugatedPortDefinition", metaclass, emission, mappings)?;
     render_string(
-        &emission.id_template,
+        id_template,
         &BTreeMap::from([
             (
                 "qualified_name".to_string(),
