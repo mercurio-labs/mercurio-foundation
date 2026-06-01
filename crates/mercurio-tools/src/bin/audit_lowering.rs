@@ -1260,6 +1260,7 @@ fn is_supported_semantic_default_placeholder(placeholder: &str) -> bool {
             | "$owner_id"
             | "$owner_qualified_name"
             | "$qualified_name"
+            | "$reference_target"
             | "$sibling_state_id_transition_target"
     )
 }

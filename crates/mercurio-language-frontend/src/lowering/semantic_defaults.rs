@@ -42,6 +42,7 @@ pub struct UsageContextDefaultSeed {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsagePropertyDefaultSeed {
     pub owner_construct: Option<String>,
+    pub kir_kind: Option<String>,
     #[serde(default)]
     pub present_modifiers: Vec<String>,
     #[serde(default)]

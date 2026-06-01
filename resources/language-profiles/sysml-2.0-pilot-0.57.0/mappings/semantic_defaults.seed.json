@@ -138,6 +138,15 @@
         }
       }
     ],
+    "SatisfyUsage": [
+      {
+        "kir_kind": "SysML::Requirements::SatisfyRequirementUsage",
+        "property_values": {
+          "source": "$owner_id",
+          "target": "$reference_target"
+        }
+      }
+    ],
     "StateUsage": [
       {
         "owner_construct": "StateUsage",
@@ -154,6 +163,15 @@
         "property_values": {
           "target": "state.$qualified_name",
           "trigger_kind": "completion"
+        }
+      }
+    ],
+    "VerifyUsage": [
+      {
+        "kir_kind": "SysML::Requirements::VerifyRequirementUsage",
+        "property_values": {
+          "source": "$owner_id",
+          "target": "$reference_target"
         }
       }
     ]

@@ -1722,7 +1722,6 @@ fn transpile_usage(
         );
     }
     enrich_usage_semantics(&mut element, usage, owner_id, mappings);
-    enrich_trace_relationship_semantics(&mut element, usage, owner_id);
     Ok(element)
 }
 
@@ -2038,6 +2037,9 @@ fn apply_usage_property_defaults(
     mappings: &MappingBundle,
 ) {
     for default in mappings.usage_property_defaults(usage) {
+        if let Some(kir_kind) = &default.kir_kind {
+            element.kind = kir_kind.clone();
+        }
         for (property, refs) in &default.property_refs {
             for value in refs {
                 append_unique_property_ref(&mut element.properties, property, value);
@@ -2065,6 +2067,7 @@ fn resolve_usage_property_default_value(
         ("$declared_name", Some(usage.declared_name.clone())),
         ("$allocation_source", usage.allocation_source.clone()),
         ("$allocation_target", usage.allocation_target.clone()),
+        ("$reference_target", usage.reference_target.clone()),
         (
             "$modifier_value_trigger_kind",
             modifier_value(&usage.modifiers, "trigger_kind").map(str::to_string),
@@ -2086,38 +2089,6 @@ fn resolve_usage_property_default_value(
         resolved = resolved.replace(placeholder, &replacement);
     }
     Some(resolved)
-}
-
-fn enrich_trace_relationship_semantics(
-    element: &mut KirElement,
-    usage: &ResolvedUsage,
-    owner_id: &str,
-) {
-    match usage.construct.as_str() {
-        "SatisfyUsage" => {
-            element.kind = "SysML::Requirements::SatisfyRequirementUsage".to_string();
-            element
-                .properties
-                .insert("source".to_string(), Value::String(owner_id.to_string()));
-            if let Some(target) = &usage.reference_target {
-                element
-                    .properties
-                    .insert("target".to_string(), Value::String(target.clone()));
-            }
-        }
-        "VerifyUsage" => {
-            element.kind = "SysML::Requirements::VerifyRequirementUsage".to_string();
-            element
-                .properties
-                .insert("source".to_string(), Value::String(owner_id.to_string()));
-            if let Some(target) = &usage.reference_target {
-                element
-                    .properties
-                    .insert("target".to_string(), Value::String(target.clone()));
-            }
-        }
-        _ => {}
-    }
 }
 
 fn usage_display_name(usage: &ResolvedUsage, mappings: &MappingBundle) -> Option<String> {
@@ -3286,5 +3257,37 @@ mod lowering_golden_tests {
         assert_eq!(allocation.properties["source"], "feature.source");
         assert_eq!(allocation.properties["allocated_to"], "feature.target");
         assert_eq!(allocation.properties["target"], "feature.target");
+    }
+
+    #[test]
+    fn trace_relationship_properties_are_profile_backed_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut satisfy = reference_usage("satA");
+        satisfy.construct = "SatisfyUsage".to_string();
+        satisfy.qualified_name = "root.satA".to_string();
+        satisfy.reference_target = Some("requirement.reqA".to_string());
+
+        let mut verify = reference_usage("verA");
+        verify.construct = "VerifyUsage".to_string();
+        verify.qualified_name = "root.verA".to_string();
+        verify.reference_target = Some("requirement.reqB".to_string());
+
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![satisfy, verify],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let satisfy = element(&document, "satisfy.root.satA");
+        let verify = element(&document, "verify.root.verA");
+
+        assert_eq!(satisfy.kind, "SysML::Requirements::SatisfyRequirementUsage");
+        assert_eq!(satisfy.properties["source"], "pkg.root");
+        assert_eq!(satisfy.properties["target"], "requirement.reqA");
+        assert_eq!(verify.kind, "SysML::Requirements::VerifyRequirementUsage");
+        assert_eq!(verify.properties["source"], "pkg.root");
+        assert_eq!(verify.properties["target"], "requirement.reqB");
     }
 }
