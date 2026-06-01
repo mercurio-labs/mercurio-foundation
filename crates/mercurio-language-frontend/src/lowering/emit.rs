@@ -84,7 +84,16 @@ pub struct StdlibAliasSeed {
 pub struct SemanticDefaultsSeed {
     pub schema_version: u32,
     #[serde(default)]
+    pub usage_type_defaults: BTreeMap<String, UsageTypeDefaultSeed>,
+    #[serde(default)]
     pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageTypeDefaultSeed {
+    pub type_ref: Option<String>,
+    #[serde(default)]
+    pub owner_type_refs: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -361,6 +370,20 @@ impl MappingBundle {
             subsetted_feature_refs,
             is_variable: default.is_variable,
         })
+    }
+
+    pub(crate) fn usage_type_default(&self, usage: &ResolvedUsage) -> Option<String> {
+        let default = self
+            .semantic_defaults
+            .usage_type_defaults
+            .get(&usage.construct)?;
+        if let Some(owner_type_ref) = default.owner_type_refs.get(&usage.owner_construct) {
+            return Some(resolve_semantic_default_value(owner_type_ref, usage));
+        }
+        default
+            .type_ref
+            .as_ref()
+            .map(|value| resolve_semantic_default_value(value, usage))
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -643,6 +666,13 @@ fn load_semantic_defaults_seed() -> &'static str {
     include_str!(
         "../../../../resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/semantic_defaults.seed.json"
     )
+}
+
+fn resolve_semantic_default_value(value: &str, usage: &ResolvedUsage) -> String {
+    match value {
+        "$owner_qualified_name" => usage.owner_qualified_name.clone(),
+        _ => value.to_string(),
+    }
 }
 
 fn pascal_case(value: &str) -> String {
@@ -1212,7 +1242,7 @@ fn transpile_usage(
         ),
         (
             "type_ref".to_string(),
-            usage_type_ref(usage, reference_semantics.as_ref())
+            usage_type_ref(usage, mappings, reference_semantics.as_ref())
                 .map(Value::String)
                 .unwrap_or(Value::Null),
         ),
@@ -2418,31 +2448,17 @@ fn binary_expression_op(op: &BinaryOp) -> BinaryExpressionOp {
 
 fn usage_type_ref(
     usage: &ResolvedUsage,
+    mappings: &MappingBundle,
     reference_semantics: Option<&ReferenceUsageSemantics>,
 ) -> Option<String> {
     if let Some(reference_semantics) = reference_semantics {
         return reference_semantics.type_refs.first().cloned();
     }
 
-    resolved_usage_type_ref(usage)
-}
-
-fn resolved_usage_type_ref(usage: &ResolvedUsage) -> Option<String> {
-    usage.type_ref.clone().or_else(|| {
-        if usage.construct == "PartUsage" {
-            Some("Parts::Part".to_string())
-        } else if usage.construct == "PortUsage" {
-            Some("Ports::Port".to_string())
-        } else if usage.construct == "AttributeUsage" {
-            Some("Base::DataValue".to_string())
-        } else if usage.construct == "EnumerationUsage"
-            && usage.owner_construct == "EnumerationDefinition"
-        {
-            Some(usage.owner_qualified_name.clone())
-        } else {
-            None
-        }
-    })
+    usage
+        .type_ref
+        .clone()
+        .or_else(|| mappings.usage_type_default(usage))
 }
 
 fn usage_subsetted_feature_refs(

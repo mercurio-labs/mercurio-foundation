@@ -1,5 +1,21 @@
 {
   "schema_version": 1,
+  "usage_type_defaults": {
+    "AttributeUsage": {
+      "type_ref": "Base::DataValue"
+    },
+    "EnumerationUsage": {
+      "owner_type_refs": {
+        "EnumerationDefinition": "$owner_qualified_name"
+      }
+    },
+    "PartUsage": {
+      "type_ref": "Parts::Part"
+    },
+    "PortUsage": {
+      "type_ref": "Ports::Port"
+    }
+  },
   "usage_family_defaults": {
     "AcceptActionUsage": {
       "type_ref": "Actions::AcceptAction",

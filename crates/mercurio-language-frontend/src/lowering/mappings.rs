@@ -165,6 +165,7 @@ fn collect_rule_expressions(rule: &LoweringRule) -> Vec<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lowering::ir::ResolvedUsage;
 
     #[test]
     fn sysml_profile_loads_declarative_lowering_rules() {
@@ -266,6 +267,47 @@ mod tests {
         assert_eq!(
             nested_action.subsetted_feature_refs,
             vec!["Parts::Part::ownedActions"]
+        );
+    }
+
+    #[test]
+    fn sysml_mappings_load_usage_type_semantic_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let usage = ResolvedUsage {
+            construct: "PartUsage".to_string(),
+            owner_construct: "Package".to_string(),
+            owner_qualified_name: "root".to_string(),
+            qualified_name: "root.p".to_string(),
+            declared_name: "p".to_string(),
+            is_implicit_name: false,
+            has_explicit_type: false,
+            type_ref: None,
+            additional_type_refs: Vec::new(),
+            reference_target: None,
+            allocation_source: None,
+            allocation_target: None,
+            metadata_properties: Default::default(),
+            multiplicity: None,
+            expression: None,
+            is_derived: false,
+            specializes: Vec::new(),
+            specialized_features: Vec::new(),
+            subsetted_features: Vec::new(),
+            redefined_features: Vec::new(),
+            members: Vec::new(),
+            modifiers: Vec::new(),
+            docs: Vec::new(),
+            span: mercurio_language_contracts::ast::SourceSpan {
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 1,
+            },
+        };
+
+        assert_eq!(
+            profile.mappings.usage_type_default(&usage).as_deref(),
+            Some("Parts::Part")
         );
     }
 
