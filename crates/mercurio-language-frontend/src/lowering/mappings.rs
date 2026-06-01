@@ -165,7 +165,7 @@ fn collect_rule_expressions(rule: &LoweringRule) -> Vec<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lowering::ir::ResolvedUsage;
+    use crate::lowering::ir::{ResolvedDefinition, ResolvedUsage};
 
     #[test]
     fn sysml_profile_loads_declarative_lowering_rules() {
@@ -341,6 +341,16 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_load_definition_context_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let enumeration = test_definition("EnumerationDefinition");
+        let part = test_definition("PartDefinition");
+
+        assert!(profile.mappings.definition_is_abstract(&enumeration));
+        assert!(!profile.mappings.definition_is_abstract(&part));
+    }
+
+    #[test]
     fn kerml_profile_has_no_sysml_lowering_rules() {
         let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
 
@@ -371,6 +381,24 @@ mod tests {
             redefined_features: Vec::new(),
             members: Vec::new(),
             modifiers: Vec::new(),
+            docs: Vec::new(),
+            span: mercurio_language_contracts::ast::SourceSpan {
+                start_line: 1,
+                start_col: 1,
+                end_line: 1,
+                end_col: 1,
+            },
+        }
+    }
+
+    fn test_definition(construct: &str) -> ResolvedDefinition {
+        ResolvedDefinition {
+            construct: construct.to_string(),
+            qualified_name: "root.X".to_string(),
+            declared_name: "X".to_string(),
+            is_abstract: false,
+            specializes: Vec::new(),
+            members: Vec::new(),
             docs: Vec::new(),
             span: mercurio_language_contracts::ast::SourceSpan {
                 start_line: 1,

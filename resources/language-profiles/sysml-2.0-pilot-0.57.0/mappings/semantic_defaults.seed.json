@@ -61,6 +61,11 @@
       ]
     }
   },
+  "definition_context": {
+    "abstract_constructs": [
+      "EnumerationDefinition"
+    ]
+  },
   "usage_context": {
     "non_variable_owner_constructs": [
       "AttributeDefinition",

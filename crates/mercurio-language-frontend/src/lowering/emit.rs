@@ -86,6 +86,8 @@ pub struct SemanticDefaultsSeed {
     #[serde(default)]
     pub reference_usage_semantics: ReferenceUsageSemanticsSeed,
     #[serde(default)]
+    pub definition_context: DefinitionContextDefaultSeed,
+    #[serde(default)]
     pub usage_context: UsageContextDefaultSeed,
     #[serde(default)]
     pub usage_type_defaults: BTreeMap<String, UsageTypeDefaultSeed>,
@@ -93,6 +95,12 @@ pub struct SemanticDefaultsSeed {
     pub usage_subset_defaults: BTreeMap<String, UsageSubsetDefaultSeed>,
     #[serde(default)]
     pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DefinitionContextDefaultSeed {
+    #[serde(default)]
+    pub abstract_constructs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -631,6 +639,16 @@ impl MappingBundle {
             .no_type_context_owner_constructs
             .iter()
             .any(|owner| owner == &usage.owner_construct)
+    }
+
+    pub(crate) fn definition_is_abstract(&self, definition: &ResolvedDefinition) -> bool {
+        definition.is_abstract
+            || self
+                .semantic_defaults
+                .definition_context
+                .abstract_constructs
+                .iter()
+                .any(|construct| construct == &definition.construct)
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -1443,7 +1461,7 @@ fn transpile_definition(
         ),
         (
             "is_abstract".to_string(),
-            Value::Bool(definition_is_abstract(definition)),
+            Value::Bool(mappings.definition_is_abstract(definition)),
         ),
         ("metatype_ref".to_string(), metatype_ref),
     ]);
@@ -2539,10 +2557,6 @@ fn semantic_specializations_for_definition(
     } else {
         definition.specializes.clone()
     }
-}
-
-fn definition_is_abstract(definition: &ResolvedDefinition) -> bool {
-    definition.is_abstract || definition.construct == "EnumerationDefinition"
 }
 
 fn semantic_specializations_for_usage(

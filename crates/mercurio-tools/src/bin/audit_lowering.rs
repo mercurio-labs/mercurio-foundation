@@ -204,6 +204,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(semantic_defaults) = &semantic_defaults {
         let reference_usage_modifier_rules =
             semantic_default_reference_usage_modifier_rules(semantic_defaults);
+        let definition_context_construct_refs =
+            semantic_default_definition_context_construct_refs(semantic_defaults);
         let usage_context_construct_refs =
             semantic_default_usage_context_construct_refs(semantic_defaults);
         let usage_type_defaults = semantic_default_usage_type_defaults(semantic_defaults);
@@ -227,12 +229,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
+        let unknown_definition_context_refs = definition_context_construct_refs
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
 
         println!();
         println!("Semantic defaults");
         println!(
             "  reference usage modifier rules: {}",
             reference_usage_modifier_rules
+        );
+        println!(
+            "  definition context construct refs: {}",
+            definition_context_construct_refs.len()
+        );
+        println!(
+            "  definition context refs without construct mappings: {}",
+            unknown_definition_context_refs.len()
         );
         println!(
             "  usage context construct refs: {}",
@@ -290,6 +304,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("Usage context refs without construct mappings:");
             for construct in &unknown_usage_context_refs {
+                println!("  {construct}");
+            }
+        }
+
+        if !unknown_definition_context_refs.is_empty() {
+            println!();
+            println!("Definition context refs without construct mappings:");
+            for construct in &unknown_definition_context_refs {
                 println!("  {construct}");
             }
         }
@@ -1054,6 +1076,18 @@ fn semantic_default_reference_usage_modifier_rules(document: &Value) -> usize {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default()
+}
+
+fn semantic_default_definition_context_construct_refs(document: &Value) -> BTreeSet<String> {
+    document
+        .get("definition_context")
+        .and_then(|context| context.get("abstract_constructs"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
 }
 
 fn semantic_default_usage_context_construct_refs(document: &Value) -> BTreeSet<String> {
