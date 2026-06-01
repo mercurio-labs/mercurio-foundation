@@ -206,60 +206,9 @@ fn is_data_value_like_ref(type_ref: &str) -> bool {
 }
 
 pub(crate) struct UsageFamilyDefaults {
-    pub(crate) type_ref: &'static str,
-    pub(crate) subsetted_feature_refs: &'static [&'static str],
+    pub(crate) type_ref: String,
+    pub(crate) subsetted_feature_refs: Vec<String>,
     pub(crate) is_variable: bool,
-}
-
-pub(crate) fn usage_family_defaults(usage: &ResolvedUsage) -> Option<UsageFamilyDefaults> {
-    match usage.construct.as_str() {
-        "ActionUsage" => Some(UsageFamilyDefaults {
-            type_ref: "Actions::Action",
-            subsetted_feature_refs: action_usage_subsetted_feature_refs(usage),
-            is_variable: false,
-        }),
-        "PerformActionUsage" => Some(UsageFamilyDefaults {
-            type_ref: "Actions::Action",
-            subsetted_feature_refs: &["Actions::performedActions"],
-            is_variable: true,
-        }),
-        "AcceptActionUsage" => Some(UsageFamilyDefaults {
-            type_ref: "Actions::AcceptAction",
-            subsetted_feature_refs: &["Actions::acceptSubactions"],
-            is_variable: false,
-        }),
-        "StateUsage" => Some(UsageFamilyDefaults {
-            type_ref: "States::StateAction",
-            subsetted_feature_refs: &["States::ownedStates"],
-            is_variable: false,
-        }),
-        "ExhibitStateUsage" => Some(UsageFamilyDefaults {
-            type_ref: "States::StateAction",
-            subsetted_feature_refs: &["States::exhibitedStates"],
-            is_variable: true,
-        }),
-        "SuccessionUsage" => Some(UsageFamilyDefaults {
-            type_ref: "Flows::SuccessionFlow",
-            subsetted_feature_refs: &["Actions::ownedActions", "Flows::successionFlows"],
-            is_variable: false,
-        }),
-        "FlowUsage" => Some(UsageFamilyDefaults {
-            type_ref: "Flows::Flow",
-            subsetted_feature_refs: &["Actions::Action::subactions", "Flows::flows"],
-            is_variable: false,
-        }),
-        _ => None,
-    }
-}
-
-fn action_usage_subsetted_feature_refs(usage: &ResolvedUsage) -> &'static [&'static str] {
-    match usage.owner_construct.as_str() {
-        "Package" => &["Actions::actions"],
-        "ActionDefinition" | "ActionUsage" | "PerformActionUsage" => {
-            &["Actions::Action::subactions"]
-        }
-        _ => &["Parts::Part::ownedActions"],
-    }
 }
 
 pub(crate) fn dedupe_refs(values: Vec<String>) -> Vec<String> {

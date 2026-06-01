@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "usage_family_defaults": {
+    "AcceptActionUsage": {
+      "type_ref": "Actions::AcceptAction",
+      "subsetted_feature_refs": [
+        "Actions::acceptSubactions"
+      ],
+      "is_variable": false
+    },
+    "ActionUsage": {
+      "type_ref": "Actions::Action",
+      "subsetted_feature_refs": [
+        "Parts::Part::ownedActions"
+      ],
+      "owner_subsetted_feature_refs": {
+        "ActionDefinition": [
+          "Actions::Action::subactions"
+        ],
+        "ActionUsage": [
+          "Actions::Action::subactions"
+        ],
+        "Package": [
+          "Actions::actions"
+        ],
+        "PerformActionUsage": [
+          "Actions::Action::subactions"
+        ]
+      },
+      "is_variable": false
+    },
+    "ExhibitStateUsage": {
+      "type_ref": "States::StateAction",
+      "subsetted_feature_refs": [
+        "States::exhibitedStates"
+      ],
+      "is_variable": true
+    },
+    "FlowUsage": {
+      "type_ref": "Flows::Flow",
+      "subsetted_feature_refs": [
+        "Actions::Action::subactions",
+        "Flows::flows"
+      ],
+      "is_variable": false
+    },
+    "PerformActionUsage": {
+      "type_ref": "Actions::Action",
+      "subsetted_feature_refs": [
+        "Actions::performedActions"
+      ],
+      "is_variable": true
+    },
+    "StateUsage": {
+      "type_ref": "States::StateAction",
+      "subsetted_feature_refs": [
+        "States::ownedStates"
+      ],
+      "is_variable": false
+    },
+    "SuccessionUsage": {
+      "type_ref": "Flows::SuccessionFlow",
+      "subsetted_feature_refs": [
+        "Actions::ownedActions",
+        "Flows::successionFlows"
+      ],
+      "is_variable": false
+    }
+  }
+}

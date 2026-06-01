@@ -245,6 +245,31 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_load_usage_family_semantic_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+
+        let package_action = profile
+            .mappings
+            .usage_family_default("ActionUsage", "Package")
+            .expect("package action usage defaults");
+        assert_eq!(package_action.type_ref, "Actions::Action");
+        assert_eq!(
+            package_action.subsetted_feature_refs,
+            vec!["Actions::actions"]
+        );
+        assert!(!package_action.is_variable);
+
+        let nested_action = profile
+            .mappings
+            .usage_family_default("ActionUsage", "PartDefinition")
+            .expect("nested action usage defaults");
+        assert_eq!(
+            nested_action.subsetted_feature_refs,
+            vec!["Parts::Part::ownedActions"]
+        );
+    }
+
+    #[test]
     fn kerml_profile_has_no_sysml_lowering_rules() {
         let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
 

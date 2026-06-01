@@ -13,7 +13,7 @@ use mercurio_language_contracts::expression::{
 };
 
 use crate::lowering::elaborate::{
-    ReferenceUsageSemantics, dedupe_refs, reference_usage_semantics, usage_family_defaults,
+    ReferenceUsageSemantics, UsageFamilyDefaults, dedupe_refs, reference_usage_semantics,
 };
 use crate::lowering::ir::{
     ResolvedDefinition, ResolvedExpr, ResolvedImport, ResolvedModule, ResolvedPackage,
@@ -80,6 +80,23 @@ pub struct StdlibAliasSeed {
     pub ids: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SemanticDefaultsSeed {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageFamilyDefaultSeed {
+    pub type_ref: String,
+    #[serde(default)]
+    pub subsetted_feature_refs: Vec<String>,
+    #[serde(default)]
+    pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
+    pub is_variable: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct KirEmissionSeed {
     pub metaclasses: BTreeMap<String, EmissionRule>,
@@ -110,6 +127,7 @@ pub struct MappingBundle {
     usage_semantic_specialization_overrides: HashMap<String, HashMap<String, Vec<String>>>,
     kir_emission: KirEmissionSeed,
     lowering_rules: Option<LoweringRuleSeed>,
+    semantic_defaults: SemanticDefaultsSeed,
 }
 
 impl MappingBundle {
@@ -171,14 +189,31 @@ impl MappingBundle {
                 })?,
             ),
         };
+        let semantic_defaults = match language {
+            SourceLanguage::Kerml => SemanticDefaultsSeed::default(),
+            SourceLanguage::Sysml => {
+                serde_json::from_str(load_semantic_defaults_seed()).map_err(|err| {
+                    Diagnostic::new(
+                        format!("failed to parse semantic defaults file: {err}"),
+                        None,
+                    )
+                })?
+            }
+        };
 
-        Self::from_seeds(construct_seed, kir_emission, lowering_rules)
+        Self::from_seeds(
+            construct_seed,
+            kir_emission,
+            lowering_rules,
+            semantic_defaults,
+        )
     }
 
     fn from_seeds(
         construct_seed: PilotConstructSeed,
         kir_emission: KirEmissionSeed,
         lowering_rules: Option<LoweringRuleSeed>,
+        semantic_defaults: SemanticDefaultsSeed,
     ) -> Result<Self, Diagnostic> {
         Ok(Self {
             package_default_specializations: construct_seed
@@ -243,6 +278,7 @@ impl MappingBundle {
                 .collect(),
             kir_emission,
             lowering_rules,
+            semantic_defaults,
         })
     }
 
@@ -304,6 +340,27 @@ impl MappingBundle {
             .get(keyword)
             .cloned()
             .unwrap_or_else(|| format!("{}Usage", pascal_case(keyword)))
+    }
+
+    pub(crate) fn usage_family_default(
+        &self,
+        construct: &str,
+        owner_construct: &str,
+    ) -> Option<UsageFamilyDefaults> {
+        let default = self
+            .semantic_defaults
+            .usage_family_defaults
+            .get(construct)?;
+        let subsetted_feature_refs = default
+            .owner_subsetted_feature_refs
+            .get(owner_construct)
+            .unwrap_or(&default.subsetted_feature_refs)
+            .clone();
+        Some(UsageFamilyDefaults {
+            type_ref: default.type_ref.clone(),
+            subsetted_feature_refs,
+            is_variable: default.is_variable,
+        })
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -579,6 +636,12 @@ fn load_kir_emission_seed() -> Result<String, Diagnostic> {
 fn load_lowering_rules_seed() -> &'static str {
     include_str!(
         "../../../../resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/lowering_rules.seed.json"
+    )
+}
+
+fn load_semantic_defaults_seed() -> &'static str {
+    include_str!(
+        "../../../../resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/semantic_defaults.seed.json"
     )
 }
 
@@ -1119,7 +1182,7 @@ fn transpile_usage(
         &specialized_feature_refs,
     );
     let declared_name_is_synthetic = usage_has_synthetic_declared_name(usage);
-    let usage_name = usage_display_name(usage);
+    let usage_name = usage_display_name(usage, mappings);
     let metatype_ref = mappings
         .default_specialization_for_usage(&usage.construct)
         .or(Some(metaclass))
@@ -1335,7 +1398,7 @@ fn transpile_usage(
             subsetted_feature_ref,
         );
     }
-    enrich_usage_semantics(&mut element, usage, owner_id);
+    enrich_usage_semantics(&mut element, usage, owner_id, mappings);
     enrich_trace_relationship_semantics(&mut element, usage, owner_id);
     Ok(element)
 }
@@ -1549,7 +1612,12 @@ fn render_owned_usage_tree_ids(
     Ok(ids)
 }
 
-fn enrich_usage_semantics(element: &mut KirElement, usage: &ResolvedUsage, owner_id: &str) {
+fn enrich_usage_semantics(
+    element: &mut KirElement,
+    usage: &ResolvedUsage,
+    owner_id: &str,
+    mappings: &MappingBundle,
+) {
     if usage.is_implicit_name || usage_has_synthetic_declared_name(usage) {
         element.properties.remove("declared_name");
     }
@@ -1573,9 +1641,10 @@ fn enrich_usage_semantics(element: &mut KirElement, usage: &ResolvedUsage, owner
         }
     }
 
-    if let Some(defaults) = usage_family_defaults(usage) {
-        insert_property_ref_if_missing(&mut element.properties, "type", defaults.type_ref);
-        for family_ref in defaults.subsetted_feature_refs {
+    if let Some(defaults) = mappings.usage_family_default(&usage.construct, &usage.owner_construct)
+    {
+        insert_property_ref_if_missing(&mut element.properties, "type", &defaults.type_ref);
+        for family_ref in &defaults.subsetted_feature_refs {
             append_unique_property_ref_list(
                 &mut element.properties,
                 "subsetted_features",
@@ -1739,11 +1808,12 @@ fn usage_has_synthetic_declared_name(usage: &ResolvedUsage) -> bool {
         })
 }
 
-fn usage_display_name(usage: &ResolvedUsage) -> Option<String> {
+fn usage_display_name(usage: &ResolvedUsage, mappings: &MappingBundle) -> Option<String> {
     if usage.is_implicit_name {
-        return usage_family_defaults(usage)
-            .and_then(|defaults| defaults.subsetted_feature_refs.last().copied())
-            .map(display_name_for_ref)
+        return mappings
+            .usage_family_default(&usage.construct, &usage.owner_construct)
+            .and_then(|defaults| defaults.subsetted_feature_refs.last().cloned())
+            .map(|value| display_name_for_ref(&value))
             .or_else(|| (!usage.declared_name.is_empty()).then(|| usage.declared_name.clone()));
     }
 
