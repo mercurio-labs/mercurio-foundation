@@ -106,6 +106,23 @@ pub struct UsageSubsetDefaultSeed {
     pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub modifier_owner_subsetted_feature_refs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    pub specialized_feature_subset: Option<SpecializedFeatureSubsetDefaultSeed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SpecializedFeatureSubsetDefaultSeed {
+    #[serde(default)]
+    pub require_feature_ref: bool,
+    #[serde(default)]
+    pub require_multiplicity: bool,
+    #[serde(default)]
+    pub include_specialized_features: bool,
+    #[serde(default)]
+    pub require_no_explicit_type_for_append_refs: bool,
+    #[serde(default)]
+    pub append_refs: Vec<String>,
+    #[serde(default)]
+    pub owner_append_refs: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -421,6 +438,49 @@ impl MappingBundle {
             .get(&usage.owner_construct)
             .cloned()
             .unwrap_or_else(|| default.subsetted_feature_refs.clone())
+    }
+
+    pub(crate) fn specialized_feature_subset_default(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> Option<Vec<String>> {
+        let default = self
+            .semantic_defaults
+            .usage_subset_defaults
+            .get(&usage.construct)?
+            .specialized_feature_subset
+            .as_ref()?;
+
+        if usage.specialized_features.is_empty() {
+            return None;
+        }
+        if default.require_feature_ref
+            && !usage
+                .specialized_features
+                .iter()
+                .any(|feature| feature.starts_with("feature."))
+        {
+            return None;
+        }
+        if default.require_multiplicity && usage.multiplicity.is_none() {
+            return None;
+        }
+
+        let mut refs = Vec::new();
+        if default.include_specialized_features {
+            refs.extend(usage.specialized_features.clone());
+        }
+        if default.require_no_explicit_type_for_append_refs && usage.has_explicit_type {
+            return Some(refs);
+        }
+        refs.extend(
+            default
+                .owner_append_refs
+                .get(&usage.owner_construct)
+                .unwrap_or(&default.append_refs)
+                .clone(),
+        );
+        Some(refs)
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -2520,31 +2580,8 @@ fn usage_subsetted_feature_refs(
         return Vec::new();
     }
 
-    if usage.construct == "PartUsage"
-        && usage
-            .specialized_features
-            .iter()
-            .any(|feature| feature.starts_with("feature."))
-    {
-        if usage.has_explicit_type {
-            return dedupe_refs(usage.specialized_features.clone());
-        }
-        let mut specialized_feature_refs = usage.specialized_features.clone();
-        specialized_feature_refs.push(if usage.owner_construct == "Package" {
-            "Parts::parts".to_string()
-        } else {
-            "Items::Item::subparts".to_string()
-        });
-        return dedupe_refs(specialized_feature_refs);
-    }
-
-    if usage.construct == "AttributeUsage"
-        && usage
-            .specialized_features
-            .iter()
-            .any(|feature| feature.starts_with("feature."))
-    {
-        return dedupe_refs(usage.specialized_features.clone());
+    if let Some(default_refs) = mappings.specialized_feature_subset_default(usage) {
+        return dedupe_refs(default_refs);
     }
 
     if usage.construct == "ReferenceUsage" {
@@ -2552,13 +2589,6 @@ fn usage_subsetted_feature_refs(
             mappings.semantic_specializations_for_usage(&usage.construct, &usage.modifiers),
         );
         return dedupe_refs(subsetted_feature_refs);
-    }
-
-    if usage.construct == "PerformActionUsage"
-        && usage.multiplicity.is_some()
-        && !usage.specialized_features.is_empty()
-    {
-        subsetted_feature_refs.extend(usage.specialized_features.clone());
     }
 
     if usage.construct == "PortUsage"

@@ -27,11 +27,36 @@
         ]
       }
     },
+    "AttributeUsage": {
+      "specialized_feature_subset": {
+        "require_feature_ref": true,
+        "include_specialized_features": true
+      }
+    },
     "PartUsage": {
+      "specialized_feature_subset": {
+        "require_feature_ref": true,
+        "include_specialized_features": true,
+        "require_no_explicit_type_for_append_refs": true,
+        "append_refs": [
+          "Items::Item::subparts"
+        ],
+        "owner_append_refs": {
+          "Package": [
+            "Parts::parts"
+          ]
+        }
+      },
       "owner_subsetted_feature_refs": {
         "Package": [
           "Parts::parts"
         ]
+      }
+    },
+    "PerformActionUsage": {
+      "specialized_feature_subset": {
+        "require_multiplicity": true,
+        "include_specialized_features": true
       }
     },
     "PortUsage": {

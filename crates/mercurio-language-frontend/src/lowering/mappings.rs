@@ -299,6 +299,30 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_load_specialized_feature_subset_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let mut usage = test_usage("PartUsage", "Package");
+        usage.specialized_features = vec!["feature.root.p".to_string()];
+
+        assert_eq!(
+            profile
+                .mappings
+                .specialized_feature_subset_default(&usage)
+                .expect("part specialized feature subset defaults"),
+            vec!["feature.root.p", "Parts::parts"]
+        );
+
+        usage.has_explicit_type = true;
+        assert_eq!(
+            profile
+                .mappings
+                .specialized_feature_subset_default(&usage)
+                .expect("typed part specialized feature subset defaults"),
+            vec!["feature.root.p"]
+        );
+    }
+
+    #[test]
     fn kerml_profile_has_no_sysml_lowering_rules() {
         let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
 

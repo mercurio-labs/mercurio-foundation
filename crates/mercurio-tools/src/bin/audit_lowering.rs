@@ -1071,6 +1071,13 @@ fn semantic_default_owner_override_gaps(
         construct_names,
         &mut gaps,
     );
+    collect_owner_override_gaps(
+        document,
+        "usage_subset_defaults",
+        "specialized_feature_subset.owner_append_refs",
+        construct_names,
+        &mut gaps,
+    );
     collect_nested_owner_override_gaps(
         document,
         "usage_subset_defaults",
@@ -1093,7 +1100,7 @@ fn collect_owner_override_gaps(
         return;
     };
     for (construct, default) in defaults {
-        let Some(overrides) = default.get(owner_key).and_then(Value::as_object) else {
+        let Some(overrides) = nested_value(default, owner_key).and_then(Value::as_object) else {
             continue;
         };
         for owner_construct in overrides.keys() {
@@ -1118,7 +1125,8 @@ fn collect_nested_owner_override_gaps(
         return;
     };
     for (construct, default) in defaults {
-        let Some(modifier_overrides) = default.get(owner_key).and_then(Value::as_object) else {
+        let Some(modifier_overrides) = nested_value(default, owner_key).and_then(Value::as_object)
+        else {
             continue;
         };
         for owner_defaults in modifier_overrides.values() {
@@ -1135,6 +1143,11 @@ fn collect_nested_owner_override_gaps(
             }
         }
     }
+}
+
+fn nested_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.')
+        .try_fold(value, |current, segment| current.get(segment))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
