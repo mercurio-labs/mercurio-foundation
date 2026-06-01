@@ -1,3 +1,4 @@
+pub mod lowering;
 pub mod resolver;
 pub mod transpile;
 

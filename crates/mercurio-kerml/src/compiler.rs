@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use mercurio_kir::{KirDocument, KirError};
 use mercurio_language_contracts::diagnostics::Diagnostic;
 use mercurio_language_contracts::{SourceLanguage, ast::SysmlModule};
+use mercurio_language_frontend::lowering::mappings::{LanguageProfile, MappingBundle};
 use mercurio_language_frontend::resolver::{
     ResolverContext, resolve_kerml_module_with_context, resolve_kerml_module_with_resolver_context,
 };
-use mercurio_language_frontend::transpile::{MappingBundle, transpile_module_with_source};
+use mercurio_language_frontend::transpile::transpile_module_with_source;
 
 use crate::parser::parse_kerml;
 
@@ -133,7 +134,8 @@ pub fn compile_kerml_module(
     source_name: &str,
     library_context: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
-    let mappings = MappingBundle::load_for_language(SourceLanguage::Kerml)?;
+    let profile = LanguageProfile::load(SourceLanguage::Kerml)?;
+    let mappings = profile.mappings;
     let resolved = resolve_kerml_module_with_context(
         module,
         std::slice::from_ref(module),
@@ -149,7 +151,8 @@ pub fn compile_kerml_module_with_context(
     context_modules: &[SysmlModule],
     library_context: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
-    let mappings = MappingBundle::load_for_language(SourceLanguage::Kerml)?;
+    let profile = LanguageProfile::load(SourceLanguage::Kerml)?;
+    let mappings = profile.mappings;
     let resolved =
         resolve_kerml_module_with_context(module, context_modules, library_context, mappings)?;
     transpile_module_with_source(&resolved, source_name, "kerml", mappings)

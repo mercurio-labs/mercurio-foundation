@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use mercurio_kir::{KirDocument, KirError};
-use mercurio_language_contracts::SourceLanguage;
 use mercurio_language_contracts::ast::{
     AliasDecl, BinaryOp, Declaration, Expr, GenericDefinitionDecl, GenericUsageDecl, ImportDecl,
     LiteralExpr, MultiplicityRange, PackageDecl, PartDefinitionDecl, PartUsageDecl, QualifiedName,
@@ -11,11 +10,12 @@ use mercurio_language_contracts::ast::{
 use mercurio_language_contracts::diagnostics::Diagnostic;
 use mercurio_language_contracts::lexer::{Token, TokenKind, lex};
 pub use mercurio_language_contracts::reports::{ParseReport, SemanticCompileStatus};
+use mercurio_language_frontend::lowering::mappings::{LanguageProfile, MappingBundle};
 use mercurio_language_frontend::resolver::{
     ResolvedDefinition, ResolvedModule, ResolvedUsage, ResolverContext, resolve_module,
     resolve_module_with_context, resolve_module_with_resolver_context,
 };
-use mercurio_language_frontend::transpile::{MappingBundle, transpile_module};
+use mercurio_language_frontend::transpile::transpile_module;
 
 #[cfg(not(target_arch = "wasm32"))]
 type CompileTimer = std::time::Instant;
@@ -140,7 +140,8 @@ pub fn compile_sysml_module(
     stdlib: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
     let mapping_start = compile_timer_start();
-    let mappings = MappingBundle::load_for_language(SourceLanguage::Sysml)?;
+    let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0")?;
+    let mappings = profile.mappings;
     log_compile_timed_event(
         "sysml.compile.mapping_load",
         mapping_start,
@@ -149,7 +150,7 @@ pub fn compile_sysml_module(
     );
 
     let resolve_start = compile_timer_start();
-    let resolved = resolve_module(module, stdlib, &mappings)?;
+    let resolved = resolve_module(module, stdlib, mappings)?;
     validate_metadata_usages(&resolved)?;
     log_compile_timed_event(
         "sysml.compile.resolve",
@@ -159,7 +160,7 @@ pub fn compile_sysml_module(
     );
 
     let transpile_start = compile_timer_start();
-    let document = transpile_module(&resolved, source_name, &mappings)?;
+    let document = transpile_module(&resolved, source_name, mappings)?;
     log_compile_timed_event(
         "sysml.compile.transpile",
         transpile_start,
@@ -267,8 +268,8 @@ pub fn compile_sysml_module_with_context_report_with_limit(
     stdlib: &KirDocument,
     max_attempts: usize,
 ) -> SemanticCompileReport {
-    let mappings = match MappingBundle::load_for_language(SourceLanguage::Sysml) {
-        Ok(mappings) => mappings,
+    let profile = match LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0") {
+        Ok(profile) => profile,
         Err(diagnostic) => {
             return SemanticCompileReport {
                 status: SemanticCompileStatus::Failed,
@@ -277,6 +278,7 @@ pub fn compile_sysml_module_with_context_report_with_limit(
             };
         }
     };
+    let mappings = profile.mappings;
     let working_context_modules =
         replace_equivalent_context_module(context_modules, module, module);
     let resolver_context =
@@ -417,7 +419,8 @@ pub fn compile_sysml_module_with_context(
     stdlib: &KirDocument,
 ) -> Result<KirDocument, Diagnostic> {
     let mapping_start = compile_timer_start();
-    let mappings = MappingBundle::load_for_language(SourceLanguage::Sysml)?;
+    let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0")?;
+    let mappings = profile.mappings;
     log_compile_timed_event(
         "sysml.compile.mapping_load",
         mapping_start,
@@ -426,7 +429,7 @@ pub fn compile_sysml_module_with_context(
     );
 
     let resolve_start = compile_timer_start();
-    let resolved = resolve_module_with_context(module, context_modules, stdlib, &mappings)?;
+    let resolved = resolve_module_with_context(module, context_modules, stdlib, mappings)?;
     validate_metadata_usages(&resolved)?;
     log_compile_timed_event(
         "sysml.compile.resolve",
@@ -440,7 +443,7 @@ pub fn compile_sysml_module_with_context(
     );
 
     let transpile_start = compile_timer_start();
-    let document = transpile_module(&resolved, source_name, &mappings)?;
+    let document = transpile_module(&resolved, source_name, mappings)?;
     log_compile_timed_event(
         "sysml.compile.transpile",
         transpile_start,

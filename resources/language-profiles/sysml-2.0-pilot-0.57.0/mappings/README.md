@@ -8,5 +8,10 @@ Pilot-derived SysML/KerML metaclasses.
 `kir_emission.seed.json` maps those metaclasses to Mercurio KIR emission rules:
 KIR kind, id template, emitted properties, relationships, and metadata policy.
 
+`lowering_rules.seed.json` is the first declarative lowering rule seed. It
+connects AST patterns, collection fields, elaboration notes, KIR emission
+properties, and Pilot evidence citations. It is audited today and can become an
+executable lowering table incrementally.
+
 They are compiler/profile inputs, not runtime workspace files. Stdlib release
 builds include their digests in provenance and package them with the profile.

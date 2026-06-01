@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "source": {
+    "kind": "mercurio-lowering-rule-seed",
+    "profile": "sysml-2.0-pilot-0.57.0",
+    "status": "prototype",
+    "note": "Declarative lowering rules that can be audited against Pilot grammar, Ecore, and transform evidence before they become executable lowering tables."
+  },
+  "rules": [
+    {
+      "construct": "Package",
+      "metaclass": "SysML::Package",
+      "status": "reviewed",
+      "ast": {
+        "node": "PackageDecl"
+      },
+      "collect": {
+        "element": "package",
+        "name": "$ast.name",
+        "owner": "$scope.package",
+        "fields": {
+          "docs": "$ast.docs",
+          "members": "$ast.members"
+        }
+      },
+      "emit": {
+        "id_template": "pkg.{qualified_name}",
+        "properties": {
+          "declared_name": "$declared_name",
+          "members": "$member_ids",
+          "metatype": "$metatype_ref",
+          "name": "$name",
+          "owner": "$owner_id"
+        }
+      },
+      "pilot_sources": {
+        "grammar_rules": ["Package"],
+        "ecore_class": "SysML::Package"
+      }
+    },
+    {
+      "construct": "PartDefinition",
+      "metaclass": "SysML::PartDefinition",
+      "status": "reviewed",
+      "ast": {
+        "node": "GenericDefinitionDecl",
+        "keyword": "part"
+      },
+      "collect": {
+        "element": "definition",
+        "name": "$ast.name",
+        "owner": "$scope.package_or_definition",
+        "fields": {
+          "is_abstract": "$ast.modifiers contains abstract",
+          "members": "$ast.members[usage]",
+          "specializes": "$ast.specializes or semantic_default"
+        }
+      },
+      "emit": {
+        "id_template": "type.{qualified_name}",
+        "properties": {
+          "features": "$owned_feature_ids",
+          "is_abstract": "$is_abstract",
+          "members": "$member_ids",
+          "metatype": "$metatype_ref",
+          "owner": "$owner_id",
+          "specializes": "$specializes_refs"
+        }
+      },
+      "pilot_sources": {
+        "grammar_rules": ["PartDefinition"],
+        "ecore_class": "SysML::PartDefinition"
+      }
+    },
+    {
+      "construct": "PartUsage",
+      "metaclass": "SysML::PartUsage",
+      "status": "reviewed",
+      "ast": {
+        "node": "GenericUsageDecl",
+        "keyword": "part"
+      },
+      "collect": {
+        "element": "usage",
+        "name": "$ast.name",
+        "owner": "$scope.owner",
+        "fields": {
+          "multiplicity": "$ast.multiplicity",
+          "specializes": "$ast.specializes or semantic_default",
+          "subsets": "$ast.subsets",
+          "type": "$ast.ty"
+        }
+      },
+      "emit": {
+        "id_template": "feature.{qualified_name}",
+        "properties": {
+          "features": "$owned_feature_ids",
+          "metatype": "$metatype_ref",
+          "owner": "$owner_id",
+          "specializes": "$specializes_refs",
+          "type": "$type_ref"
+        }
+      },
+      "pilot_sources": {
+        "grammar_rules": ["PartUsage"],
+        "ecore_class": "SysML::PartUsage"
+      }
+    },
+    {
+      "construct": "ReferenceUsage",
+      "metaclass": "SysML::ReferenceUsage",
+      "status": "reviewed",
+      "ast": {
+        "node": "GenericUsageDecl",
+        "keyword": "reference"
+      },
+      "collect": {
+        "element": "usage",
+        "name": "$ast.name",
+        "owner": "$scope.owner",
+        "fields": {
+          "reference_target": "$ast.reference_target",
+          "redefines": "$ast.redefines",
+          "type": "$ast.ty"
+        }
+      },
+      "elaborate": [
+        {
+          "id": "implicit-ref-redefines-target",
+          "when": "$usage.is_implicit_name && $usage.declared_name == ref && empty($usage.type) && empty($usage.reference_target) && len($usage.redefines) == 1",
+          "set": {
+            "reference_target": "$usage.redefines[0]",
+            "redefines": "[]"
+          },
+          "note": "Matches current Rust lowering behavior for implicit reference shorthand."
+        }
+      ],
+      "emit": {
+        "id_template": "feature.{qualified_name}",
+        "properties": {
+          "metatype": "$metatype_ref",
+          "owner": "$owner_id",
+          "specialized_features": "$reference_target_ref",
+          "specializes": "$specializes_refs",
+          "type": "$type_ref"
+        }
+      },
+      "pilot_sources": {
+        "grammar_rules": ["ReferenceUsage"],
+        "ecore_class": "SysML::ReferenceUsage",
+        "transform_observations": ["implicit-ref-redefines-target"]
+      }
+    },
+    {
+      "construct": "ConnectionDefinition",
+      "metaclass": "SysML::ConnectionDefinition",
+      "status": "reviewed",
+      "ast": {
+        "node": "GenericDefinitionDecl",
+        "keyword": "connection"
+      },
+      "collect": {
+        "element": "definition",
+        "name": "$ast.name",
+        "owner": "$scope.package_or_definition",
+        "fields": {
+          "end_members": "$ast.members[modifier=end]",
+          "members": "$ast.members[usage]",
+          "specializes": "$ast.specializes or semantic_default"
+        }
+      },
+      "elaborate": [
+        {
+          "id": "connection-end-direction",
+          "when": "$definition.construct == ConnectionDefinition",
+          "set": {
+            "first_end_modifier": "end-source",
+            "second_end_modifier": "end-target"
+          },
+          "note": "Matches current Rust annotation of binary connection ends before semantic specialization."
+        }
+      ],
+      "emit": {
+        "id_template": "type.{qualified_name}",
+        "properties": {
+          "features": "$owned_feature_ids",
+          "members": "$member_ids",
+          "metatype": "$metatype_ref",
+          "owner": "$owner_id",
+          "specializes": "$specializes_refs"
+        }
+      },
+      "pilot_sources": {
+        "grammar_rules": ["ConnectionDefinition"],
+        "ecore_class": "SysML::ConnectionDefinition",
+        "transform_observations": ["connection-end-direction"]
+      }
+    }
+  ]
+}

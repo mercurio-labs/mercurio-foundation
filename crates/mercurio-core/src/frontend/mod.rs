@@ -4,6 +4,7 @@ pub mod format;
 pub mod kerml;
 pub mod lexer;
 pub mod lint;
+pub mod lowering;
 pub mod pilot;
 pub mod resolver;
 pub mod sysml;

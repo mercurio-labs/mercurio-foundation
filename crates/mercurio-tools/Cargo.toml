@@ -53,6 +53,10 @@ name = "audit_language_profile"
 path = "src/bin/audit_language_profile.rs"
 
 [[bin]]
+name = "audit_lowering"
+path = "src/bin/audit_lowering.rs"
+
+[[bin]]
 name = "verify_core_contracts"
 path = "src/bin/verify_core_contracts.rs"
 
