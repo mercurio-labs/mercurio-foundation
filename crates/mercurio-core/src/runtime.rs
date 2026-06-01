@@ -7,16 +7,23 @@ use serde_json::{Number, Value};
 use crate::datalog::{
     DatalogError, DerivedIndexes, RulePack, load_default_rulepacks, materialize_core_indexes,
 };
+use crate::derived::{
+    DerivedFeatureCache, DerivedFeatureManifestError, DerivedFeatureRegistry, DerivedPropertyValue,
+    manifest_from_metadata,
+};
 use crate::expression::{
     ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionPathSegment,
 };
 use crate::graph::{Graph, GraphArtifact, GraphError};
+use crate::identity::workspace_revision_for_kir_document;
 use crate::ir::KirDocument;
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
     graph: Graph,
     derived: DerivedIndexes,
+    derived_feature_registry: DerivedFeatureRegistry,
+    derived_feature_cache: DerivedFeatureCache,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +50,8 @@ pub enum RuntimeError {
     Datalog(DatalogError),
     InvalidExpression(String),
     MissingElement(String),
+    MissingDerivedFeature { element: String, feature: String },
+    DerivedFeatureManifest(DerivedFeatureManifestError),
     UnsupportedAggregation(String),
     NonNumericValue { owner: String, feature: String },
 }
@@ -54,6 +63,10 @@ impl fmt::Display for RuntimeError {
             Self::Datalog(err) => write!(f, "{err}"),
             Self::InvalidExpression(expr) => write!(f, "invalid expression: {expr}"),
             Self::MissingElement(id) => write!(f, "missing element: {id}"),
+            Self::MissingDerivedFeature { element, feature } => {
+                write!(f, "missing derived feature {feature} for {element}")
+            }
+            Self::DerivedFeatureManifest(err) => write!(f, "{err}"),
             Self::UnsupportedAggregation(expr) => {
                 write!(f, "unsupported aggregation expression: {expr}")
             }
@@ -78,6 +91,12 @@ impl From<GraphError> for RuntimeError {
 impl From<DatalogError> for RuntimeError {
     fn from(value: DatalogError) -> Self {
         Self::Datalog(value)
+    }
+}
+
+impl From<DerivedFeatureManifestError> for RuntimeError {
+    fn from(value: DerivedFeatureManifestError) -> Self {
+        Self::DerivedFeatureManifest(value)
     }
 }
 
@@ -111,17 +130,38 @@ impl Runtime {
         rulepacks: &[RulePack],
     ) -> Result<Self, RuntimeError> {
         let derived = materialize_core_indexes(&graph, rulepacks)?;
-        Ok(Self { graph, derived })
+        Ok(Self {
+            graph,
+            derived,
+            derived_feature_registry: DerivedFeatureRegistry::with_builtin_core_specs(),
+            derived_feature_cache: DerivedFeatureCache::new("graph"),
+        })
     }
 
     pub fn from_document(document: KirDocument) -> Result<Self, RuntimeError> {
-        Self::from_graph(Graph::from_document(document)?)
+        let revision = workspace_revision_for_kir_document(&document)
+            .map(|revision| revision.fingerprint)
+            .unwrap_or_else(|_| "document".to_string());
+        let derived_feature_registry = DerivedFeatureRegistry::with_manifest_and_builtins(
+            manifest_from_metadata(&document.metadata)?,
+        )?;
+        let rulepacks = load_default_rulepacks()?;
+        let graph = Graph::from_document(document)?;
+        let derived = materialize_core_indexes(&graph, &rulepacks)?;
+        Ok(Self {
+            graph,
+            derived,
+            derived_feature_registry,
+            derived_feature_cache: DerivedFeatureCache::new(revision),
+        })
     }
 
     pub fn from_artifact(artifact: RuntimeArtifact) -> Result<Self, RuntimeError> {
         Ok(Self {
             graph: Graph::from_artifact(artifact.graph)?,
             derived: artifact.derived,
+            derived_feature_registry: DerivedFeatureRegistry::with_builtin_core_specs(),
+            derived_feature_cache: DerivedFeatureCache::new("artifact"),
         })
     }
 
@@ -145,6 +185,40 @@ impl Runtime {
 
     pub fn derived(&self) -> &DerivedIndexes {
         &self.derived
+    }
+
+    pub fn derived_feature_revision(&self) -> &str {
+        self.derived_feature_cache.revision()
+    }
+
+    pub fn derived_property(
+        &self,
+        element_id: &str,
+        feature: &str,
+    ) -> Result<QueryResult<Value>, RuntimeError> {
+        let element = self
+            .graph
+            .element_by_element_id(element_id)
+            .ok_or_else(|| RuntimeError::MissingElement(element_id.to_string()))?;
+        let DerivedPropertyValue { value, source } = self
+            .derived_feature_cache
+            .derived_property(
+                &self.derived_feature_registry,
+                &self.graph,
+                element,
+                feature,
+            )
+            .ok_or_else(|| RuntimeError::MissingDerivedFeature {
+                element: element_id.to_string(),
+                feature: feature.to_string(),
+            })?;
+        Ok(QueryResult {
+            value,
+            explanation: vec![format!(
+                "{feature} for {element_id} resolved from {source:?} at revision {}",
+                self.derived_feature_cache.revision()
+            )],
+        })
     }
 
     pub fn get_subtypes(&self, type_id: &str) -> Result<QueryResult<Vec<String>>, RuntimeError> {
@@ -585,6 +659,94 @@ mod tests {
         let result = runtime.get_features("type.Car").unwrap();
         assert!(result.value.contains(&"feature.engine".to_string()));
         assert!(result.value.contains(&"df.partCount".to_string()));
+    }
+
+    #[test]
+    fn derives_documentation_on_request() {
+        let runtime = Runtime::from_document(KirDocument {
+            metadata: Default::default(),
+            elements: vec![
+                KirElement {
+                    id: "type.Demo.A".to_string(),
+                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    layer: 2,
+                    properties: Default::default(),
+                },
+                KirElement {
+                    id: "doc.type.Demo.A.1".to_string(),
+                    kind: "KerML::Root::Documentation".to_string(),
+                    layer: 2,
+                    properties: [
+                        ("owner".to_string(), json!("type.Demo.A")),
+                        ("body".to_string(), json!("doc from A")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert!(!runtime.derived_feature_revision().is_empty());
+        assert_eq!(
+            runtime
+                .derived_property("type.Demo.A", "documentation")
+                .unwrap()
+                .value,
+            json!("doc.type.Demo.A.1")
+        );
+        assert_eq!(
+            runtime
+                .derived_property("type.Demo.A", "ownedElement")
+                .unwrap()
+                .value,
+            json!(["doc.type.Demo.A.1"])
+        );
+        assert_eq!(
+            runtime
+                .derived_property("doc.type.Demo.A.1", "documentedElement")
+                .unwrap()
+                .value,
+            json!("type.Demo.A")
+        );
+    }
+
+    #[test]
+    fn loads_derived_feature_manifest_from_document_metadata() {
+        let runtime = Runtime::from_document(KirDocument {
+            metadata: [(
+                "derived_feature_manifest".to_string(),
+                json!({
+                    "metamodel": "test",
+                    "derived_features": [
+                        {
+                            "owner": "*",
+                            "feature": "label",
+                            "kind": "name"
+                        }
+                    ]
+                }),
+            )]
+            .into_iter()
+            .collect(),
+            elements: vec![KirElement {
+                id: "type.Demo.A".to_string(),
+                kind: "SysML::Systems::PartDefinition".to_string(),
+                layer: 2,
+                properties: [("declared_name".to_string(), json!("A"))]
+                    .into_iter()
+                    .collect(),
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(
+            runtime
+                .derived_property("type.Demo.A", "label")
+                .unwrap()
+                .value,
+            json!("A")
+        );
     }
 
     #[test]

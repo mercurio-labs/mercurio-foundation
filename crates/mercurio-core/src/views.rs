@@ -205,6 +205,14 @@ pub struct ElementPropertyRowDto {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declared_by: Option<ElementSummaryDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiplicity_lower: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub multiplicity_upper: Option<String>,
     pub origin_kind: String,
     pub has_direct_value: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -763,6 +771,10 @@ fn property_row_from_query(row: AttributeRow) -> ElementPropertyRowDto {
     ElementPropertyRowDto {
         name: row.name,
         declared_by: row.declared_by.map(element_summary_from_query),
+        type_label: row.type_label,
+        feature_kind: row.feature_kind,
+        multiplicity_lower: row.multiplicity_lower,
+        multiplicity_upper: row.multiplicity_upper,
         origin_kind: row.origin_kind,
         has_direct_value: row.has_direct_value,
         direct_value: row.direct_value,

@@ -179,6 +179,8 @@ pub fn normalize_pilot_export(
         );
     }
 
+    synthesize_metamodel_features(&mut elements);
+
     Ok(KirDocument {
         metadata: BTreeMap::new(),
         elements: elements.into_values().collect(),
@@ -365,6 +367,236 @@ fn relation_targets(properties: &BTreeMap<String, Value>, keys: &[&str]) -> Vec<
     targets
 }
 
+fn synthesize_metamodel_features(elements: &mut BTreeMap<String, KirElement>) {
+    let owner_feature_pairs = elements
+        .iter()
+        .filter(|(_, element)| element.layer < 2)
+        .flat_map(|(owner_id, element)| {
+            relation_targets(&element.properties, &["features"])
+                .into_iter()
+                .map(|feature_id| (owner_id.clone(), feature_id))
+        })
+        .collect::<Vec<_>>();
+
+    for (owner_id, feature_id) in owner_feature_pairs {
+        let Some(feature) = elements.get(&feature_id) else {
+            continue;
+        };
+        let Some(raw_name) = declared_name_from_properties(&feature.properties) else {
+            continue;
+        };
+        let kir_property = metamodel_feature_property_name(&raw_name);
+        let id = format!("metafeature.{owner_id}.{kir_property}");
+        if elements.contains_key(&id) {
+            continue;
+        }
+
+        let feature_type = first_relation_target(&feature.properties, "type");
+        let mut properties = BTreeMap::from([
+            ("declared_name".to_string(), Value::String(raw_name)),
+            ("owner".to_string(), Value::String(owner_id.clone())),
+            (
+                "source_feature".to_string(),
+                Value::String(feature_id.clone()),
+            ),
+            (
+                "kir_property".to_string(),
+                Value::String(kir_property.clone()),
+            ),
+            (
+                "feature_kind".to_string(),
+                Value::String(metamodel_feature_kind(&feature.kind).to_string()),
+            ),
+        ]);
+        if let Some(group) = pilot_library_group(feature) {
+            properties.insert(
+                "pilot_library_group".to_string(),
+                Value::String(group.to_string()),
+            );
+            properties.insert(
+                "metamodel_language".to_string(),
+                Value::String(metamodel_language_for_group(group).to_string()),
+            );
+            properties.insert(
+                "metamodel_layer".to_string(),
+                Value::String(metamodel_layer_for_group(group).to_string()),
+            );
+        }
+        if let Some(feature_type) = feature_type {
+            properties.insert("type".to_string(), Value::String(feature_type.clone()));
+            properties.insert(
+                "type_label".to_string(),
+                Value::String(label_for_id(&feature_type)),
+            );
+        }
+        copy_if_present(
+            &feature.properties,
+            &mut properties,
+            "multiplicity_lower",
+            "lower",
+        );
+        copy_if_present(
+            &feature.properties,
+            &mut properties,
+            "multiplicity_upper",
+            "upper",
+        );
+        copy_if_present(
+            &feature.properties,
+            &mut properties,
+            "is_derived",
+            "is_derived",
+        );
+        copy_if_present(
+            &feature.properties,
+            &mut properties,
+            "is_ordered",
+            "is_ordered",
+        );
+        copy_if_present(
+            &feature.properties,
+            &mut properties,
+            "is_unique",
+            "is_unique",
+        );
+
+        elements.insert(
+            id.clone(),
+            KirElement {
+                id,
+                kind: "MetamodelFeature".to_string(),
+                layer: feature.layer,
+                properties,
+            },
+        );
+    }
+}
+
+fn declared_name_from_properties(properties: &BTreeMap<String, Value>) -> Option<String> {
+    properties
+        .get("declared_name")
+        .and_then(Value::as_str)
+        .or_else(|| properties.get("name").and_then(Value::as_str))
+        .or_else(|| {
+            properties
+                .get("metadata")
+                .and_then(Value::as_object)
+                .and_then(|metadata| metadata.get("declared_name"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            properties
+                .get("metadata")
+                .and_then(Value::as_object)
+                .and_then(|metadata| metadata.get("name"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string)
+}
+
+fn first_relation_target(properties: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+    match properties.get(key) {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Array(values)) => values.iter().find_map(Value::as_str).map(str::to_string),
+        _ => None,
+    }
+}
+
+fn pilot_library_group(element: &KirElement) -> Option<&str> {
+    element
+        .properties
+        .get("metadata")
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("pilot_library_group"))
+        .and_then(Value::as_str)
+}
+
+fn metamodel_language_for_group(group: &str) -> &'static str {
+    match group {
+        "Kernel Libraries" => "kerml",
+        "Systems Library" | "Domain Libraries" => "sysml",
+        _ => "unknown",
+    }
+}
+
+fn metamodel_layer_for_group(group: &str) -> &'static str {
+    match group {
+        "Kernel Libraries" => "kernel",
+        "Systems Library" => "systems",
+        "Domain Libraries" => "domain",
+        _ => "unknown",
+    }
+}
+
+fn metamodel_feature_kind(element_kind: &str) -> &'static str {
+    match element_kind {
+        "AttributeUsage" | "AttributeDefinition" => "attribute",
+        _ => "reference",
+    }
+}
+
+fn metamodel_feature_property_name(declared_name: &str) -> String {
+    match declared_name {
+        "ownedFeature" => "features".to_string(),
+        "ownedMember" => "members".to_string(),
+        "ownedSpecialization" => "specializes".to_string(),
+        "documentation" => "doc".to_string(),
+        "declaredName" => "declared_name".to_string(),
+        "declaredShortName" => "declared_short_name".to_string(),
+        "shortName" => "short_name".to_string(),
+        "isLibraryElement" => "is_library_element".to_string(),
+        "isAbstract" => "is_abstract".to_string(),
+        "isDerived" => "is_derived".to_string(),
+        "isEnd" => "is_end".to_string(),
+        "isOrdered" => "is_ordered".to_string(),
+        "isUnique" => "is_unique".to_string(),
+        "isVariable" => "is_variable".to_string(),
+        "isImplied" => "is_implied".to_string(),
+        "featuringType" => "featuring_type".to_string(),
+        "chainingFeature" => "chaining_feature".to_string(),
+        other => to_snake_case(other),
+    }
+}
+
+fn copy_if_present(
+    source: &BTreeMap<String, Value>,
+    target: &mut BTreeMap<String, Value>,
+    source_key: &str,
+    target_key: &str,
+) {
+    if let Some(value) = source.get(source_key).or_else(|| {
+        source
+            .get("metadata")
+            .and_then(Value::as_object)?
+            .get(source_key)
+    }) {
+        target.insert(target_key.to_string(), value.clone());
+    }
+}
+
+fn to_snake_case(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    for (index, ch) in value.chars().enumerate() {
+        if ch.is_ascii_uppercase() && index > 0 {
+            result.push('_');
+        }
+        result.push(ch.to_ascii_lowercase());
+    }
+    result
+}
+
+fn label_for_id(value: &str) -> String {
+    value
+        .rsplit("::")
+        .next()
+        .unwrap_or(value)
+        .rsplit('.')
+        .next()
+        .unwrap_or(value)
+        .trim_matches('\'')
+        .to_string()
+}
+
 fn layer_for_group(group: &str) -> Result<u8, PilotImportError> {
     match group {
         "Kernel Libraries" => Ok(0),
@@ -458,6 +690,82 @@ mod tests {
                 .unwrap()
                 .contains("top level generalized type")
         );
+    }
+
+    #[test]
+    fn normalizes_owned_features_as_explicit_metamodel_feature_facts() {
+        let export = PilotExportDocument {
+            metadata: None,
+            elements: vec![
+                PilotExportElement {
+                    qualified_name: "Kernel::Element".to_string(),
+                    kind: "Metaclass".to_string(),
+                    library_group: "Kernel Libraries".to_string(),
+                    source: None,
+                    documentation: vec![],
+                    properties: BTreeMap::from([("declared_name".to_string(), json!("Element"))]),
+                },
+                PilotExportElement {
+                    qualified_name: "Kernel::Element::declaredName".to_string(),
+                    kind: "AttributeUsage".to_string(),
+                    library_group: "Kernel Libraries".to_string(),
+                    source: None,
+                    documentation: vec![],
+                    properties: BTreeMap::from([
+                        ("declared_name".to_string(), json!("declaredName")),
+                        ("type".to_string(), json!("Kernel::String")),
+                        ("multiplicity_lower".to_string(), json!(0)),
+                        ("multiplicity_upper".to_string(), json!(1)),
+                    ]),
+                },
+                PilotExportElement {
+                    qualified_name: "Kernel::String".to_string(),
+                    kind: "DataType".to_string(),
+                    library_group: "Kernel Libraries".to_string(),
+                    source: None,
+                    documentation: vec![],
+                    properties: BTreeMap::from([("declared_name".to_string(), json!("String"))]),
+                },
+            ],
+            relationships: vec![
+                PilotExportRelationship {
+                    source: "Kernel::Element".to_string(),
+                    relation: "features".to_string(),
+                    target: "Kernel::Element::declaredName".to_string(),
+                },
+                PilotExportRelationship {
+                    source: "Kernel::Element::declaredName".to_string(),
+                    relation: "type".to_string(),
+                    target: "Kernel::String".to_string(),
+                },
+            ],
+        };
+
+        let normalized = normalize_pilot_export(export).unwrap();
+        let feature = normalized
+            .elements
+            .iter()
+            .find(|element| element.id == "metafeature.Kernel::Element.declared_name")
+            .unwrap();
+
+        assert_eq!(feature.kind, "MetamodelFeature");
+        assert_eq!(feature.properties["owner"], "Kernel::Element");
+        assert_eq!(
+            feature.properties["source_feature"],
+            "Kernel::Element::declaredName"
+        );
+        assert_eq!(feature.properties["kir_property"], "declared_name");
+        assert_eq!(feature.properties["feature_kind"], "attribute");
+        assert_eq!(
+            feature.properties["pilot_library_group"],
+            "Kernel Libraries"
+        );
+        assert_eq!(feature.properties["metamodel_language"], "kerml");
+        assert_eq!(feature.properties["metamodel_layer"], "kernel");
+        assert_eq!(feature.properties["type"], "Kernel::String");
+        assert_eq!(feature.properties["type_label"], "String");
+        assert_eq!(feature.properties["lower"], 0);
+        assert_eq!(feature.properties["upper"], 1);
     }
 
     #[test]

@@ -55,6 +55,7 @@ pub fn legacy_monolithic_sysml_library_path() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mercurio_language_contracts::ast::Declaration;
 
     #[test]
     fn facade_parses_minimal_sysml() {
@@ -79,6 +80,62 @@ mod tests {
                 || element.properties.get("declared_name")
                     == Some(&serde_json::Value::String("Vehicle".to_string()))
         }));
+    }
+
+    #[test]
+    fn body_doc_is_owned_by_containing_part_definition() {
+        let source = "package Demo { part def A { doc /* doc from A */ } part def B; }";
+        let module = parse_sysml(source).unwrap();
+        let package = module.package.as_ref().unwrap();
+
+        let definition_docs = |name: &str| {
+            package
+                .members
+                .iter()
+                .find_map(|member| match member {
+                    Declaration::PartDefinition(definition) if definition.name == name => {
+                        Some(definition.docs.as_slice())
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+
+        assert_eq!(definition_docs("A"), ["doc from A"]);
+        assert!(definition_docs("B").is_empty());
+
+        let stdlib = load_sysml_baseline().unwrap();
+        let document = compile_sysml_text(source, "inline.sysml", &stdlib).unwrap();
+        let a = document
+            .elements
+            .iter()
+            .find(|element| element.id == "type.Demo.A")
+            .unwrap();
+        let b = document
+            .elements
+            .iter()
+            .find(|element| element.id == "type.Demo.B")
+            .unwrap();
+        let documentation = document
+            .elements
+            .iter()
+            .find(|element| element.kind == "KerML::Root::Documentation")
+            .unwrap();
+
+        assert!(!a.properties.contains_key("doc"));
+        assert!(!b.properties.contains_key("doc"));
+        assert!(!a.properties.contains_key("ownedElement"));
+        assert!(!a.properties.contains_key("documentation"));
+        assert_eq!(
+            documentation.properties["body"],
+            serde_json::json!("doc from A")
+        );
+        assert_eq!(
+            documentation.properties["owner"],
+            serde_json::json!("type.Demo.A")
+        );
+        assert!(!documentation.properties.contains_key("documentedElement"));
+        assert!(!documentation.properties.contains_key("annotatedElement"));
     }
 
     #[test]

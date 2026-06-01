@@ -1442,7 +1442,7 @@ impl Parser {
         &mut self,
         keyword: &str,
         start: Token,
-        docs: Vec<String>,
+        mut docs: Vec<String>,
         mut modifiers: Vec<String>,
     ) -> Result<Declaration, Diagnostic> {
         modifiers.extend(self.consume_angle_adornments()?);
@@ -1465,14 +1465,15 @@ impl Parser {
             TokenKind::Semicolon => self.expect(TokenKind::Semicolon, "expected `;`")?,
             TokenKind::LBrace => {
                 self.advance();
-                let (body_members, end) = self.parse_declaration_block_contents_after_open()?;
-                for declaration in body_members {
+                let block = self.parse_declaration_block_contents_after_open()?;
+                docs.extend(block.owner_docs);
+                for declaration in block.members {
                     if let Declaration::PartUsage(part_usage) = &declaration {
                         part_members.push(part_usage.clone());
                     }
                     members.push(declaration);
                 }
-                end
+                block.end
             }
             _ => return Err(self.error_here("expected `;` or `{` after part definition")),
         };
@@ -1504,7 +1505,7 @@ impl Parser {
         &mut self,
         keyword: &str,
         start: Token,
-        docs: Vec<String>,
+        mut docs: Vec<String>,
         mut modifiers: Vec<String>,
     ) -> Result<Declaration, Diagnostic> {
         modifiers.extend(self.consume_angle_adornments()?);
@@ -1776,6 +1777,7 @@ impl Parser {
                 subsets: Vec::new(),
                 redefines: Vec::new(),
                 body_members: Vec::new(),
+                owner_docs: Vec::new(),
                 had_body: false,
             }
         } else {
@@ -1795,6 +1797,7 @@ impl Parser {
         let name = explicit_name.unwrap_or_else(|| tail.derived_name(&effective_keyword));
         let end = self.finish_usage(&effective_keyword, tail.had_body)?;
         let span = merge_span(&start.span, &end.span);
+        docs.append(&mut tail.owner_docs);
         let has_type = tail.ty.is_some();
         let reference_target = explicit_reference_target
             .or_else(|| infer_reference_target(&effective_keyword, &name, has_type, &mut tail))
@@ -1904,9 +1907,10 @@ impl Parser {
         let mut body_members = Vec::new();
         if matches!(self.peek_kind(), TokenKind::LBrace) {
             self.advance();
-            let (members, block_end) = self.parse_declaration_block_contents_after_open()?;
-            body_members = members;
-            end = block_end;
+            let block = self.parse_declaration_block_contents_after_open()?;
+            docs.extend(block.owner_docs);
+            body_members = block.members;
+            end = block.end;
         } else if matches!(self.peek_kind(), TokenKind::Semicolon) {
             end = self.expect(TokenKind::Semicolon, "expected `;`")?;
         } else if !self.comment_usage_can_end_here() {
@@ -2006,7 +2010,7 @@ impl Parser {
 
     fn parse_implicit_usage(
         &mut self,
-        docs: Vec<String>,
+        mut docs: Vec<String>,
         modifiers: Vec<String>,
     ) -> Result<Declaration, Diagnostic> {
         let start = self.current().clone();
@@ -2014,6 +2018,7 @@ impl Parser {
         let tail = self.parse_usage_tail(&[])?;
         let end = self.finish_usage("declaration", tail.had_body)?;
         let keyword = implicit_usage_keyword(&modifiers);
+        docs.extend(tail.owner_docs);
 
         Ok(Declaration::GenericUsage(GenericUsageDecl {
             keyword: keyword.to_string(),
@@ -2103,6 +2108,7 @@ impl Parser {
         let mut subsets = Vec::new();
         let mut redefines = Vec::new();
         let mut body_members = Vec::new();
+        let mut owner_docs = Vec::new();
         let mut had_body = false;
 
         if let Some(parsed) = self.consume_suffix_adornments()? {
@@ -2178,7 +2184,9 @@ impl Parser {
                 }
                 TokenKind::LBrace => {
                     had_body = true;
-                    body_members = self.parse_declaration_block()?;
+                    let block = self.parse_declaration_block()?;
+                    body_members = block.members;
+                    owner_docs.extend(block.owner_docs);
                     break;
                 }
                 TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof => break,
@@ -2198,6 +2206,7 @@ impl Parser {
             subsets,
             redefines,
             body_members,
+            owner_docs,
             had_body,
         })
     }
@@ -2582,7 +2591,9 @@ impl Parser {
                 self.consume_balanced(TokenKind::LParen, TokenKind::RParen)?;
                 if matches!(self.peek_kind(), TokenKind::LBrace) {
                     tail.had_body = true;
-                    tail.body_members.extend(self.parse_declaration_block()?);
+                    let block = self.parse_declaration_block()?;
+                    tail.body_members.extend(block.members);
+                    tail.owner_docs.extend(block.owner_docs);
                 }
                 return Ok(());
             }
@@ -2590,7 +2601,9 @@ impl Parser {
             tail.body_members = self.parse_connection_end_member_pair(has_named_ends)?;
             if matches!(self.peek_kind(), TokenKind::LBrace) {
                 tail.had_body = true;
-                tail.body_members.extend(self.parse_declaration_block()?);
+                let block = self.parse_declaration_block()?;
+                tail.body_members.extend(block.members);
+                tail.owner_docs.extend(block.owner_docs);
             }
         }
 
@@ -2604,14 +2617,18 @@ impl Parser {
                 self.consume_balanced(TokenKind::LParen, TokenKind::RParen)?;
                 if matches!(self.peek_kind(), TokenKind::LBrace) {
                     tail.had_body = true;
-                    tail.body_members.extend(self.parse_declaration_block()?);
+                    let block = self.parse_declaration_block()?;
+                    tail.body_members.extend(block.members);
+                    tail.owner_docs.extend(block.owner_docs);
                 }
                 return Ok(());
             }
             tail.body_members = self.parse_connection_end_member_pair(false)?;
             if matches!(self.peek_kind(), TokenKind::LBrace) {
                 tail.had_body = true;
-                tail.body_members.extend(self.parse_declaration_block()?);
+                let block = self.parse_declaration_block()?;
+                tail.body_members.extend(block.members);
+                tail.owner_docs.extend(block.owner_docs);
             }
         }
 
@@ -2685,20 +2702,21 @@ impl Parser {
         }
     }
 
-    fn parse_declaration_block(&mut self) -> Result<Vec<Declaration>, Diagnostic> {
+    fn parse_declaration_block(&mut self) -> Result<DeclarationBlock, Diagnostic> {
         self.expect(TokenKind::LBrace, "expected `{`")?;
-        let (members, _) = self.parse_declaration_block_contents_after_open()?;
-        Ok(members)
+        self.parse_declaration_block_contents_after_open()
     }
 
     fn parse_declaration_block_contents_after_open(
         &mut self,
-    ) -> Result<(Vec<Declaration>, Token), Diagnostic> {
+    ) -> Result<DeclarationBlock, Diagnostic> {
         let mut members = Vec::new();
+        let mut owner_docs = Vec::new();
 
         while !matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
             self.collect_docs();
             if !self.block_starts_with_declaration() {
+                owner_docs.append(&mut self.pending_docs);
                 self.consume_opaque_statement_in_block()?;
                 continue;
             }
@@ -2717,7 +2735,12 @@ impl Parser {
         }
 
         let end = self.expect(TokenKind::RBrace, "expected `}` to close body")?;
-        Ok((members, end))
+        owner_docs.append(&mut self.pending_docs);
+        Ok(DeclarationBlock {
+            members,
+            owner_docs,
+            end,
+        })
     }
 
     fn block_starts_with_declaration(&self) -> bool {
@@ -3336,7 +3359,14 @@ struct UsageTail {
     subsets: Vec<QualifiedName>,
     redefines: Vec<QualifiedName>,
     body_members: Vec<Declaration>,
+    owner_docs: Vec<String>,
     had_body: bool,
+}
+
+struct DeclarationBlock {
+    members: Vec<Declaration>,
+    owner_docs: Vec<String>,
+    end: Token,
 }
 
 impl UsageTail {

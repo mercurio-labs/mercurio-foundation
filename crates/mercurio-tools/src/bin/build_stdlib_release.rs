@@ -11,7 +11,9 @@ use mercurio_core::{
     generate_python_wrappers, load_language_profile, load_pilot_export, normalize_pilot_export,
     repo_path, repo_root, validate_mpack_manifest, write_kpar_package,
 };
-use mercurio_tools::{sha256_file, split_language_baselines};
+use mercurio_tools::{
+    attach_stdlib_derived_feature_manifest, sha256_file, split_language_baselines,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 use zip::write::FileOptions;
@@ -48,6 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let profile = load_language_profile(&args.profile_id)?;
     let mut kir = normalize_pilot_export(export.clone())?;
     kir.metadata = build_kir_metadata(&args, &source_id, &export_digest, &export_sha256, &export);
+    attach_stdlib_derived_feature_manifest(
+        &mut kir,
+        format!("{}:{}", args.stdlib_package, args.spec_version),
+    )?;
     if args.audit_profile {
         audit_profile_inputs(&args, &profile, &kir)?;
     }
@@ -55,7 +61,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kir_path = release_root.join("kir/stdlib.full.kir.json");
     kir.write_pretty_to_path(&kir_path)?;
     let kir_digest = digest_file(&kir_path)?;
-    let split = split_language_baselines(kir.clone(), path_to_slash("kir/stdlib.full.kir.json"));
+    let mut split =
+        split_language_baselines(kir.clone(), path_to_slash("kir/stdlib.full.kir.json"));
+    attach_stdlib_derived_feature_manifest(
+        &mut split.kernel,
+        format!("org.omg/kerml-kernel:{}", args.spec_version),
+    )?;
+    attach_stdlib_derived_feature_manifest(
+        &mut split.sysml_delta,
+        format!("org.omg/sysml-library:{}", args.spec_version),
+    )?;
     let kernel_kir_path = release_root.join("kir/kerml-kernel.kir.json");
     split.kernel.write_pretty_to_path(&kernel_kir_path)?;
     let kernel_kir_digest = digest_file(&kernel_kir_path)?;

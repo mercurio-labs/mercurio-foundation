@@ -626,9 +626,16 @@ pub fn transpile_module_with_source(
             &package_ids,
             &definition_ids,
             source_file,
-            source_language,
             mappings,
         )?);
+        append_documentation_elements(
+            &mut elements,
+            package_id,
+            &package.docs,
+            &package.span,
+            source_file,
+            source_language,
+        );
     }
 
     for import in &module.imports {
@@ -638,13 +645,19 @@ pub fn transpile_module_with_source(
             .and_then(|qualified_name| package_ids.get(qualified_name))
             .cloned()
             .unwrap_or_else(|| "pkg.root".to_string());
-        elements.push(transpile_import(
-            import,
-            &owner_id,
+        elements.push(transpile_import(import, &owner_id, source_file, mappings)?);
+        let import_id = elements
+            .last()
+            .map(|element| element.id.clone())
+            .ok_or_else(|| Diagnostic::new("missing import id", None))?;
+        append_documentation_elements(
+            &mut elements,
+            &import_id,
+            &import.docs,
+            &import.span,
             source_file,
             source_language,
-            mappings,
-        )?);
+        );
     }
 
     for definition in &module.definitions {
@@ -668,9 +681,16 @@ pub fn transpile_module_with_source(
             &feature_ids,
             &member_ids,
             source_file,
-            source_language,
             mappings,
         )?);
+        append_documentation_elements(
+            &mut elements,
+            &definition_id,
+            &definition.docs,
+            &definition.span,
+            source_file,
+            source_language,
+        );
         transpile_usage_tree(
             &definition.members,
             &definition_id,
@@ -685,7 +705,6 @@ pub fn transpile_module_with_source(
                 conjugated_id,
                 &definition_id,
                 source_file,
-                source_language,
                 mappings,
             )?);
         }
@@ -743,7 +762,6 @@ fn transpile_package(
     package_ids: &BTreeMap<String, String>,
     definition_ids: &BTreeMap<String, String>,
     source_file: &str,
-    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Package")?;
@@ -787,22 +805,13 @@ fn transpile_package(
         ("metatype_ref".to_string(), metatype_ref),
     ]);
 
-    build_element(
-        package_id,
-        &package.docs,
-        &package.span,
-        source_file,
-        source_language,
-        emission,
-        context,
-    )
+    build_element(package_id, &package.span, source_file, emission, context)
 }
 
 fn transpile_import(
     import: &ResolvedImport,
     owner_id: &str,
     source_file: &str,
-    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Import")?;
@@ -826,15 +835,7 @@ fn transpile_import(
         ("metatype_ref".to_string(), metatype_ref),
     ]);
 
-    build_element(
-        &id,
-        &import.docs,
-        &import.span,
-        source_file,
-        source_language,
-        emission,
-        context,
-    )
+    build_element(&id, &import.span, source_file, emission, context)
 }
 
 fn transpile_definition(
@@ -843,7 +844,6 @@ fn transpile_definition(
     feature_ids: &[String],
     member_ids: &[String],
     source_file: &str,
-    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for(&definition.construct)?;
@@ -893,10 +893,8 @@ fn transpile_definition(
 
     build_element(
         definition_id,
-        &definition.docs,
         &definition.span,
         source_file,
-        source_language,
         emission,
         context,
     )
@@ -907,7 +905,6 @@ fn transpile_conjugated_port_definition(
     definition_id: &str,
     owner_id: &str,
     source_file: &str,
-    source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("ConjugatedPortDefinition")?;
@@ -939,15 +936,7 @@ fn transpile_conjugated_port_definition(
         ("metatype_ref".to_string(), metatype_ref),
     ]);
 
-    build_element(
-        definition_id,
-        &[],
-        &span,
-        source_file,
-        source_language,
-        emission,
-        context,
-    )
+    build_element(definition_id, &span, source_file, emission, context)
 }
 
 fn transpile_usage(
@@ -1136,10 +1125,8 @@ fn transpile_usage(
 
     let mut element = build_element(
         usage_id,
-        &usage.docs,
         &usage_source_span(usage),
         source_file,
-        source_language,
         emission,
         context,
     )?;
@@ -1187,15 +1174,16 @@ fn transpile_usage(
 
 fn build_element(
     id: &str,
-    docs: &[String],
     span: &SourceSpan,
     source_file: &str,
-    source_language: &str,
     emission: &EmissionRule,
     context: BTreeMap<String, Value>,
 ) -> Result<KirElement, Diagnostic> {
     let mut properties = BTreeMap::new();
     for (key, template) in &emission.emit.properties {
+        if is_materialized_derived_property(key) {
+            continue;
+        }
         let value = render_value(template, &context)?;
         match &value {
             Value::Null => {}
@@ -1213,27 +1201,6 @@ fn build_element(
                 properties.insert("metatype".to_string(), Value::String(metatype.clone()));
             }
         }
-    }
-
-    if !properties.contains_key("qualified_name") {
-        if let Some(Value::String(qualified_name)) = context.get("qualified_name") {
-            if !qualified_name.is_empty() {
-                properties.insert(
-                    "qualified_name".to_string(),
-                    Value::String(qualified_name.clone()),
-                );
-            }
-        }
-    }
-
-    if !docs.is_empty() {
-        properties.insert(
-            "doc".to_string(),
-            json!({
-                "source": source_language,
-                "blocks": docs.iter().map(|doc| json!({"kind": "comment", "text": doc})).collect::<Vec<_>>()
-            }),
-        );
     }
 
     let mut metadata = Map::new();
@@ -1260,6 +1227,55 @@ fn build_element(
         layer: 2,
         properties,
     })
+}
+
+fn is_materialized_derived_property(key: &str) -> bool {
+    matches!(
+        key,
+        "name" | "short_name" | "qualified_name" | "shortName" | "qualifiedName"
+    )
+}
+
+fn append_documentation_elements(
+    elements: &mut Vec<KirElement>,
+    owner_id: &str,
+    docs: &[String],
+    span: &SourceSpan,
+    source_file: &str,
+    source_language: &str,
+) {
+    for (index, body) in docs.iter().enumerate() {
+        let mut properties = BTreeMap::new();
+        properties.insert("owner".to_string(), Value::String(owner_id.to_string()));
+        properties.insert("body".to_string(), Value::String(body.clone()));
+        properties.insert(
+            "source_language".to_string(),
+            Value::String(source_language.to_string()),
+        );
+
+        let mut metadata = Map::new();
+        metadata.insert(
+            "source_file".to_string(),
+            Value::String(source_file.to_string()),
+        );
+        metadata.insert(
+            "source_span".to_string(),
+            json!({
+                "start_line": span.start_line,
+                "start_col": span.start_col,
+                "end_line": span.end_line,
+                "end_col": span.end_col
+            }),
+        );
+        properties.insert("metadata".to_string(), Value::Object(metadata));
+
+        elements.push(KirElement {
+            id: format!("doc.{owner_id}.{}", index + 1),
+            kind: "KerML::Root::Documentation".to_string(),
+            layer: 2,
+            properties,
+        });
+    }
 }
 
 fn render_value(template: &str, context: &BTreeMap<String, Value>) -> Result<Value, Diagnostic> {
@@ -1338,11 +1354,6 @@ fn render_owned_usage_tree_ids(
 fn enrich_usage_semantics(element: &mut KirElement, usage: &ResolvedUsage, owner_id: &str) {
     if usage.is_implicit_name || usage_has_synthetic_declared_name(usage) {
         element.properties.remove("declared_name");
-    }
-    if let Some(name) = usage_display_name(usage) {
-        element
-            .properties
-            .insert("name".to_string(), Value::String(name));
     }
 
     if let Some(defaults) = usage_family_defaults(usage) {

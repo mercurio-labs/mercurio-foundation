@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use mercurio_core::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+use mercurio_core::{
+    DerivedFeatureManifest, DerivedFeatureRegistry, DerivedFeatureRule, DerivedFeatureSpec,
+    KIR_SCHEMA_VERSION, KirDocument, KirElement, builtin_core_derived_feature_manifest,
+};
 use serde_json::{Value, json};
 
 pub const MERCURIO_WORKSPACE_ROOT_ENV: &str = "MERCURIO_WORKSPACE_ROOT";
@@ -110,6 +113,225 @@ pub fn split_language_baselines(
     }
 }
 
+pub fn attach_core_derived_feature_manifest(
+    document: &mut KirDocument,
+    metamodel: impl Into<String>,
+) -> Result<(), serde_json::Error> {
+    document.metadata.insert(
+        "derived_feature_manifest".to_string(),
+        serde_json::to_value(builtin_core_derived_feature_manifest(Some(
+            metamodel.into(),
+        )))?,
+    );
+    Ok(())
+}
+
+pub fn attach_stdlib_derived_feature_manifest(
+    document: &mut KirDocument,
+    metamodel: impl Into<String>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let manifest = stdlib_derived_feature_manifest(document, Some(metamodel.into()))?;
+    let spec_count = manifest.derived_features.len();
+    document.metadata.insert(
+        "derived_feature_manifest".to_string(),
+        serde_json::to_value(manifest)?,
+    );
+    Ok(spec_count)
+}
+
+pub fn stdlib_derived_feature_manifest(
+    document: &KirDocument,
+    metamodel: Option<String>,
+) -> Result<DerivedFeatureManifest, Box<dyn std::error::Error>> {
+    let mut manifest = builtin_core_derived_feature_manifest(metamodel);
+    let mut generated_by_target = BTreeMap::new();
+    for spec in document
+        .elements
+        .iter()
+        .filter_map(derived_feature_subset_chain_spec)
+    {
+        let target = match &spec.rule {
+            DerivedFeatureRule::SubsetChain { target_feature, .. } => target_feature.clone(),
+            DerivedFeatureRule::IntersectionSubsetChain { target_feature, .. } => {
+                target_feature.clone()
+            }
+            _ => continue,
+        };
+        generated_by_target.entry(target).or_insert(spec);
+    }
+    let mut generated = generated_by_target.into_values().collect::<Vec<_>>();
+    generated.sort_by(|left, right| {
+        left.owner
+            .cmp(&right.owner)
+            .then_with(|| left.feature.cmp(&right.feature))
+    });
+    manifest.derived_features.extend(generated);
+    DerivedFeatureRegistry::from_manifest(manifest.clone()).validate()?;
+    Ok(manifest)
+}
+
+fn derived_feature_subset_chain_spec(element: &KirElement) -> Option<DerivedFeatureSpec> {
+    if !is_derived_feature(element) {
+        return None;
+    }
+
+    let metadata = element
+        .properties
+        .get("metadata")
+        .and_then(Value::as_object);
+    let owner = string_property(element, metadata, "owner")?;
+    let declared_name = string_property(element, metadata, "declared_name")
+        .or_else(|| element.id.rsplit("::").next().map(str::to_string))?;
+    if is_implemented_core_feature(&owner, &declared_name) {
+        return None;
+    }
+
+    let type_refs = string_list_property(element, "type");
+    let redefines = string_list_property(element, "redefines")
+        .into_iter()
+        .chain(string_list_property(element, "redefined_features"))
+        .collect::<Vec<_>>();
+    if !redefines.is_empty() {
+        return None;
+    }
+
+    let specializes = string_list_property(element, "specializes");
+    let candidate_sources = candidate_derivation_sources(&type_refs, &specializes, &[]);
+    if candidate_sources.is_empty() {
+        return None;
+    }
+
+    let target_feature =
+        string_property(element, metadata, "source_feature").unwrap_or_else(|| element.id.clone());
+    let rule = if candidate_sources.len() == 1 {
+        DerivedFeatureRule::SubsetChain {
+            source: candidate_sources.into_iter().next()?,
+            target_feature,
+            target_kind: None,
+            target_type: type_refs.into_iter().next(),
+        }
+    } else {
+        DerivedFeatureRule::IntersectionSubsetChain {
+            sources: candidate_sources,
+            target_feature,
+            target_kind: None,
+            target_type: type_refs.into_iter().next(),
+        }
+    };
+
+    Some(DerivedFeatureSpec {
+        owner,
+        feature: declared_name,
+        rule,
+    })
+}
+
+fn is_derived_feature(element: &KirElement) -> bool {
+    element
+        .properties
+        .get("metadata")
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("is_derived"))
+        .and_then(Value::as_bool)
+        == Some(true)
+        || element
+            .properties
+            .get("is_derived")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn candidate_derivation_sources(
+    type_refs: &[String],
+    specializes: &[String],
+    redefines: &[String],
+) -> Vec<String> {
+    specializes
+        .iter()
+        .chain(redefines)
+        .filter(|source| source.contains("::"))
+        .filter(|source| !type_refs.iter().any(|type_ref| type_ref == *source))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn is_implemented_core_feature(owner: &str, declared_name: &str) -> bool {
+    matches!(
+        (owner, declared_name),
+        ("KerML::Root::Element", "documentation")
+            | ("KerML::Root::Element", "isLibraryElement")
+            | ("KerML::Root::Element", "name")
+            | ("KerML::Root::Element", "ownedElement")
+            | ("KerML::Root::Element", "owner")
+            | ("KerML::Root::Element", "owningNamespace")
+            | ("KerML::Root::Element", "qualifiedName")
+            | ("KerML::Root::Element", "shortName")
+            | ("KerML::Root::Documentation", "documentedElement")
+            | ("KerML::Root::Import", "importedElement")
+            | ("KerML::Root::Membership", "memberElementId")
+            | ("KerML::Root::Namespace", "member")
+            | ("KerML::Root::Namespace", "membership")
+            | ("KerML::Root::Relationship", "relatedElement")
+            | ("KerML::Root::AnnotatingElement", "annotation")
+            | ("KerML::Core::Feature", "chainingFeature")
+            | ("KerML::Core::Feature", "crossFeature")
+            | ("KerML::Core::Feature", "featureTarget")
+            | ("KerML::Core::Feature", "featuringType")
+            | ("KerML::Core::Type", "differencingType")
+            | ("KerML::Core::Type", "featureMembership")
+            | ("KerML::Core::Type", "intersectingType")
+            | ("KerML::Core::Type", "isConjugated")
+            | ("KerML::Core::Type", "unioningType")
+            | ("KerML::Kernel::Flow", "payloadType")
+            | ("KerML::Kernel::Flow", "sourceOutputFeature")
+            | ("KerML::Kernel::Flow", "targetInputFeature")
+            | ("SysML::Systems::RequirementDefinition", "text")
+            | ("SysML::Systems::RequirementUsage", "text")
+            | ("SysML::Systems::Usage", "isReference")
+    )
+}
+
+fn string_property(
+    element: &KirElement,
+    metadata: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<String> {
+    element
+        .properties
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            element
+                .properties
+                .get(key)
+                .and_then(Value::as_array)
+                .and_then(|values| values.first())
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            metadata?
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+fn string_list_property(element: &KirElement, key: &str) -> Vec<String> {
+    match element.properties.get(key) {
+        Some(Value::String(value)) => vec![value.clone()],
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn split_library_elements(elements: Vec<KirElement>) -> (Vec<KirElement>, Vec<KirElement>) {
     let mut kernel_elements = Vec::new();
     let mut sysml_elements = Vec::new();
@@ -128,11 +350,16 @@ fn split_library_elements(elements: Vec<KirElement>) -> (Vec<KirElement>, Vec<Ki
 fn is_kernel_element(element: &KirElement) -> bool {
     element
         .properties
-        .get("metadata")
-        .and_then(Value::as_object)
-        .and_then(|metadata| metadata.get("pilot_library_group"))
+        .get("pilot_library_group")
         .and_then(Value::as_str)
         == Some("Kernel Libraries")
+        || element
+            .properties
+            .get("metadata")
+            .and_then(Value::as_object)
+            .and_then(|metadata| metadata.get("pilot_library_group"))
+            .and_then(Value::as_str)
+            == Some("Kernel Libraries")
 }
 
 fn split_document(

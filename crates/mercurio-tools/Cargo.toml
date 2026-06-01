@@ -60,6 +60,10 @@ path = "src/bin/verify_core_contracts.rs"
 name = "generate_language_baselines"
 path = "src/bin/generate_language_baselines.rs"
 
+[[bin]]
+name = "derived_feature_burndown"
+path = "src/bin/derived_feature_burndown.rs"
+
 [dependencies]
 mercurio-core = { path = "../mercurio-core" }
 mercurio-views = { path = "../mercurio-views" }

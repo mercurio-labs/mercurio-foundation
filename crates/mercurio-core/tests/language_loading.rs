@@ -228,7 +228,13 @@ fn sysml_baseline_merges_kernel_and_sysml_delta() {
             .iter()
             .any(|element| element.id == "SysML::Systems::PartDefinition")
     );
-    assert_eq!(document.elements.len(), 10262);
+    assert!(document.elements.len() > 10262);
+    assert!(
+        document
+            .elements
+            .iter()
+            .any(|element| element.kind == "MetamodelFeature")
+    );
 }
 
 #[test]
@@ -248,10 +254,16 @@ fn bundled_sysml_library_loads_as_raw_kir() {
 fn pilot_library_group(element: &mercurio_core::KirElement) -> Option<&str> {
     element
         .properties
-        .get("metadata")
-        .and_then(|value| value.as_object())
-        .and_then(|metadata| metadata.get("pilot_library_group"))
+        .get("pilot_library_group")
         .and_then(|value| value.as_str())
+        .or_else(|| {
+            element
+                .properties
+                .get("metadata")
+                .and_then(|value| value.as_object())
+                .and_then(|metadata| metadata.get("pilot_library_group"))
+                .and_then(|value| value.as_str())
+        })
 }
 
 fn write_kir(path: &Path, library_id: &str, elements: Vec<serde_json::Value>) {
