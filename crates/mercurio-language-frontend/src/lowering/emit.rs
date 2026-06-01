@@ -13,7 +13,7 @@ use mercurio_language_contracts::expression::{
 };
 
 use crate::lowering::elaborate::{
-    ReferenceUsageSemantics, UsageFamilyDefaults, dedupe_refs, reference_usage_semantics,
+    ReferenceUsageSemantics, UsageFamilyDefaults, dedupe_refs, usage_all_type_refs,
 };
 use crate::lowering::ir::{
     ResolvedDefinition, ResolvedExpr, ResolvedImport, ResolvedModule, ResolvedPackage,
@@ -84,11 +84,46 @@ pub struct StdlibAliasSeed {
 pub struct SemanticDefaultsSeed {
     pub schema_version: u32,
     #[serde(default)]
+    pub reference_usage_semantics: ReferenceUsageSemanticsSeed,
+    #[serde(default)]
     pub usage_type_defaults: BTreeMap<String, UsageTypeDefaultSeed>,
     #[serde(default)]
     pub usage_subset_defaults: BTreeMap<String, UsageSubsetDefaultSeed>,
     #[serde(default)]
     pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReferenceUsageSemanticsSeed {
+    #[serde(default)]
+    pub modifier_rules: Vec<ReferenceModifierSemanticsSeed>,
+    #[serde(default)]
+    pub typed_data_value: ReferenceTypedSemanticsSeed,
+    #[serde(default)]
+    pub typed_object: ReferenceTypedSemanticsSeed,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReferenceModifierSemanticsSeed {
+    pub modifier: String,
+    pub default_type_ref: Option<String>,
+    pub semantic_specializations: Option<Vec<String>>,
+    #[serde(default)]
+    pub subsetted_feature_refs: Vec<String>,
+    #[serde(default)]
+    pub specialized_feature_refs: Vec<String>,
+    #[serde(default)]
+    pub redefined_feature_refs: Vec<String>,
+    pub direction: Option<String>,
+    pub direction_from_modifier: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReferenceTypedSemanticsSeed {
+    #[serde(default)]
+    pub subsetted_feature_refs: Vec<String>,
+    #[serde(default)]
+    pub direction_from_modifiers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -483,6 +518,61 @@ impl MappingBundle {
         Some(refs)
     }
 
+    pub(crate) fn reference_usage_semantics(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> Option<ReferenceUsageSemantics> {
+        if usage.construct != "ReferenceUsage" {
+            return None;
+        }
+
+        let type_refs = usage_all_type_refs(usage);
+        let mut semantics = ReferenceUsageSemantics {
+            type_refs: type_refs.clone(),
+            semantic_specializations: type_refs,
+            ..ReferenceUsageSemantics::default()
+        };
+        let seed = &self.semantic_defaults.reference_usage_semantics;
+        if seed.modifier_rules.is_empty()
+            && seed.typed_data_value.subsetted_feature_refs.is_empty()
+            && seed.typed_object.subsetted_feature_refs.is_empty()
+        {
+            return None;
+        }
+
+        for rule in &seed.modifier_rules {
+            if !usage
+                .modifiers
+                .iter()
+                .any(|modifier| modifier == &rule.modifier)
+            {
+                continue;
+            }
+            apply_reference_modifier_semantics(rule, usage, &mut semantics);
+            return Some(semantics);
+        }
+
+        if !semantics.type_refs.is_empty() && all_data_value_like_refs(&semantics.type_refs) {
+            semantics
+                .subsetted_feature_refs
+                .extend(seed.typed_data_value.subsetted_feature_refs.clone());
+            return Some(semantics);
+        }
+
+        if !semantics.type_refs.is_empty() {
+            semantics
+                .subsetted_feature_refs
+                .extend(seed.typed_object.subsetted_feature_refs.clone());
+            semantics.direction = reference_direction_from_modifiers(
+                usage,
+                &seed.typed_object.direction_from_modifiers,
+            );
+            return Some(semantics);
+        }
+
+        None
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -767,9 +857,91 @@ fn load_semantic_defaults_seed() -> &'static str {
 
 fn resolve_semantic_default_value(value: &str, usage: &ResolvedUsage) -> String {
     match value {
+        "$declared_name" => usage.declared_name.clone(),
         "$owner_qualified_name" => usage.owner_qualified_name.clone(),
         _ => value.to_string(),
     }
+}
+
+fn apply_reference_modifier_semantics(
+    rule: &ReferenceModifierSemanticsSeed,
+    usage: &ResolvedUsage,
+    semantics: &mut ReferenceUsageSemantics,
+) {
+    if semantics.type_refs.is_empty()
+        && let Some(default_type_ref) = &rule.default_type_ref
+    {
+        semantics
+            .type_refs
+            .push(resolve_semantic_default_value(default_type_ref, usage));
+    }
+    if let Some(semantic_specializations) = &rule.semantic_specializations {
+        semantics.semantic_specializations = semantic_specializations
+            .iter()
+            .map(|value| resolve_semantic_default_value(value, usage))
+            .collect();
+    }
+    semantics.subsetted_feature_refs.extend(
+        rule.subsetted_feature_refs
+            .iter()
+            .map(|value| resolve_semantic_default_value(value, usage)),
+    );
+    semantics.specialized_feature_refs.extend(
+        rule.specialized_feature_refs
+            .iter()
+            .map(|value| resolve_semantic_default_value(value, usage)),
+    );
+    semantics.redefined_feature_refs.extend(
+        rule.redefined_feature_refs
+            .iter()
+            .map(|value| resolve_semantic_default_value(value, usage)),
+    );
+    if let Some(direction) = &rule.direction {
+        semantics.direction = Some(direction.clone());
+    } else if let Some(direction_modifier) = &rule.direction_from_modifier
+        && usage
+            .modifiers
+            .iter()
+            .any(|modifier| modifier == direction_modifier)
+    {
+        semantics.direction = Some(direction_modifier.clone());
+    }
+}
+
+fn reference_direction_from_modifiers(
+    usage: &ResolvedUsage,
+    direction_modifiers: &[String],
+) -> Option<String> {
+    direction_modifiers
+        .iter()
+        .find(|direction| {
+            usage
+                .modifiers
+                .iter()
+                .any(|modifier| modifier == *direction)
+        })
+        .cloned()
+}
+
+fn all_data_value_like_refs(type_refs: &[String]) -> bool {
+    !type_refs.is_empty()
+        && type_refs
+            .iter()
+            .all(|type_ref| is_data_value_like_ref(type_ref))
+}
+
+fn is_data_value_like_ref(type_ref: &str) -> bool {
+    let tail = type_ref
+        .rsplit("::")
+        .next()
+        .unwrap_or(type_ref)
+        .rsplit('.')
+        .next()
+        .unwrap_or(type_ref);
+    matches!(
+        tail,
+        "Boolean" | "Integer" | "Natural" | "Real" | "Rational" | "String" | "UnlimitedNatural"
+    ) || tail.ends_with("Value")
 }
 
 fn pascal_case(value: &str) -> String {
@@ -1288,7 +1460,7 @@ fn transpile_usage(
     if let Some(rule) = lowering_rule {
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
-    let reference_semantics = reference_usage_semantics(usage);
+    let reference_semantics = mappings.reference_usage_semantics(usage);
     let specializes =
         semantic_specializations_for_usage(usage, mappings, reference_semantics.as_ref());
     let subsetted_feature_refs =
@@ -2807,6 +2979,35 @@ mod lowering_golden_tests {
             .expect("lowering metadata")
     }
 
+    fn reference_usage(declared_name: &str) -> ResolvedUsage {
+        ResolvedUsage {
+            construct: "ReferenceUsage".to_string(),
+            owner_construct: "Package".to_string(),
+            owner_qualified_name: "root".to_string(),
+            qualified_name: format!("root.{declared_name}"),
+            declared_name: declared_name.to_string(),
+            is_implicit_name: false,
+            has_explicit_type: false,
+            type_ref: None,
+            additional_type_refs: Vec::new(),
+            reference_target: None,
+            allocation_source: None,
+            allocation_target: None,
+            metadata_properties: BTreeMap::new(),
+            multiplicity: None,
+            expression: None,
+            is_derived: false,
+            specializes: Vec::new(),
+            specialized_features: Vec::new(),
+            subsetted_features: Vec::new(),
+            redefined_features: Vec::new(),
+            members: Vec::new(),
+            modifiers: Vec::new(),
+            docs: Vec::new(),
+            span: span(1),
+        }
+    }
+
     #[test]
     fn package_lowering_trace_is_stable() {
         let mappings = MappingBundle::load().unwrap();
@@ -2909,5 +3110,43 @@ mod lowering_golden_tests {
         );
         assert_eq!(usage.properties["specializes"], json!(["Actions::actions"]));
         assert_eq!(lowering_metadata(usage)["construct"], "ActionUsage");
+    }
+
+    #[test]
+    fn reference_modifier_semantics_are_profile_backed() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut usage = reference_usage("source");
+        usage.modifiers.push("source-output".to_string());
+
+        let semantics = mappings.reference_usage_semantics(&usage).unwrap();
+
+        assert_eq!(semantics.type_refs, vec!["Ports::Port"]);
+        assert_eq!(
+            semantics.redefined_feature_refs,
+            vec!["source", "Transfers::sourceOutput"]
+        );
+        assert!(semantics.semantic_specializations.is_empty());
+    }
+
+    #[test]
+    fn reference_typed_semantics_are_profile_backed() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut data_value = reference_usage("flag");
+        data_value.type_ref = Some("ScalarValues::Boolean".to_string());
+        let data_semantics = mappings.reference_usage_semantics(&data_value).unwrap();
+        assert_eq!(
+            data_semantics.subsetted_feature_refs,
+            vec!["Base::dataValues"]
+        );
+
+        let mut object = reference_usage("part");
+        object.type_ref = Some("Parts::Part".to_string());
+        object.modifiers.push("out".to_string());
+        let object_semantics = mappings.reference_usage_semantics(&object).unwrap();
+        assert_eq!(
+            object_semantics.subsetted_feature_refs,
+            vec!["Objects::objects"]
+        );
+        assert_eq!(object_semantics.direction.as_deref(), Some("out"));
     }
 }

@@ -1,5 +1,62 @@
 {
   "schema_version": 1,
+  "reference_usage_semantics": {
+    "modifier_rules": [
+      {
+        "modifier": "payload",
+        "subsetted_feature_refs": [
+          "Objects::objects"
+        ],
+        "redefined_feature_refs": [
+          "payload"
+        ],
+        "direction": "in"
+      },
+      {
+        "modifier": "source-output",
+        "default_type_ref": "Ports::Port",
+        "semantic_specializations": [],
+        "redefined_feature_refs": [
+          "$declared_name",
+          "Transfers::sourceOutput"
+        ]
+      },
+      {
+        "modifier": "target-input",
+        "default_type_ref": "Occurrences::Occurrence",
+        "semantic_specializations": [],
+        "redefined_feature_refs": [
+          "$declared_name",
+          "Transfers::targetInput"
+        ],
+        "direction_from_modifier": "in"
+      },
+      {
+        "modifier": "receiver",
+        "default_type_ref": "Occurrences::Occurrence",
+        "semantic_specializations": [],
+        "redefined_feature_refs": [
+          "receiver"
+        ],
+        "direction_from_modifier": "in"
+      }
+    ],
+    "typed_data_value": {
+      "subsetted_feature_refs": [
+        "Base::dataValues"
+      ]
+    },
+    "typed_object": {
+      "subsetted_feature_refs": [
+        "Objects::objects"
+      ],
+      "direction_from_modifiers": [
+        "in",
+        "out",
+        "inout"
+      ]
+    }
+  },
   "usage_type_defaults": {
     "AttributeUsage": {
       "type_ref": "Base::DataValue"

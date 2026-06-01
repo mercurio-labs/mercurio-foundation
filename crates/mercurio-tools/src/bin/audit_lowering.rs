@@ -202,6 +202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(semantic_defaults) = &semantic_defaults {
+        let reference_usage_modifier_rules =
+            semantic_default_reference_usage_modifier_rules(semantic_defaults);
         let usage_type_defaults = semantic_default_usage_type_defaults(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
@@ -222,6 +224,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!();
         println!("Semantic defaults");
+        println!(
+            "  reference usage modifier rules: {}",
+            reference_usage_modifier_rules
+        );
         println!("  usage type defaults: {}", usage_type_defaults.len());
         println!(
             "  usage type defaults without construct mappings: {}",
@@ -1017,6 +1023,15 @@ fn semantic_default_usage_family_defaults(document: &Value) -> BTreeSet<String> 
         .flat_map(|defaults| defaults.keys())
         .cloned()
         .collect()
+}
+
+fn semantic_default_reference_usage_modifier_rules(document: &Value) -> usize {
+    document
+        .get("reference_usage_semantics")
+        .and_then(|semantics| semantics.get("modifier_rules"))
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default()
 }
 
 fn semantic_default_usage_type_defaults(document: &Value) -> BTreeSet<String> {
