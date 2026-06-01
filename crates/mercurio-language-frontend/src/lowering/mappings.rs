@@ -62,6 +62,15 @@ fn validate_lowering_rules_against_mappings(
 
     for rule in &lowering_rules.rules {
         let emission = mappings.emission_for(&rule.metaclass)?;
+        if rule.emit.id_template != emission.id_template {
+            return Err(Diagnostic::new(
+                format!(
+                    "lowering rule `{}` id template `{}` does not match emission mapping `{}` template `{}`",
+                    rule.construct, rule.emit.id_template, rule.metaclass, emission.id_template
+                ),
+                None,
+            ));
+        }
         let emission_properties = emission
             .emit
             .properties
@@ -146,7 +155,10 @@ mod tests {
 
         assert_eq!(rule.status.as_deref(), Some("reviewed"));
         assert_eq!(rule.metaclass, "SysML::PartUsage");
-        assert_eq!(rule.emit.id_template, "feature.{qualified_name}");
+        assert_eq!(
+            rule.emit.id_template,
+            "feature.{owner_path}.{declared_name}"
+        );
     }
 
     #[test]

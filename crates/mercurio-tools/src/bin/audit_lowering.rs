@@ -68,7 +68,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .difference(&emission_metaclasses)
             .cloned()
             .collect::<Vec<_>>();
+        let rule_id_template_gaps = lowering_rule_id_template_gaps(lowering_rules, &emission);
         let rule_property_gaps = lowering_rule_property_gaps(lowering_rules, &emission_properties);
+        let emission_property_gaps =
+            emission_property_gaps(lowering_rules, &emission_properties, &construct_metaclasses);
 
         println!();
         println!("Declarative lowering rules");
@@ -90,8 +93,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rules_missing_emission.len()
         );
         println!(
+            "  rule id templates different from emission templates: {}",
+            rule_id_template_gaps.len()
+        );
+        println!(
             "  rule properties missing emission properties: {}",
             rule_property_gaps.len()
+        );
+        println!(
+            "  emission properties missing declarative rule properties: {}",
+            emission_property_gaps.len()
         );
 
         if !rules_missing_construct.is_empty() {
@@ -110,10 +121,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        if !rule_id_template_gaps.is_empty() {
+            println!();
+            println!("Rule id templates different from emission templates:");
+            for gap in &rule_id_template_gaps {
+                println!(
+                    "  {}: rule=`{}` emission=`{}`",
+                    gap.metaclass, gap.rule_template, gap.emission_template
+                );
+            }
+        }
+
         if !rule_property_gaps.is_empty() {
             println!();
             println!("Rule properties missing emission properties:");
             for gap in &rule_property_gaps {
+                println!("  {}.{}", gap.metaclass, gap.property);
+            }
+        }
+
+        if !emission_property_gaps.is_empty() && args.verbose_rules {
+            println!();
+            println!("Emission properties missing declarative rule properties:");
+            for gap in &emission_property_gaps {
                 println!("  {}.{}", gap.metaclass, gap.property);
             }
         }
@@ -680,6 +710,34 @@ struct RulePropertyGap {
     property: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RuleIdTemplateGap {
+    metaclass: String,
+    rule_template: String,
+    emission_template: String,
+}
+
+fn lowering_rule_id_template_gaps(
+    rules: &LoweringRuleSeed,
+    emission: &Value,
+) -> Vec<RuleIdTemplateGap> {
+    let mut gaps = Vec::new();
+    for rule in &rules.rules {
+        let Some(emission_template) = emission_id_template(emission, &rule.metaclass) else {
+            continue;
+        };
+        if rule.emit.id_template != emission_template {
+            gaps.push(RuleIdTemplateGap {
+                metaclass: rule.metaclass.clone(),
+                rule_template: rule.emit.id_template.clone(),
+                emission_template,
+            });
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
 fn lowering_rule_property_gaps(
     rules: &LoweringRuleSeed,
     emission_properties: &BTreeMap<String, BTreeSet<String>>,
@@ -693,6 +751,46 @@ fn lowering_rule_property_gaps(
             if !properties.contains(property) {
                 gaps.push(RulePropertyGap {
                     metaclass: rule.metaclass.clone(),
+                    property: property.clone(),
+                });
+            }
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
+fn emission_property_gaps(
+    rules: &LoweringRuleSeed,
+    emission_properties: &BTreeMap<String, BTreeSet<String>>,
+    construct_metaclasses: &BTreeSet<String>,
+) -> Vec<RulePropertyGap> {
+    let rule_properties = rules
+        .rules
+        .iter()
+        .map(|rule| {
+            (
+                rule.metaclass.clone(),
+                rule.emit
+                    .properties
+                    .keys()
+                    .cloned()
+                    .collect::<BTreeSet<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut gaps = Vec::new();
+    for metaclass in construct_metaclasses {
+        let Some(emitted_properties) = emission_properties.get(metaclass) else {
+            continue;
+        };
+        let Some(rule_properties) = rule_properties.get(metaclass) else {
+            continue;
+        };
+        for property in emitted_properties {
+            if !rule_properties.contains(property) {
+                gaps.push(RulePropertyGap {
+                    metaclass: metaclass.clone(),
                     property: property.clone(),
                 });
             }

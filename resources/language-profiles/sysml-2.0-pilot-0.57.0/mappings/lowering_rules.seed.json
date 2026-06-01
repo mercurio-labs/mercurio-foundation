@@ -965,9 +965,12 @@
       "emit": {
         "id_template": "type.{qualified_name}",
         "properties": {
+          "declared_name": "$declared_name",
           "features": "$owned_feature_ids",
+          "is_abstract": "$is_abstract",
           "members": "$member_ids",
           "metatype": "$metatype_ref",
+          "name": "$name",
           "owner": "$owner_id",
           "specializes": "$specializes_refs"
         }
@@ -2353,10 +2356,12 @@
       "emit": {
         "id_template": "type.{qualified_name}",
         "properties": {
+          "declared_name": "$declared_name",
           "features": "$owned_feature_ids",
           "is_abstract": "$is_abstract",
           "members": "$member_ids",
           "metatype": "$metatype_ref",
+          "name": "$name",
           "owner": "$owner_id",
           "specializes": "$specializes_refs"
         }
@@ -2388,12 +2393,26 @@
         }
       },
       "emit": {
-        "id_template": "feature.{qualified_name}",
+        "id_template": "feature.{owner_path}.{declared_name}",
         "properties": {
+          "declared_name": "$declared_name",
+          "direction": "$direction",
+          "featuring_type": "$featuring_type_ref",
           "features": "$owned_feature_ids",
+          "is_abstract": "$is_abstract",
+          "is_derived": "$is_derived",
+          "is_end": "$is_end",
+          "is_ordered": "$is_ordered",
+          "is_unique": "$is_unique",
+          "is_variable": "$is_variable",
+          "members": "$member_ids",
           "metatype": "$metatype_ref",
+          "name": "$name",
           "owner": "$owner_id",
+          "redefined_features": "$redefined_feature_refs",
+          "specialized_features": "$specialized_feature_refs",
           "specializes": "$specializes_refs",
+          "subsetted_features": "$subsetted_feature_refs",
           "type": "$type_ref"
         }
       },
@@ -2560,12 +2579,25 @@
         }
       ],
       "emit": {
-        "id_template": "feature.{qualified_name}",
+        "id_template": "reference.{owner_path}.{declared_name}.{start_line}",
         "properties": {
+          "declared_name": "$declared_name",
+          "featuring_type": "$featuring_type_ref",
+          "is_abstract": "$is_abstract",
+          "is_derived": "$is_derived",
+          "is_end": "$is_end",
+          "is_ordered": "$is_ordered",
+          "is_unique": "$is_unique",
+          "is_variable": "$is_variable",
+          "member_ids": "$member_ids",
           "metatype": "$metatype_ref",
+          "name": "$name",
           "owner": "$owner_id",
+          "owned_feature_ids": "$owned_feature_ids",
+          "redefined_features": "$redefined_feature_refs",
           "specialized_features": "$specialized_feature_refs",
           "specializes": "$specializes_refs",
+          "subsetted_features": "$subsetted_feature_refs",
           "type": "$type_ref"
         }
       },
