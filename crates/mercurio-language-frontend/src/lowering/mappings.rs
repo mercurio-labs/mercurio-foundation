@@ -328,11 +328,19 @@ mod tests {
         let package_usage = test_usage("PartUsage", "Package");
         let nested_usage = test_usage("PartUsage", "PartDefinition");
         let connection_usage = test_usage("ConnectionUsage", "Package");
+        let mut directed_usage = test_usage("PartUsage", "PartDefinition");
+        directed_usage.modifiers = vec!["out".to_string(), "inout".to_string()];
 
         assert!(!profile.mappings.usage_is_variable(&package_usage));
         assert!(!profile.mappings.usage_has_type_context(&package_usage));
         assert!(profile.mappings.usage_is_variable(&nested_usage));
         assert!(profile.mappings.usage_has_type_context(&nested_usage));
+        assert_eq!(
+            profile
+                .mappings
+                .usage_direction_from_modifiers(&directed_usage),
+            Some("inout")
+        );
         assert!(
             !profile
                 .mappings

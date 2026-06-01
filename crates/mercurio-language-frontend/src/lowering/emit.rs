@@ -111,6 +111,8 @@ pub struct UsageContextDefaultSeed {
     pub no_type_context_owner_constructs: Vec<String>,
     #[serde(default)]
     pub non_owned_member_constructs: Vec<String>,
+    #[serde(default)]
+    pub direction_modifiers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -649,6 +651,23 @@ impl MappingBundle {
                 .abstract_constructs
                 .iter()
                 .any(|construct| construct == &definition.construct)
+    }
+
+    pub(crate) fn usage_direction_from_modifiers<'a>(
+        &'a self,
+        usage: &ResolvedUsage,
+    ) -> Option<&'a str> {
+        self.semantic_defaults
+            .usage_context
+            .direction_modifiers
+            .iter()
+            .find(|direction| {
+                usage
+                    .modifiers
+                    .iter()
+                    .any(|modifier| modifier == *direction)
+            })
+            .map(String::as_str)
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -1674,7 +1693,7 @@ fn transpile_usage(
         ),
         (
             "direction".to_string(),
-            usage_direction(usage, reference_semantics.as_ref())
+            usage_direction(usage, mappings, reference_semantics.as_ref())
                 .map(|value| Value::String(value.to_string()))
                 .unwrap_or(Value::Null),
         ),
@@ -2673,6 +2692,7 @@ fn usage_featuring_type_ref(
 
 fn usage_direction<'a>(
     usage: &'a ResolvedUsage,
+    mappings: &'a MappingBundle,
     reference_semantics: Option<&'a ReferenceUsageSemantics>,
 ) -> Option<&'a str> {
     if let Some(reference_semantics) = reference_semantics
@@ -2681,15 +2701,7 @@ fn usage_direction<'a>(
         return Some(direction);
     }
 
-    if usage.modifiers.iter().any(|modifier| modifier == "inout") {
-        Some("inout")
-    } else if usage.modifiers.iter().any(|modifier| modifier == "in") {
-        Some("in")
-    } else if usage.modifiers.iter().any(|modifier| modifier == "out") {
-        Some("out")
-    } else {
-        None
-    }
+    mappings.usage_direction_from_modifiers(usage)
 }
 
 fn usage_source_span(usage: &ResolvedUsage) -> SourceSpan {

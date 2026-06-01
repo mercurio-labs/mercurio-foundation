@@ -78,6 +78,11 @@
     ],
     "non_owned_member_constructs": [
       "ConnectionUsage"
+    ],
+    "direction_modifiers": [
+      "inout",
+      "in",
+      "out"
     ]
   },
   "usage_type_defaults": {
