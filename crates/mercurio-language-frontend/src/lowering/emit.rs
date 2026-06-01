@@ -3122,4 +3122,46 @@ mod lowering_golden_tests {
         );
         assert_eq!(object_semantics.direction.as_deref(), Some("out"));
     }
+
+    #[test]
+    fn usage_property_defaults_are_profile_backed_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![ResolvedUsage {
+                construct: "PartUsage".to_string(),
+                owner_construct: "ItemDefinition".to_string(),
+                owner_qualified_name: "Items::Item".to_string(),
+                qualified_name: "Items::Item.child".to_string(),
+                declared_name: "child".to_string(),
+                is_implicit_name: false,
+                has_explicit_type: false,
+                type_ref: None,
+                additional_type_refs: Vec::new(),
+                reference_target: None,
+                allocation_source: None,
+                allocation_target: None,
+                metadata_properties: BTreeMap::new(),
+                multiplicity: None,
+                expression: None,
+                is_derived: false,
+                specializes: Vec::new(),
+                specialized_features: Vec::new(),
+                subsetted_features: Vec::new(),
+                redefined_features: Vec::new(),
+                members: Vec::new(),
+                modifiers: Vec::new(),
+                docs: Vec::new(),
+                span: span(1),
+            }],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let usage = element(&document, "feature.Items::Item.child");
+
+        assert_eq!(usage.properties["type"], "Parts::Part");
+        assert_eq!(usage.properties["definition"], "Parts::Part");
+    }
 }
