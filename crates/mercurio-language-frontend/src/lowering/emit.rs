@@ -1454,6 +1454,22 @@ fn build_element(
             "end_col": span.end_col
         }),
     );
+    if let Some(rule) = lowering_rule {
+        metadata.insert(
+            "lowering".to_string(),
+            json!({
+                "construct": rule.construct,
+                "metaclass": rule.metaclass,
+                "ast_node": rule.ast.node,
+                "ast_keyword": rule.ast.keyword,
+                "elaboration_rules": rule
+                    .elaborate
+                    .iter()
+                    .map(|step| step.id.clone())
+                    .collect::<Vec<_>>()
+            }),
+        );
+    }
     if !metadata.is_empty() {
         properties.insert("metadata".to_string(), Value::Object(metadata));
     }
@@ -2685,5 +2701,137 @@ mod tests {
             mappings.emission_for("KerML::Package").unwrap().kir_kind,
             "KerML::Package"
         );
+    }
+}
+
+#[cfg(test)]
+mod lowering_golden_tests {
+    use super::*;
+
+    fn span(line: usize) -> SourceSpan {
+        SourceSpan {
+            start_line: line,
+            start_col: 1,
+            end_line: line,
+            end_col: 10,
+        }
+    }
+
+    fn element<'a>(document: &'a KirDocument, id: &str) -> &'a KirElement {
+        document
+            .elements
+            .iter()
+            .find(|element| element.id == id)
+            .unwrap_or_else(|| panic!("missing element `{id}`"))
+    }
+
+    fn lowering_metadata(element: &KirElement) -> &Map<String, Value> {
+        element.properties["metadata"]["lowering"]
+            .as_object()
+            .expect("lowering metadata")
+    }
+
+    #[test]
+    fn package_lowering_trace_is_stable() {
+        let mappings = MappingBundle::load().unwrap();
+        let module = ResolvedModule {
+            packages: vec![ResolvedPackage {
+                owner_package_qualified_name: None,
+                qualified_name: "Demo".to_string(),
+                declared_name: "Demo".to_string(),
+                docs: Vec::new(),
+                span: span(1),
+            }],
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: Vec::new(),
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let package = element(&document, "pkg.Demo");
+        let lowering = lowering_metadata(package);
+
+        assert_eq!(package.kind, "SysML::Package");
+        assert_eq!(lowering["construct"], "Package");
+        assert_eq!(lowering["metaclass"], "SysML::Package");
+        assert_eq!(lowering["ast_node"], "PackageDecl");
+    }
+
+    #[test]
+    fn connection_definition_lowering_trace_records_elaboration_rule() {
+        let mappings = MappingBundle::load().unwrap();
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: vec![ResolvedDefinition {
+                construct: "ConnectionDefinition".to_string(),
+                qualified_name: "Link".to_string(),
+                declared_name: "Link".to_string(),
+                is_abstract: false,
+                specializes: Vec::new(),
+                members: Vec::new(),
+                docs: Vec::new(),
+                span: span(1),
+            }],
+            usages: Vec::new(),
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let definition = element(&document, "type.Link");
+        let lowering = lowering_metadata(definition);
+
+        assert_eq!(definition.kind, "SysML::Systems::ConnectionDefinition");
+        assert_eq!(lowering["construct"], "ConnectionDefinition");
+        assert_eq!(
+            lowering["elaboration_rules"],
+            json!(["connection-end-direction"])
+        );
+    }
+
+    #[test]
+    fn usage_family_defaults_are_profile_backed_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![ResolvedUsage {
+                construct: "ActionUsage".to_string(),
+                owner_construct: "Package".to_string(),
+                owner_qualified_name: "root".to_string(),
+                qualified_name: "root.act".to_string(),
+                declared_name: "act".to_string(),
+                is_implicit_name: false,
+                has_explicit_type: false,
+                type_ref: None,
+                additional_type_refs: Vec::new(),
+                reference_target: None,
+                allocation_source: None,
+                allocation_target: None,
+                metadata_properties: BTreeMap::new(),
+                multiplicity: None,
+                expression: None,
+                is_derived: false,
+                specializes: Vec::new(),
+                specialized_features: Vec::new(),
+                subsetted_features: Vec::new(),
+                redefined_features: Vec::new(),
+                members: Vec::new(),
+                modifiers: Vec::new(),
+                docs: Vec::new(),
+                span: span(1),
+            }],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let usage = element(&document, "action.root.act");
+
+        assert_eq!(usage.properties["type"], "Actions::Action");
+        assert_eq!(
+            usage.properties["subsetted_features"],
+            json!(["Actions::actions"])
+        );
+        assert_eq!(usage.properties["specializes"], json!(["Actions::actions"]));
+        assert_eq!(lowering_metadata(usage)["construct"], "ActionUsage");
     }
 }
