@@ -164,6 +164,84 @@
                                         }
                   },
                   {
+                      "construct":  "AnalysisCaseDefinition",
+                      "metaclass":  "SysML::AnalysisCaseDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "analysis"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "AnalysisCaseDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::AnalysisCaseDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "AnalysisCaseUsage",
+                      "metaclass":  "SysML::AnalysisCaseUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "analysis"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "analysis.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "AnalysisCaseUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::AnalysisCaseUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
                       "construct":  "AttributeDefinition",
                       "metaclass":  "SysML::AttributeDefinition",
                       "status":  "reviewed",
@@ -263,6 +341,162 @@
                                         }
                   },
                   {
+                      "construct":  "CalculationDefinition",
+                      "metaclass":  "SysML::CalculationDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "calc"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "CalculationDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::CalculationDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "CalculationUsage",
+                      "metaclass":  "SysML::CalculationUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "calc"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "calculation.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "CalculationUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::CalculationUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ConcernDefinition",
+                      "metaclass":  "SysML::ConcernDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "concern"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ConcernDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::ConcernDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ConcernUsage",
+                      "metaclass":  "SysML::ConcernUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "concern"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "concern.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ConcernUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::ConcernUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
                       "construct":  "ConnectionDefinition",
                       "metaclass":  "SysML::ConnectionDefinition",
                       "status":  "reviewed",
@@ -308,6 +542,84 @@
                                             "ecore_class":  "SysML::ConnectionDefinition",
                                             "transform_observations":  [
                                                                            "connection-end-direction"
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ConstraintDefinition",
+                      "metaclass":  "SysML::ConstraintDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "constraint"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ConstraintDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::ConstraintDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ConstraintUsage",
+                      "metaclass":  "SysML::ConstraintUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "constraint"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "constraint.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ConstraintUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::ConstraintUsage",
+                                            "transform_observations":  [
+
                                                                        ]
                                         }
                   },
@@ -483,6 +795,162 @@
                                                                   "ItemUsage"
                                                               ],
                                             "ecore_class":  "SysML::ItemUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "MetadataDefinition",
+                      "metaclass":  "SysML::MetadataDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "metadata"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "MetadataDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::MetadataDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "MetadataUsage",
+                      "metaclass":  "SysML::MetadataUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "metadata"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "metadata.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "MetadataUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::MetadataUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "OccurrenceDefinition",
+                      "metaclass":  "SysML::OccurrenceDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "occurrence"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "OccurrenceDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::OccurrenceDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "OccurrenceUsage",
+                      "metaclass":  "SysML::OccurrenceUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "occurrence"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "occurrence.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "OccurrenceUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::OccurrenceUsage",
                                             "transform_observations":  [
 
                                                                        ]
@@ -742,6 +1210,162 @@
                                         }
                   },
                   {
+                      "construct":  "RenderingDefinition",
+                      "metaclass":  "SysML::RenderingDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "rendering"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "RenderingDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::RenderingDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "RenderingUsage",
+                      "metaclass":  "SysML::RenderingUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "rendering"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "rendering.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "RenderingUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::RenderingUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "RequirementDefinition",
+                      "metaclass":  "SysML::RequirementDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "requirement"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "RequirementDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::RequirementDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "RequirementUsage",
+                      "metaclass":  "SysML::RequirementUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "requirement"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "requirement.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "RequirementUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::RequirementUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
                       "construct":  "StateDefinition",
                       "metaclass":  "SysML::StateDefinition",
                       "status":  "reviewed",
@@ -814,6 +1438,318 @@
                                                                   "StateUsage"
                                                               ],
                                             "ecore_class":  "SysML::StateUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "UseCaseDefinition",
+                      "metaclass":  "SysML::UseCaseDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "use-case"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "UseCaseDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::UseCaseDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "UseCaseUsage",
+                      "metaclass":  "SysML::UseCaseUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "use-case"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "use-case.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "UseCaseUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::UseCaseUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "VerificationCaseDefinition",
+                      "metaclass":  "SysML::VerificationCaseDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "verification"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "VerificationCaseDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::VerificationCaseDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "VerificationUsage",
+                      "metaclass":  "SysML::VerificationUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "verification"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "verification.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "VerificationUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::VerificationUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ViewDefinition",
+                      "metaclass":  "SysML::ViewDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "view"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ViewDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::ViewDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ViewpointDefinition",
+                      "metaclass":  "SysML::ViewpointDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "viewpoint"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ViewpointDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::ViewpointDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ViewpointUsage",
+                      "metaclass":  "SysML::ViewpointUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "viewpoint"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "viewpoint.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ViewpointUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::ViewpointUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ViewUsage",
+                      "metaclass":  "SysML::ViewUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "view"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "view.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ViewUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::ViewUsage",
                                             "transform_observations":  [
 
                                                                        ]
