@@ -13,6 +13,19 @@ use serde_json::Value;
 use mercurio_language_contracts::SourceLanguage;
 use mercurio_language_contracts::diagnostics::Diagnostic;
 
+pub const RUNTIME_ELABORATION_RULE_IDS: &[&str] = &[
+    "comment-annotation-target",
+    "conjugated-port-definition-name",
+    "connection-end-direction",
+    "implicit-ref-redefines-target",
+    "satisfy-name-as-reference-target",
+    "verify-name-as-reference-target",
+];
+
+pub fn has_runtime_elaboration_hook(rule_id: &str) -> bool {
+    RUNTIME_ELABORATION_RULE_IDS.contains(&rule_id)
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LoweringRuleSeed {
     pub schema_version: u32,

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use mercurio_core::frontend::lowering::pilot_evidence::PilotLoweringEvidence;
 use mercurio_core::frontend::lowering::rules::{
     LoweringAstPattern, LoweringCollectRule, LoweringEmitRule, LoweringPilotSources, LoweringRule,
-    LoweringRuleSeed,
+    LoweringRuleSeed, has_runtime_elaboration_hook,
 };
 use serde_json::{Value, json};
 
@@ -749,18 +749,6 @@ fn unimplemented_elaboration_rules(rules: &LoweringRuleSeed) -> Vec<ElaborationH
     }
     gaps.sort();
     gaps
-}
-
-fn has_runtime_elaboration_hook(rule_id: &str) -> bool {
-    matches!(
-        rule_id,
-        "comment-annotation-target"
-            | "conjugated-port-definition-name"
-            | "connection-end-direction"
-            | "implicit-ref-redefines-target"
-            | "satisfy-name-as-reference-target"
-            | "verify-name-as-reference-target"
-    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -10,7 +10,7 @@ pub use crate::lowering::emit::{
 };
 pub use crate::lowering::rules::{
     LoweringAstPattern, LoweringCollectRule, LoweringElaborationRule, LoweringEmitRule,
-    LoweringPilotSources, LoweringRule, LoweringRuleSeed,
+    LoweringPilotSources, LoweringRule, LoweringRuleSeed, has_runtime_elaboration_hook,
 };
 
 #[derive(Clone)]
@@ -83,6 +83,17 @@ fn validate_lowering_rules_against_mappings(
                     format!(
                         "lowering rule `{}` property `{}` is missing from emission mapping `{}`",
                         rule.construct, property, rule.metaclass
+                    ),
+                    None,
+                ));
+            }
+        }
+        for step in &rule.elaborate {
+            if !has_runtime_elaboration_hook(&step.id) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "lowering rule `{}` elaboration `{}` has no runtime hook",
+                        rule.construct, step.id
                     ),
                     None,
                 ));
