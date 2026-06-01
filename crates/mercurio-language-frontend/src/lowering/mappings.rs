@@ -124,6 +124,32 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_expose_reviewed_definition_lowering_rule() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let rule = profile
+            .mappings
+            .lowering_rule_for_construct("PartDefinition")
+            .expect("part definition lowering rule");
+
+        assert_eq!(rule.status.as_deref(), Some("reviewed"));
+        assert_eq!(rule.metaclass, "SysML::PartDefinition");
+        assert_eq!(rule.emit.id_template, "type.{qualified_name}");
+    }
+
+    #[test]
+    fn sysml_mappings_expose_reviewed_usage_lowering_rule() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let rule = profile
+            .mappings
+            .lowering_rule_for_construct("PartUsage")
+            .expect("part usage lowering rule");
+
+        assert_eq!(rule.status.as_deref(), Some("reviewed"));
+        assert_eq!(rule.metaclass, "SysML::PartUsage");
+        assert_eq!(rule.emit.id_template, "feature.{qualified_name}");
+    }
+
+    #[test]
     fn kerml_profile_has_no_sysml_lowering_rules() {
         let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
 

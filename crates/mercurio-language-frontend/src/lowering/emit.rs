@@ -941,6 +941,9 @@ fn transpile_definition(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for(&definition.construct)?;
     let emission = mappings.emission_for(metaclass)?;
+    if let Some(rule) = mappings.lowering_rule_for_construct(&definition.construct) {
+        validate_rule_emission_compatibility(rule, metaclass, emission)?;
+    }
     let specializes = semantic_specializations_for_definition(definition, mappings);
     let owner_id = definition_owner_id(definition, mappings)?;
     let metatype_ref = mappings
@@ -1051,6 +1054,9 @@ fn transpile_usage(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for(&usage.construct)?;
     let emission = mappings.emission_for(metaclass)?;
+    if let Some(rule) = mappings.lowering_rule_for_construct(&usage.construct) {
+        validate_rule_emission_compatibility(rule, metaclass, emission)?;
+    }
     let reference_semantics = reference_usage_semantics(usage);
     let specializes =
         semantic_specializations_for_usage(usage, mappings, reference_semantics.as_ref());
