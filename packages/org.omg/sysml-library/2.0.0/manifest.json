@@ -1,0 +1,14 @@
+{
+  "schema": "dev.mercurio.local-package.v1",
+  "name": "org.omg/sysml-library",
+  "version": "2.0.0",
+  "kind": "kpar",
+  "file": "sysml-library-2.0.0.kpar",
+  "digest": "fnv1a64:972fd354a0f0119a",
+  "created_at": "release:split-language-baseline",
+  "source": {
+    "kind": "stdlib-release",
+    "path": "kpar/sysml-library-2.0.0.kpar",
+    "digest": "fnv1a64:972fd354a0f0119a"
+  }
+}

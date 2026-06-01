@@ -370,7 +370,7 @@ mod tests {
                     kind: "SysML::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
-                        "documentation".to_string(),
+                        "body".to_string(),
                         Value::String("type.Demo.Engine".to_string()),
                     )]),
                 },

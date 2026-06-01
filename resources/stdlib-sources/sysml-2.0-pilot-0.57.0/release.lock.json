@@ -8,7 +8,7 @@
   "mpack_version": "2.0.0",
   "wrapper_module": "mercurio_sysml_2_0",
   "mercurio_tools_version": "0.1.0",
-  "release_root": "artifacts/stdlib/sysml-2.0.0/sysml-2.0-pilot-0.57.0",
+  "release_root": "C:/\\/dev/git/mercurio/mercurio-core-lang-modules/artifacts/stdlib/sysml-2.0.0/sysml-2.0-pilot-0.57.0",
   "source": {
     "raw_export": {
       "path": "raw/pilot-stdlib-export.json",
@@ -19,33 +19,41 @@
   "profile": {
     "profile": {
       "path": "profiles/sysml-2.0-pilot-0.57.0/profile.json",
-      "digest": "fnv1a64:2b646f06c567757a"
+      "digest": "fnv1a64:ae0e51eabfdce134"
     },
     "mappings": {
       "path": "profiles/sysml-2.0-pilot-0.57.0/mappings",
-      "digest": "fnv1a64:743e7666f58903f9"
+      "digest": "fnv1a64:62a66729305a20f0"
     }
   },
   "artifacts": {
+    "kernel_kir": {
+      "path": "kir/kerml-kernel.kir.json",
+      "digest": "fnv1a64:d4d89d45bc042ea9"
+    },
+    "kernel_kpar": {
+      "path": "kpar/kerml-kernel-2.0.0.kpar",
+      "digest": "fnv1a64:7dafacd4bc7affa9"
+    },
     "kir": {
       "path": "kir/stdlib.full.kir.json",
-      "digest": "fnv1a64:d2eaaba5049a612b"
+      "digest": "fnv1a64:13f07e7b06c84be7"
     },
     "kpar": {
       "path": "kpar/sysml-stdlib-2.0.0.kpar",
-      "digest": "fnv1a64:f460a003725ad24e"
+      "digest": "fnv1a64:50455ccd06e799fc"
     },
     "mpack": {
       "path": "mpack/org.mercurio.sysml-stdlib-support-2.0.0.mpack",
-      "digest": "fnv1a64:d0a7b574a4e10009"
+      "digest": "fnv1a64:3b76d7ab513f693e"
     },
     "profile": {
       "path": "profiles/sysml-2.0-pilot-0.57.0/profile.json",
-      "digest": "fnv1a64:2b646f06c567757a"
+      "digest": "fnv1a64:ae0e51eabfdce134"
     },
     "profile_mappings": {
       "path": "profiles/sysml-2.0-pilot-0.57.0/mappings",
-      "digest": "fnv1a64:743e7666f58903f9"
+      "digest": "fnv1a64:62a66729305a20f0"
     },
     "python_wrappers": {
       "path": "python",
@@ -57,7 +65,15 @@
     },
     "rulepack": {
       "path": "rules/stdlib.rulepack.json",
-      "digest": "fnv1a64:fe275e340a408585"
+      "digest": "fnv1a64:0ce5da36a7bdf48b"
+    },
+    "sysml_delta_kir": {
+      "path": "kir/sysml-library.kir.json",
+      "digest": "fnv1a64:39d9d08d2961be88"
+    },
+    "sysml_delta_kpar": {
+      "path": "kpar/sysml-library-2.0.0.kpar",
+      "digest": "fnv1a64:972fd354a0f0119a"
     }
   }
 }

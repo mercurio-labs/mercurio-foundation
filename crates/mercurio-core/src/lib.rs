@@ -69,7 +69,12 @@ pub use datalog::{
     Explanation, Fact, Rule, RulePack, Term, evaluate, extract_graph_facts, load_default_rulepacks,
     materialize_core_indexes,
 };
-pub use derived::{DerivedPropertySource, DerivedPropertyValue, derived_properties};
+pub use derived::{
+    DerivedFeatureCache, DerivedFeatureManifest, DerivedFeatureManifestError,
+    DerivedFeatureRegistry, DerivedFeatureRule, DerivedFeatureSpec, DerivedPropertySource,
+    DerivedPropertyValue, builtin_core_derived_feature_manifest, derived_properties,
+    derived_property, manifest_from_metadata,
+};
 pub use element_view::ElementView;
 pub use expression::{
     BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
@@ -132,9 +137,9 @@ pub use metadata::{
 };
 pub use metamodel::{
     AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-    MetamodelAttributeRegistry, MetatypeQueryOverride, collect_specialization_ancestors,
-    effective_properties, effective_properties_with_derived, element_metatype,
-    query_element_attributes,
+    MetamodelAttributeRegistry, MetamodelClassView, MetamodelFeatureRegistry, MetamodelFeatureView,
+    MetatypeQueryOverride, collect_specialization_ancestors, effective_properties,
+    effective_properties_with_derived, element_metatype, query_element_attributes,
 };
 pub use mpack::{
     MpackLanguageProfile, MpackLibrary, MpackManifest, MpackPythonPackage,
