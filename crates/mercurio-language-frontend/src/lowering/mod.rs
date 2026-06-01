@@ -16,3 +16,4 @@ pub mod pilot_evidence;
 pub mod policy;
 pub mod resolve;
 pub mod rules;
+pub mod semantic_defaults;

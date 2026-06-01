@@ -20,6 +20,9 @@ use crate::lowering::ir::{
     ResolvedPathSegment, ResolvedUsage,
 };
 use crate::lowering::rules::{LoweringRule, LoweringRuleSeed};
+use crate::lowering::semantic_defaults::{
+    ReferenceModifierSemanticsSeed, SemanticDefaultsSeed, UsagePropertyDefaultSeed,
+};
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Deserialize)]
 pub struct PilotConstructSeed {
@@ -78,131 +81,6 @@ pub struct UsageSemanticSpecializationOverrideSeed {
 pub struct StdlibAliasSeed {
     #[serde(default)]
     pub ids: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SemanticDefaultsSeed {
-    pub schema_version: u32,
-    #[serde(default)]
-    pub reference_usage_semantics: ReferenceUsageSemanticsSeed,
-    #[serde(default)]
-    pub definition_context: DefinitionContextDefaultSeed,
-    #[serde(default)]
-    pub usage_context: UsageContextDefaultSeed,
-    #[serde(default)]
-    pub usage_type_defaults: BTreeMap<String, UsageTypeDefaultSeed>,
-    #[serde(default)]
-    pub usage_subset_defaults: BTreeMap<String, UsageSubsetDefaultSeed>,
-    #[serde(default)]
-    pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
-    #[serde(default)]
-    pub usage_property_defaults: BTreeMap<String, Vec<UsagePropertyDefaultSeed>>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DefinitionContextDefaultSeed {
-    #[serde(default)]
-    pub abstract_constructs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct UsageContextDefaultSeed {
-    #[serde(default)]
-    pub non_variable_owner_constructs: Vec<String>,
-    #[serde(default)]
-    pub no_type_context_owner_constructs: Vec<String>,
-    #[serde(default)]
-    pub non_owned_member_constructs: Vec<String>,
-    #[serde(default)]
-    pub direction_modifiers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct UsagePropertyDefaultSeed {
-    pub owner_construct: Option<String>,
-    #[serde(default)]
-    pub absent_modifiers: Vec<String>,
-    #[serde(default)]
-    pub property_refs: BTreeMap<String, Vec<String>>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ReferenceUsageSemanticsSeed {
-    #[serde(default)]
-    pub modifier_rules: Vec<ReferenceModifierSemanticsSeed>,
-    #[serde(default)]
-    pub typed_data_value: ReferenceTypedSemanticsSeed,
-    #[serde(default)]
-    pub typed_object: ReferenceTypedSemanticsSeed,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ReferenceModifierSemanticsSeed {
-    pub modifier: String,
-    #[serde(default)]
-    pub synthetic_declared_name: bool,
-    pub default_type_ref: Option<String>,
-    pub semantic_specializations: Option<Vec<String>>,
-    #[serde(default)]
-    pub subsetted_feature_refs: Vec<String>,
-    #[serde(default)]
-    pub specialized_feature_refs: Vec<String>,
-    #[serde(default)]
-    pub redefined_feature_refs: Vec<String>,
-    pub direction: Option<String>,
-    pub direction_from_modifier: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ReferenceTypedSemanticsSeed {
-    #[serde(default)]
-    pub subsetted_feature_refs: Vec<String>,
-    #[serde(default)]
-    pub direction_from_modifiers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct UsageTypeDefaultSeed {
-    pub type_ref: Option<String>,
-    #[serde(default)]
-    pub owner_type_refs: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct UsageSubsetDefaultSeed {
-    #[serde(default)]
-    pub subsetted_feature_refs: Vec<String>,
-    #[serde(default)]
-    pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
-    #[serde(default)]
-    pub modifier_owner_subsetted_feature_refs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
-    pub specialized_feature_subset: Option<SpecializedFeatureSubsetDefaultSeed>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SpecializedFeatureSubsetDefaultSeed {
-    #[serde(default)]
-    pub require_feature_ref: bool,
-    #[serde(default)]
-    pub require_multiplicity: bool,
-    #[serde(default)]
-    pub include_specialized_features: bool,
-    #[serde(default)]
-    pub require_no_explicit_type_for_append_refs: bool,
-    #[serde(default)]
-    pub append_refs: Vec<String>,
-    #[serde(default)]
-    pub owner_append_refs: BTreeMap<String, Vec<String>>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct UsageFamilyDefaultSeed {
-    pub type_ref: String,
-    #[serde(default)]
-    pub subsetted_feature_refs: Vec<String>,
-    #[serde(default)]
-    pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
-    pub is_variable: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
