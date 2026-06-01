@@ -10,7 +10,8 @@ pub use crate::lowering::emit::{
 };
 pub use crate::lowering::rules::{
     LoweringAstPattern, LoweringCollectRule, LoweringElaborationRule, LoweringEmitRule,
-    LoweringPilotSources, LoweringRule, LoweringRuleSeed, has_runtime_elaboration_hook,
+    LoweringPilotSources, LoweringRule, LoweringRuleSeed, has_runtime_collect_expression,
+    has_runtime_elaboration_hook,
 };
 
 #[derive(Clone)]
@@ -61,6 +62,17 @@ fn validate_lowering_rules_against_mappings(
     };
 
     for rule in &lowering_rules.rules {
+        for (slot, expression) in collect_rule_expressions(rule) {
+            if !has_runtime_collect_expression(&expression) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "lowering rule `{}` collect expression `{}` in `{}` has no runtime support",
+                        rule.construct, expression, slot
+                    ),
+                    None,
+                ));
+            }
+        }
         let emission = mappings.emission_for(&rule.metaclass)?;
         if rule.emit.id_template != emission.id_template {
             return Err(Diagnostic::new(
@@ -102,6 +114,21 @@ fn validate_lowering_rules_against_mappings(
     }
 
     Ok(())
+}
+
+fn collect_rule_expressions(rule: &LoweringRule) -> Vec<(&str, &str)> {
+    let mut expressions = vec![
+        ("element", rule.collect.element.as_str()),
+        ("name", rule.collect.name.as_str()),
+        ("owner", rule.collect.owner.as_str()),
+    ];
+    expressions.extend(
+        rule.collect
+            .fields
+            .iter()
+            .map(|(field, expression)| (field.as_str(), expression.as_str())),
+    );
+    expressions
 }
 
 #[cfg(test)]

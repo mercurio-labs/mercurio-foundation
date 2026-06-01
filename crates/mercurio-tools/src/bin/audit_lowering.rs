@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use mercurio_core::frontend::lowering::pilot_evidence::PilotLoweringEvidence;
 use mercurio_core::frontend::lowering::rules::{
     LoweringAstPattern, LoweringCollectRule, LoweringEmitRule, LoweringPilotSources, LoweringRule,
-    LoweringRuleSeed, has_runtime_elaboration_hook,
+    LoweringRuleSeed, has_runtime_collect_expression, has_runtime_elaboration_hook,
 };
 use serde_json::{Value, json};
 
@@ -72,6 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rule_property_gaps = lowering_rule_property_gaps(lowering_rules, &emission_properties);
         let emission_property_gaps =
             emission_property_gaps(lowering_rules, &emission_properties, &construct_metaclasses);
+        let collect_expression_count = lowering_collect_expression_count(lowering_rules);
+        let unsupported_collect_expressions = unsupported_collect_expressions(lowering_rules);
         let elaboration_rule_count = lowering_elaboration_rule_count(lowering_rules);
         let unimplemented_elaboration_rules = unimplemented_elaboration_rules(lowering_rules);
 
@@ -105,6 +107,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  emission properties missing declarative rule properties: {}",
             emission_property_gaps.len()
+        );
+        println!("  collect expressions: {collect_expression_count}");
+        println!(
+            "  collect expressions without runtime support: {}",
+            unsupported_collect_expressions.len()
         );
         println!("  elaboration rules: {elaboration_rule_count}");
         println!(
@@ -152,6 +159,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Emission properties missing declarative rule properties:");
             for gap in &emission_property_gaps {
                 println!("  {}.{}", gap.metaclass, gap.property);
+            }
+        }
+
+        if !unsupported_collect_expressions.is_empty() {
+            println!();
+            println!("Collect expressions without runtime support:");
+            for gap in &unsupported_collect_expressions {
+                println!("  {}.{}: {}", gap.construct, gap.slot, gap.expression);
             }
         }
 
@@ -723,6 +738,53 @@ fn lowering_rule_status_counts(document: &LoweringRuleSeed) -> BTreeMap<String, 
 struct RulePropertyGap {
     metaclass: String,
     property: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CollectExpressionGap {
+    construct: String,
+    slot: String,
+    expression: String,
+}
+
+fn lowering_collect_expression_count(rules: &LoweringRuleSeed) -> usize {
+    rules
+        .rules
+        .iter()
+        .map(|rule| 3 + rule.collect.fields.len())
+        .sum()
+}
+
+fn unsupported_collect_expressions(rules: &LoweringRuleSeed) -> Vec<CollectExpressionGap> {
+    let mut gaps = Vec::new();
+    for rule in &rules.rules {
+        for (slot, expression) in collect_rule_expressions(rule) {
+            if !has_runtime_collect_expression(&expression) {
+                gaps.push(CollectExpressionGap {
+                    construct: rule.construct.clone(),
+                    slot,
+                    expression,
+                });
+            }
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
+fn collect_rule_expressions(rule: &LoweringRule) -> Vec<(String, String)> {
+    let mut expressions = vec![
+        ("element".to_string(), rule.collect.element.clone()),
+        ("name".to_string(), rule.collect.name.clone()),
+        ("owner".to_string(), rule.collect.owner.clone()),
+    ];
+    expressions.extend(
+        rule.collect
+            .fields
+            .iter()
+            .map(|(field, expression)| (format!("fields.{field}"), expression.clone())),
+    );
+    expressions
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

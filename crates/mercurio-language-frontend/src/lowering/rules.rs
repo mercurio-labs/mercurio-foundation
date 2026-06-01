@@ -26,6 +26,41 @@ pub fn has_runtime_elaboration_hook(rule_id: &str) -> bool {
     RUNTIME_ELABORATION_RULE_IDS.contains(&rule_id)
 }
 
+pub fn has_runtime_collect_expression(expression: &str) -> bool {
+    matches!(
+        expression,
+        "definition"
+            | "import"
+            | "package"
+            | "usage"
+            | "true"
+            | "$ast.allocation_source"
+            | "$ast.allocation_target"
+            | "$ast.body_members[usage]"
+            | "$ast.docs"
+            | "$ast.expression"
+            | "$ast.members"
+            | "$ast.members[modifier=end]"
+            | "$ast.members[usage]"
+            | "$ast.modifiers + end"
+            | "$ast.modifiers contains abstract"
+            | "$ast.multiplicity"
+            | "$ast.name"
+            | "$ast.path"
+            | "$ast.redefines"
+            | "$ast.reference_target"
+            | "$ast.reference_target or $ast.name"
+            | "$ast.specializes"
+            | "$ast.specializes or semantic_default"
+            | "$ast.subsets"
+            | "$ast.ty"
+            | "$scope.owner"
+            | "$scope.package"
+            | "$scope.package_or_definition"
+            | "~$ast.name"
+    )
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LoweringRuleSeed {
     pub schema_version: u32,
