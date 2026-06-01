@@ -12,8 +12,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse()?;
     let constructs = read_json(&args.constructs)?;
     let emission = read_json(&args.emission)?;
+    let semantic_defaults = args
+        .semantic_defaults
+        .as_deref()
+        .map(read_json)
+        .transpose()?;
     let lowering_rules = args.rules.as_deref().map(read_lowering_rules).transpose()?;
 
+    let construct_names = construct_names(&constructs);
     let construct_metaclasses = construct_metaclasses(&constructs);
     let emission_metaclasses = emission_metaclasses(&emission);
     let emission_properties = emission_properties(&emission);
@@ -195,6 +201,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if let Some(semantic_defaults) = &semantic_defaults {
+        let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
+        let unknown_usage_defaults = usage_family_defaults
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_owner_overrides =
+            semantic_default_owner_override_gaps(semantic_defaults, &construct_names);
+
+        println!();
+        println!("Semantic defaults");
+        println!("  usage family defaults: {}", usage_family_defaults.len());
+        println!(
+            "  usage family defaults without construct mappings: {}",
+            unknown_usage_defaults.len()
+        );
+        println!(
+            "  owner overrides without construct mappings: {}",
+            unknown_owner_overrides.len()
+        );
+
+        if !unknown_usage_defaults.is_empty() {
+            println!();
+            println!("Usage family defaults without construct mappings:");
+            for construct in &unknown_usage_defaults {
+                println!("  {construct}");
+            }
+        }
+
+        if !unknown_owner_overrides.is_empty() {
+            println!();
+            println!("Owner overrides without construct mappings:");
+            for gap in &unknown_owner_overrides {
+                println!("  {} -> {}", gap.construct, gap.owner_construct);
+            }
+        }
+    }
+
     if let Some(evidence_path) = args.evidence.as_deref() {
         let evidence = read_pilot_evidence(evidence_path)?;
         let grammar_returns = grammar_returns(&evidence);
@@ -333,6 +377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct Args {
     constructs: PathBuf,
     emission: PathBuf,
+    semantic_defaults: Option<PathBuf>,
     rules: Option<PathBuf>,
     verbose_rules: bool,
     write_rule_draft: Option<PathBuf>,
@@ -350,6 +395,9 @@ impl Args {
         );
         let mut rules = Some(PathBuf::from(
             "resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/lowering_rules.seed.json",
+        ));
+        let mut semantic_defaults = Some(PathBuf::from(
+            "resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/semantic_defaults.seed.json",
         ));
         let mut verbose_rules = false;
         let mut write_rule_draft = None;
@@ -380,6 +428,15 @@ impl Args {
                     rules = Some(PathBuf::from(
                         args.get(index).ok_or("missing --rules value")?,
                     ));
+                }
+                "--semantic-defaults" => {
+                    index += 1;
+                    semantic_defaults = Some(PathBuf::from(
+                        args.get(index).ok_or("missing --semantic-defaults value")?,
+                    ));
+                }
+                "--no-semantic-defaults" => {
+                    semantic_defaults = None;
                 }
                 "--no-rules" => {
                     rules = None;
@@ -412,6 +469,7 @@ impl Args {
         Ok(Self {
             constructs,
             emission,
+            semantic_defaults,
             rules,
             verbose_rules,
             write_rule_draft,
@@ -423,7 +481,7 @@ impl Args {
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p mercurio-tools --bin audit_lowering -- [--constructs PATH] [--emission PATH] [--rules PATH|--no-rules] [--verbose-rules] [--write-rule-draft PATH] [--min-reviewed-rules N] [--evidence PATH]"
+        "Usage: cargo run -p mercurio-tools --bin audit_lowering -- [--constructs PATH] [--emission PATH] [--rules PATH|--no-rules] [--semantic-defaults PATH|--no-semantic-defaults] [--verbose-rules] [--write-rule-draft PATH] [--min-reviewed-rules N] [--evidence PATH]"
     );
 }
 
@@ -449,6 +507,18 @@ fn construct_metaclasses(document: &Value) -> BTreeSet<String> {
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.get("metaclass"))
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+fn construct_names(document: &Value) -> BTreeSet<String> {
+    document
+        .get("constructs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("construct"))
         .filter_map(Value::as_str)
         .map(str::to_string)
         .collect()
@@ -895,6 +965,54 @@ fn emission_property_gaps(
                 gaps.push(RulePropertyGap {
                     metaclass: metaclass.clone(),
                     property: property.clone(),
+                });
+            }
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
+fn semantic_default_usage_family_defaults(document: &Value) -> BTreeSet<String> {
+    document
+        .get("usage_family_defaults")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|defaults| defaults.keys())
+        .cloned()
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnerOverrideGap {
+    construct: String,
+    owner_construct: String,
+}
+
+fn semantic_default_owner_override_gaps(
+    document: &Value,
+    construct_names: &BTreeSet<String>,
+) -> Vec<OwnerOverrideGap> {
+    let mut gaps = Vec::new();
+    let Some(defaults) = document
+        .get("usage_family_defaults")
+        .and_then(Value::as_object)
+    else {
+        return gaps;
+    };
+
+    for (construct, default) in defaults {
+        let Some(overrides) = default
+            .get("owner_subsetted_feature_refs")
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        for owner_construct in overrides.keys() {
+            if !construct_names.contains(owner_construct) {
+                gaps.push(OwnerOverrideGap {
+                    construct: construct.clone(),
+                    owner_construct: owner_construct.clone(),
                 });
             }
         }
