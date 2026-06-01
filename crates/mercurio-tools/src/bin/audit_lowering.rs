@@ -546,7 +546,7 @@ fn generated_lowering_rule(
             id_template,
             properties: properties
                 .iter()
-                .map(|property| (property.clone(), format!("${property}")))
+                .map(|property| (property.clone(), lowering_property_value(property)))
                 .collect(),
         },
         pilot_sources: LoweringPilotSources {
@@ -555,6 +555,32 @@ fn generated_lowering_rule(
             transform_observations: Vec::new(),
         },
     }
+}
+
+fn lowering_property_value(property: &str) -> String {
+    match property {
+        "declared_name" => "$declared_name",
+        "name" => "$name",
+        "owner" => "$owner_id",
+        "type" => "$type_ref",
+        "featuring_type" => "$featuring_type_ref",
+        "direction" => "$direction",
+        "members" | "member_ids" => "$member_ids",
+        "features" | "owned_feature_ids" => "$owned_feature_ids",
+        "specializes" => "$specializes_refs",
+        "specialized_features" => "$specialized_feature_refs",
+        "subsetted_features" => "$subsetted_feature_refs",
+        "redefined_features" => "$redefined_feature_refs",
+        "metatype" => "$metatype_ref",
+        "is_abstract" => "$is_abstract",
+        "is_derived" => "$is_derived",
+        "is_end" => "$is_end",
+        "is_ordered" => "$is_ordered",
+        "is_unique" => "$is_unique",
+        "is_variable" => "$is_variable",
+        other => return format!("${other}"),
+    }
+    .to_string()
 }
 
 fn infer_collect_element(construct: &str, metaclass: &str) -> String {

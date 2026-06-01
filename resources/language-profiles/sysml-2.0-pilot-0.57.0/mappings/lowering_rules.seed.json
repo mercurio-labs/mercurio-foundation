@@ -8,6 +8,162 @@
                },
     "rules":  [
                   {
+                      "construct":  "ActionDefinition",
+                      "metaclass":  "SysML::ActionDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "action"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ActionDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::ActionDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "ActionUsage",
+                      "metaclass":  "SysML::ActionUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "action"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "action.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "ActionUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::ActionUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "AllocationDefinition",
+                      "metaclass":  "SysML::AllocationDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "allocation"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "AllocationDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::AllocationDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "AllocationUsage",
+                      "metaclass":  "SysML::AllocationUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "allocation"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "allocation.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "AllocationUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::AllocationUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
                       "construct":  "AttributeDefinition",
                       "metaclass":  "SysML::AttributeDefinition",
                       "status":  "reviewed",
@@ -32,13 +188,13 @@
                                    "id_template":  "type.{qualified_name}",
                                    "properties":  {
                                                       "declared_name":  "$declared_name",
-                                                      "features":  "$features",
+                                                      "features":  "$owned_feature_ids",
                                                       "is_abstract":  "$is_abstract",
-                                                      "members":  "$members",
-                                                      "metatype":  "$metatype",
+                                                      "members":  "$member_ids",
+                                                      "metatype":  "$metatype_ref",
                                                       "name":  "$name",
-                                                      "owner":  "$owner",
-                                                      "specializes":  "$specializes"
+                                                      "owner":  "$owner_id",
+                                                      "specializes":  "$specializes_refs"
                                                   }
                                },
                       "pilot_sources":  {
@@ -77,23 +233,23 @@
                                    "properties":  {
                                                       "declared_name":  "$declared_name",
                                                       "direction":  "$direction",
-                                                      "features":  "$features",
-                                                      "featuring_type":  "$featuring_type",
+                                                      "features":  "$owned_feature_ids",
+                                                      "featuring_type":  "$featuring_type_ref",
                                                       "is_abstract":  "$is_abstract",
                                                       "is_derived":  "$is_derived",
                                                       "is_end":  "$is_end",
                                                       "is_ordered":  "$is_ordered",
                                                       "is_unique":  "$is_unique",
                                                       "is_variable":  "$is_variable",
-                                                      "members":  "$members",
-                                                      "metatype":  "$metatype",
+                                                      "members":  "$member_ids",
+                                                      "metatype":  "$metatype_ref",
                                                       "name":  "$name",
-                                                      "owner":  "$owner",
-                                                      "redefined_features":  "$redefined_features",
-                                                      "specialized_features":  "$specialized_features",
-                                                      "specializes":  "$specializes",
-                                                      "subsetted_features":  "$subsetted_features",
-                                                      "type":  "$type"
+                                                      "owner":  "$owner_id",
+                                                      "redefined_features":  "$redefined_feature_refs",
+                                                      "specialized_features":  "$specialized_feature_refs",
+                                                      "specializes":  "$specializes_refs",
+                                                      "subsetted_features":  "$subsetted_feature_refs",
+                                                      "type":  "$type_ref"
                                                   }
                                },
                       "pilot_sources":  {
@@ -156,6 +312,84 @@
                                         }
                   },
                   {
+                      "construct":  "FlowDefinition",
+                      "metaclass":  "SysML::FlowDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "flow"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "FlowDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::FlowDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "FlowUsage",
+                      "metaclass":  "SysML::FlowUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "flow"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "flow.{owner_path}.{declared_name}.{start_line}_{start_col}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "FlowUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::FlowUsage",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
                       "construct":  "ItemDefinition",
                       "metaclass":  "SysML::ItemDefinition",
                       "status":  "reviewed",
@@ -180,13 +414,13 @@
                                    "id_template":  "type.{qualified_name}",
                                    "properties":  {
                                                       "declared_name":  "$declared_name",
-                                                      "features":  "$features",
+                                                      "features":  "$owned_feature_ids",
                                                       "is_abstract":  "$is_abstract",
-                                                      "members":  "$members",
-                                                      "metatype":  "$metatype",
+                                                      "members":  "$member_ids",
+                                                      "metatype":  "$metatype_ref",
                                                       "name":  "$name",
-                                                      "owner":  "$owner",
-                                                      "specializes":  "$specializes"
+                                                      "owner":  "$owner_id",
+                                                      "specializes":  "$specializes_refs"
                                                   }
                                },
                       "pilot_sources":  {
@@ -225,23 +459,23 @@
                                    "properties":  {
                                                       "declared_name":  "$declared_name",
                                                       "direction":  "$direction",
-                                                      "features":  "$features",
-                                                      "featuring_type":  "$featuring_type",
+                                                      "features":  "$owned_feature_ids",
+                                                      "featuring_type":  "$featuring_type_ref",
                                                       "is_abstract":  "$is_abstract",
                                                       "is_derived":  "$is_derived",
                                                       "is_end":  "$is_end",
                                                       "is_ordered":  "$is_ordered",
                                                       "is_unique":  "$is_unique",
                                                       "is_variable":  "$is_variable",
-                                                      "members":  "$members",
-                                                      "metatype":  "$metatype",
+                                                      "members":  "$member_ids",
+                                                      "metatype":  "$metatype_ref",
                                                       "name":  "$name",
-                                                      "owner":  "$owner",
-                                                      "redefined_features":  "$redefined_features",
-                                                      "specialized_features":  "$specialized_features",
-                                                      "specializes":  "$specializes",
-                                                      "subsetted_features":  "$subsetted_features",
-                                                      "type":  "$type"
+                                                      "owner":  "$owner_id",
+                                                      "redefined_features":  "$redefined_feature_refs",
+                                                      "specialized_features":  "$specialized_feature_refs",
+                                                      "specializes":  "$specializes_refs",
+                                                      "subsetted_features":  "$subsetted_feature_refs",
+                                                      "type":  "$type_ref"
                                                   }
                                },
                       "pilot_sources":  {
@@ -384,13 +618,13 @@
                                    "id_template":  "type.{qualified_name}",
                                    "properties":  {
                                                       "declared_name":  "$declared_name",
-                                                      "features":  "$features",
+                                                      "features":  "$owned_feature_ids",
                                                       "is_abstract":  "$is_abstract",
-                                                      "members":  "$members",
-                                                      "metatype":  "$metatype",
+                                                      "members":  "$member_ids",
+                                                      "metatype":  "$metatype_ref",
                                                       "name":  "$name",
-                                                      "owner":  "$owner",
-                                                      "specializes":  "$specializes"
+                                                      "owner":  "$owner_id",
+                                                      "specializes":  "$specializes_refs"
                                                   }
                                },
                       "pilot_sources":  {
@@ -429,23 +663,23 @@
                                    "properties":  {
                                                       "declared_name":  "$declared_name",
                                                       "direction":  "$direction",
-                                                      "features":  "$features",
-                                                      "featuring_type":  "$featuring_type",
+                                                      "features":  "$owned_feature_ids",
+                                                      "featuring_type":  "$featuring_type_ref",
                                                       "is_abstract":  "$is_abstract",
                                                       "is_derived":  "$is_derived",
                                                       "is_end":  "$is_end",
                                                       "is_ordered":  "$is_ordered",
                                                       "is_unique":  "$is_unique",
                                                       "is_variable":  "$is_variable",
-                                                      "members":  "$members",
-                                                      "metatype":  "$metatype",
+                                                      "members":  "$member_ids",
+                                                      "metatype":  "$metatype_ref",
                                                       "name":  "$name",
-                                                      "owner":  "$owner",
-                                                      "redefined_features":  "$redefined_features",
-                                                      "specialized_features":  "$specialized_features",
-                                                      "specializes":  "$specializes",
-                                                      "subsetted_features":  "$subsetted_features",
-                                                      "type":  "$type"
+                                                      "owner":  "$owner_id",
+                                                      "redefined_features":  "$redefined_feature_refs",
+                                                      "specialized_features":  "$specialized_feature_refs",
+                                                      "specializes":  "$specializes_refs",
+                                                      "subsetted_features":  "$subsetted_feature_refs",
+                                                      "type":  "$type_ref"
                                                   }
                                },
                       "pilot_sources":  {
@@ -492,7 +726,7 @@
                                    "properties":  {
                                                       "metatype":  "$metatype_ref",
                                                       "owner":  "$owner_id",
-                                                      "specialized_features":  "$reference_target_ref",
+                                                      "specialized_features":  "$specialized_feature_refs",
                                                       "specializes":  "$specializes_refs",
                                                       "type":  "$type_ref"
                                                   }
@@ -504,6 +738,84 @@
                                             "ecore_class":  "SysML::ReferenceUsage",
                                             "transform_observations":  [
                                                                            "implicit-ref-redefines-target"
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "StateDefinition",
+                      "metaclass":  "SysML::StateDefinition",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericDefinitionDecl",
+                                  "keyword":  "state"
+                              },
+                      "collect":  {
+                                      "element":  "definition",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "is_abstract":  "$ast.modifiers contains abstract",
+                                                     "members":  "$ast.members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "type.{qualified_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "features":  "$owned_feature_ids",
+                                                      "specializes":  "$specializes_refs"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "StateDefinition"
+                                                              ],
+                                            "ecore_class":  "SysML::StateDefinition",
+                                            "transform_observations":  [
+
+                                                                       ]
+                                        }
+                  },
+                  {
+                      "construct":  "StateUsage",
+                      "metaclass":  "SysML::StateUsage",
+                      "status":  "reviewed",
+                      "ast":  {
+                                  "node":  "GenericUsageDecl",
+                                  "keyword":  "state"
+                              },
+                      "collect":  {
+                                      "element":  "usage",
+                                      "name":  "$ast.name",
+                                      "owner":  "$scope.owner",
+                                      "fields":  {
+                                                     "members":  "$ast.body_members[usage]",
+                                                     "specializes":  "$ast.specializes or semantic_default",
+                                                     "type":  "$ast.ty"
+                                                 }
+                                  },
+                      "elaborate":  [
+
+                                    ],
+                      "emit":  {
+                                   "id_template":  "state.{owner_path}.{declared_name}",
+                                   "properties":  {
+                                                      "declared_name":  "$declared_name",
+                                                      "owner":  "$owner_id",
+                                                      "type":  "$type_ref"
+                                                  }
+                               },
+                      "pilot_sources":  {
+                                            "grammar_rules":  [
+                                                                  "StateUsage"
+                                                              ],
+                                            "ecore_class":  "SysML::StateUsage",
+                                            "transform_observations":  [
+
                                                                        ]
                                         }
                   }
