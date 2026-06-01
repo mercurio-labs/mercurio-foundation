@@ -210,6 +210,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             semantic_default_usage_context_construct_refs(semantic_defaults);
         let usage_type_defaults = semantic_default_usage_type_defaults(semantic_defaults);
         let usage_property_defaults = semantic_default_usage_property_defaults(semantic_defaults);
+        let usage_property_default_rule_count =
+            semantic_default_usage_property_default_rule_count(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
@@ -271,6 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  usage property defaults: {}",
             usage_property_defaults.len()
         );
+        println!("  usage property default rules: {usage_property_default_rule_count}");
         println!(
             "  usage property defaults without construct mappings: {}",
             unknown_usage_property_defaults.len()
@@ -1165,6 +1168,16 @@ fn semantic_default_usage_property_defaults(document: &Value) -> BTreeSet<String
         .flat_map(|defaults| defaults.keys())
         .cloned()
         .collect()
+}
+
+fn semantic_default_usage_property_default_rule_count(document: &Value) -> usize {
+    document
+        .get("usage_property_defaults")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|defaults| defaults.values())
+        .map(|rules| rules.as_array().map(Vec::len).unwrap_or_default())
+        .sum()
 }
 
 fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> {

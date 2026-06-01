@@ -26,9 +26,18 @@ EMF-lite/MMP-style profile data for behavior that used to live directly in Rust:
   modifier precedence.
 - `usage_type_defaults`, `usage_subset_defaults`, and `usage_family_defaults`
   define default type, subset, specialization, and family behavior.
-- `usage_property_defaults` defines guarded property-ref additions. Rules can
-  match owner constructs and absent modifiers, then append refs to named KIR
-  properties such as `type` or `definition`.
+- `usage_property_defaults` defines guarded property additions and small
+  elaborations. Rules can match owner constructs, required modifiers, and absent
+  modifiers. They can append refs with `property_refs`, assign string values
+  with `property_values`, and override the emitted `kir_kind` for relationship
+  compatibility cases such as satisfy/verify.
+
+`usage_property_defaults.property_values` supports a deliberately small
+placeholder vocabulary. Missing optional placeholders skip the property:
+`$owner_id`, `$qualified_name`, `$declared_name`, `$owner_qualified_name`,
+`$allocation_source`, `$allocation_target`, `$reference_target`,
+`$modifier_value_trigger`, `$modifier_value_trigger_kind`, and
+`$sibling_state_id_transition_target`.
 
 The lowering path is intentionally split into three profile-backed stages:
 
