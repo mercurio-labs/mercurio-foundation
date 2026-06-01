@@ -19,6 +19,18 @@ It currently targets Ecore/EMF class and structural-feature evidence. Grammar
 rule extraction can be added later from the Pilot Xtext sources or a generated
 grammar report.
 
+To run the exporter through the Rust tool wrapper:
+
+```text
+cargo run -p mercurio-tools --bin export_pilot_lowering_evidence -- --pilot-root ../SysML-v2-Pilot-Implementation --out target/pilot_lowering_evidence.json
+```
+
+Then feed the captured evidence into the lowering audit:
+
+```text
+cargo run -p mercurio-tools --bin audit_lowering -- --evidence target/pilot_lowering_evidence.json
+```
+
 ## Declarative Lowering Rules
 
 The first declarative lowering rule seed lives at:
@@ -111,3 +123,6 @@ treated as scaffolding until reviewed and corrected.
   metaclasses from the construct and emission seeds. The generated file is a
   starting point for review, not an automatically trusted replacement for the
   checked-in rule seed.
+- `audit_lowering --min-reviewed-rules N` fails if reviewed declarative rule
+  coverage falls below `N`. This gives CI a simple ratchet once a reviewed-rule
+  baseline is established.

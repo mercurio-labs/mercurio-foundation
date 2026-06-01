@@ -13,5 +13,6 @@ pub mod ir;
 pub mod mappings;
 pub mod names;
 pub mod pilot_evidence;
+pub mod policy;
 pub mod resolve;
 pub mod rules;

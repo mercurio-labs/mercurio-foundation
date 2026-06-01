@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use mercurio_language_contracts::SourceLanguage;
 use mercurio_language_contracts::diagnostics::Diagnostic;
 
@@ -27,6 +29,7 @@ impl LanguageProfile {
         };
         let mappings = MappingBundle::load_for_language(language)?;
         let lowering_rules = LoweringRuleSeed::load_for_language(language)?;
+        validate_lowering_rules_against_mappings(lowering_rules, mappings)?;
         Ok(Self {
             id,
             language,
@@ -39,6 +42,7 @@ impl LanguageProfile {
         let id = id.into();
         let mappings = MappingBundle::load_for_profile(&id)?;
         let lowering_rules = LoweringRuleSeed::load_for_profile(&id)?;
+        validate_lowering_rules_against_mappings(lowering_rules, mappings)?;
         Ok(Self {
             id,
             language: SourceLanguage::Sysml,
@@ -46,6 +50,38 @@ impl LanguageProfile {
             lowering_rules,
         })
     }
+}
+
+fn validate_lowering_rules_against_mappings(
+    lowering_rules: Option<&LoweringRuleSeed>,
+    mappings: &MappingBundle,
+) -> Result<(), Diagnostic> {
+    let Some(lowering_rules) = lowering_rules else {
+        return Ok(());
+    };
+
+    for rule in &lowering_rules.rules {
+        let emission = mappings.emission_for(&rule.metaclass)?;
+        let emission_properties = emission
+            .emit
+            .properties
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        for property in rule.emit.properties.keys() {
+            if !emission_properties.contains(property.as_str()) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "lowering rule `{}` property `{}` is missing from emission mapping `{}`",
+                        rule.construct, property, rule.metaclass
+                    ),
+                    None,
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

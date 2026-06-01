@@ -11,7 +11,7 @@ use crate::lowering::names::{
     direct_child_name, dotted_name_to_qualified_name, import_namespace_prefix,
     qualified_names_match, resolve_local_namespace_dot,
 };
-use crate::lowering::resolve::ResolvePolicy;
+use crate::lowering::policy::ResolvePolicy;
 pub(crate) fn build_import_alias_map(
     imports: &[ResolvedImport],
     packages: &[ResolvedPackage],

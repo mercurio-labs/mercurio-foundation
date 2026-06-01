@@ -23,6 +23,7 @@ pub use crate::lowering::ir::{
     ResolvedPathSegment, ResolvedUsage,
 };
 use crate::lowering::names::expand_import_namespace_prefix;
+use crate::lowering::policy::{KERML_RESOLVE_POLICY, ResolvePolicy, STRICT_RESOLVE_POLICY};
 
 fn expression_span(expr: &Expr) -> SourceSpan {
     match expr {
@@ -123,19 +124,6 @@ impl ResolverContext {
         })
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ResolvePolicy {
-    preserve_unresolved_references: bool,
-}
-
-const STRICT_RESOLVE_POLICY: ResolvePolicy = ResolvePolicy {
-    preserve_unresolved_references: false,
-};
-
-const KERML_RESOLVE_POLICY: ResolvePolicy = ResolvePolicy {
-    preserve_unresolved_references: true,
-};
 
 pub fn resolve_module(
     module: &SysmlModule,

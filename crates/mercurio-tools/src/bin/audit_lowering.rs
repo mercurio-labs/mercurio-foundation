@@ -55,6 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rule_constructs = lowering_rule_constructs(lowering_rules);
         let rule_metaclasses = lowering_rule_metaclasses(lowering_rules);
         let rule_status_counts = lowering_rule_status_counts(lowering_rules);
+        let reviewed_rule_count = rule_status_counts.get("reviewed").copied().unwrap_or(0);
         let constructs_missing_rules = construct_metaclasses
             .difference(&rule_metaclasses)
             .cloned()
@@ -123,6 +124,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for metaclass in &constructs_missing_rules {
                 println!("  {metaclass}");
             }
+        }
+
+        if reviewed_rule_count < args.min_reviewed_rules {
+            return Err(format!(
+                "reviewed lowering rule count {reviewed_rule_count} is below required minimum {}",
+                args.min_reviewed_rules
+            )
+            .into());
         }
     }
 
@@ -267,6 +276,7 @@ struct Args {
     rules: Option<PathBuf>,
     verbose_rules: bool,
     write_rule_draft: Option<PathBuf>,
+    min_reviewed_rules: usize,
     evidence: Option<PathBuf>,
 }
 
@@ -283,6 +293,7 @@ impl Args {
         ));
         let mut verbose_rules = false;
         let mut write_rule_draft = None;
+        let mut min_reviewed_rules = 0usize;
         let mut evidence = None;
         let args = std::env::args().skip(1).collect::<Vec<_>>();
         let mut index = 0;
@@ -322,6 +333,13 @@ impl Args {
                         args.get(index).ok_or("missing --write-rule-draft value")?,
                     ));
                 }
+                "--min-reviewed-rules" => {
+                    index += 1;
+                    min_reviewed_rules = args
+                        .get(index)
+                        .ok_or("missing --min-reviewed-rules value")?
+                        .parse()?;
+                }
                 "--help" | "-h" => {
                     print_usage();
                     std::process::exit(0);
@@ -337,6 +355,7 @@ impl Args {
             rules,
             verbose_rules,
             write_rule_draft,
+            min_reviewed_rules,
             evidence,
         })
     }
@@ -344,7 +363,7 @@ impl Args {
 
 fn print_usage() {
     println!(
-        "Usage: cargo run -p mercurio-tools --bin audit_lowering -- [--constructs PATH] [--emission PATH] [--rules PATH|--no-rules] [--verbose-rules] [--write-rule-draft PATH] [--evidence PATH]"
+        "Usage: cargo run -p mercurio-tools --bin audit_lowering -- [--constructs PATH] [--emission PATH] [--rules PATH|--no-rules] [--verbose-rules] [--write-rule-draft PATH] [--min-reviewed-rules N] [--evidence PATH]"
     );
 }
 
