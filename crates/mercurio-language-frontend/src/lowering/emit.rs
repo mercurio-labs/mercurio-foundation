@@ -19,6 +19,7 @@ use crate::lowering::ir::{
     ResolvedDefinition, ResolvedExpr, ResolvedImport, ResolvedModule, ResolvedPackage,
     ResolvedPathSegment, ResolvedUsage,
 };
+use crate::lowering::rules::{LoweringRule, LoweringRuleSeed};
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Deserialize)]
 pub struct PilotConstructSeed {
@@ -108,6 +109,7 @@ pub struct MappingBundle {
     usage_semantic_specializations: HashMap<String, Vec<String>>,
     usage_semantic_specialization_overrides: HashMap<String, HashMap<String, Vec<String>>>,
     kir_emission: KirEmissionSeed,
+    lowering_rules: Option<LoweringRuleSeed>,
 }
 
 impl MappingBundle {
@@ -161,13 +163,22 @@ impl MappingBundle {
                 merge_emission_seeds(kerml_emission_seed(), sysml_emission)
             }
         };
+        let lowering_rules = match language {
+            SourceLanguage::Kerml => None,
+            SourceLanguage::Sysml => Some(
+                serde_json::from_str(load_lowering_rules_seed()).map_err(|err| {
+                    Diagnostic::new(format!("failed to parse lowering rule file: {err}"), None)
+                })?,
+            ),
+        };
 
-        Self::from_seeds(construct_seed, kir_emission)
+        Self::from_seeds(construct_seed, kir_emission, lowering_rules)
     }
 
     fn from_seeds(
         construct_seed: PilotConstructSeed,
         kir_emission: KirEmissionSeed,
+        lowering_rules: Option<LoweringRuleSeed>,
     ) -> Result<Self, Diagnostic> {
         Ok(Self {
             package_default_specializations: construct_seed
@@ -231,6 +242,7 @@ impl MappingBundle {
                 .map(|entry| (entry.construct, entry.metaclass))
                 .collect(),
             kir_emission,
+            lowering_rules,
         })
     }
 
@@ -256,6 +268,14 @@ impl MappingBundle {
             .metaclasses
             .get(metaclass)
             .ok_or_else(|| Diagnostic::new(format!("missing emission mapping `{metaclass}`"), None))
+    }
+
+    pub fn lowering_rule_for_construct(&self, construct: &str) -> Option<&LoweringRule> {
+        self.lowering_rules
+            .as_ref()?
+            .rules
+            .iter()
+            .find(|rule| rule.construct == construct)
     }
 
     pub fn definition_construct_for(&self, keyword: &str) -> String {
@@ -542,6 +562,12 @@ fn load_kir_emission_seed() -> Result<String, Diagnostic> {
     .to_string())
 }
 
+fn load_lowering_rules_seed() -> &'static str {
+    include_str!(
+        "../../../../resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/lowering_rules.seed.json"
+    )
+}
+
 fn pascal_case(value: &str) -> String {
     let mut chars = value.chars();
     match chars.next() {
@@ -774,6 +800,9 @@ fn transpile_package(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Package")?;
     let emission = mappings.emission_for(metaclass)?;
+    if let Some(rule) = mappings.lowering_rule_for_construct("Package") {
+        validate_rule_emission_compatibility(rule, metaclass, emission)?;
+    }
     let metatype_ref = mappings
         .default_specialization_for_package("Package")
         .or(Some(metaclass))
@@ -821,6 +850,43 @@ fn transpile_package(
         emission,
         context,
     )
+}
+
+fn validate_rule_emission_compatibility(
+    rule: &LoweringRule,
+    metaclass: &str,
+    emission: &EmissionRule,
+) -> Result<(), Diagnostic> {
+    if rule.metaclass != metaclass {
+        return Err(Diagnostic::new(
+            format!(
+                "lowering rule `{}` targets `{}` but active mapping uses `{metaclass}`",
+                rule.construct, rule.metaclass
+            ),
+            None,
+        ));
+    }
+    if rule.emit.id_template != emission.id_template {
+        return Err(Diagnostic::new(
+            format!(
+                "lowering rule `{}` id template `{}` does not match emission template `{}`",
+                rule.construct, rule.emit.id_template, emission.id_template
+            ),
+            None,
+        ));
+    }
+    for property in rule.emit.properties.keys() {
+        if !emission.emit.properties.contains_key(property) {
+            return Err(Diagnostic::new(
+                format!(
+                    "lowering rule `{}` emits property `{}` missing from active emission mapping `{metaclass}`",
+                    rule.construct, property
+                ),
+                None,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn transpile_import(

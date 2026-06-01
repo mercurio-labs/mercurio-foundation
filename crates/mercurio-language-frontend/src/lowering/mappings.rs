@@ -98,6 +98,19 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_expose_reviewed_package_lowering_rule() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let rule = profile
+            .mappings
+            .lowering_rule_for_construct("Package")
+            .expect("package lowering rule");
+
+        assert_eq!(rule.status.as_deref(), Some("reviewed"));
+        assert_eq!(rule.metaclass, "SysML::Package");
+        assert_eq!(rule.emit.id_template, "pkg.{qualified_name}");
+    }
+
+    #[test]
     fn kerml_profile_has_no_sysml_lowering_rules() {
         let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
 
