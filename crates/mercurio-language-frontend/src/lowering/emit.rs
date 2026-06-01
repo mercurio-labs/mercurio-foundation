@@ -2763,28 +2763,9 @@ fn usage_subsetted_feature_refs(
         return dedupe_refs(subsetted_feature_refs);
     }
 
-    if usage.construct == "PortUsage"
-        && matches!(
-            usage.owner_construct.as_str(),
-            "PortDefinition" | "PortUsage"
-        )
-    {
-        subsetted_feature_refs.extend(mappings.usage_subset_default(usage));
-        return dedupe_refs(subsetted_feature_refs);
-    }
-
-    if usage.construct == "PartUsage" && usage.owner_construct == "Package" {
-        subsetted_feature_refs.extend(mappings.usage_subset_default(usage));
-        return dedupe_refs(subsetted_feature_refs);
-    }
-
-    if usage.construct == "ItemUsage"
-        && matches!(
-            usage.owner_construct.as_str(),
-            "PartUsage" | "ItemDefinition"
-        )
-    {
-        subsetted_feature_refs.extend(mappings.usage_subset_default(usage));
+    let default_subset_refs = mappings.usage_subset_default(usage);
+    if !default_subset_refs.is_empty() {
+        subsetted_feature_refs.extend(default_subset_refs);
         return dedupe_refs(subsetted_feature_refs);
     }
 
