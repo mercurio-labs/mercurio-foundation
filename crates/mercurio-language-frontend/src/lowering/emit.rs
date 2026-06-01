@@ -800,7 +800,8 @@ fn transpile_package(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Package")?;
     let emission = mappings.emission_for(metaclass)?;
-    if let Some(rule) = mappings.lowering_rule_for_construct("Package") {
+    let lowering_rule = mappings.lowering_rule_for_construct("Package");
+    if let Some(rule) = lowering_rule {
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
     let metatype_ref = mappings
@@ -848,6 +849,7 @@ fn transpile_package(
         source_file,
         source_language,
         emission,
+        lowering_rule,
         context,
     )
 }
@@ -912,7 +914,8 @@ fn transpile_import(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Import")?;
     let emission = mappings.emission_for(metaclass)?;
-    if let Some(rule) = mappings.lowering_rule_for_construct("Import") {
+    let lowering_rule = mappings.lowering_rule_for_construct("Import");
+    if let Some(rule) = lowering_rule {
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
     let metatype_ref = Value::String(metaclass.to_string());
@@ -941,6 +944,7 @@ fn transpile_import(
         source_file,
         source_language,
         emission,
+        lowering_rule,
         context,
     )
 }
@@ -956,7 +960,8 @@ fn transpile_definition(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for(&definition.construct)?;
     let emission = mappings.emission_for(metaclass)?;
-    if let Some(rule) = mappings.lowering_rule_for_construct(&definition.construct) {
+    let lowering_rule = mappings.lowering_rule_for_construct(&definition.construct);
+    if let Some(rule) = lowering_rule {
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
     let specializes = semantic_specializations_for_definition(definition, mappings);
@@ -1008,6 +1013,7 @@ fn transpile_definition(
         source_file,
         source_language,
         emission,
+        lowering_rule,
         context,
     )
 }
@@ -1022,6 +1028,10 @@ fn transpile_conjugated_port_definition(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("ConjugatedPortDefinition")?;
     let emission = mappings.emission_for(metaclass)?;
+    let lowering_rule = mappings.lowering_rule_for_construct("ConjugatedPortDefinition");
+    if let Some(rule) = lowering_rule {
+        validate_rule_emission_compatibility(rule, metaclass, emission)?;
+    }
     let metatype_ref = mappings
         .default_specialization_for_definition("ConjugatedPortDefinition")
         .or(Some(metaclass))
@@ -1055,6 +1065,7 @@ fn transpile_conjugated_port_definition(
         source_file,
         source_language,
         emission,
+        lowering_rule,
         context,
     )
 }
@@ -1069,7 +1080,8 @@ fn transpile_usage(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for(&usage.construct)?;
     let emission = mappings.emission_for(metaclass)?;
-    if let Some(rule) = mappings.lowering_rule_for_construct(&usage.construct) {
+    let lowering_rule = mappings.lowering_rule_for_construct(&usage.construct);
+    if let Some(rule) = lowering_rule {
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
     let reference_semantics = reference_usage_semantics(usage);
@@ -1259,6 +1271,7 @@ fn transpile_usage(
         source_file,
         source_language,
         emission,
+        lowering_rule,
         context,
     )?;
     if let Some(expression) = &usage.expression {
@@ -1319,21 +1332,21 @@ fn build_element(
     source_file: &str,
     source_language: &str,
     emission: &EmissionRule,
+    lowering_rule: Option<&LoweringRule>,
     context: BTreeMap<String, Value>,
 ) -> Result<KirElement, Diagnostic> {
     let mut properties = BTreeMap::new();
-    for (key, template) in &emission.emit.properties {
-        if is_materialized_derived_property(key) {
-            continue;
+    if let Some(rule) = lowering_rule {
+        for (key, expression) in &rule.emit.properties {
+            insert_rendered_property(
+                &mut properties,
+                key,
+                render_rule_value(expression, &context),
+            );
         }
-        let value = render_value(template, &context)?;
-        match &value {
-            Value::Null => {}
-            Value::Array(values) if values.is_empty() => {}
-            Value::String(text) if text.is_empty() => {}
-            _ => {
-                properties.insert(key.clone(), value);
-            }
+    } else {
+        for (key, template) in &emission.emit.properties {
+            insert_rendered_property(&mut properties, key, render_value(template, &context)?);
         }
     }
 
@@ -1374,6 +1387,27 @@ fn build_element(
         layer: 2,
         properties,
     })
+}
+
+fn insert_rendered_property(properties: &mut BTreeMap<String, Value>, key: &str, value: Value) {
+    if is_materialized_derived_property(key) {
+        return;
+    }
+    match &value {
+        Value::Null => {}
+        Value::Array(values) if values.is_empty() => {}
+        Value::String(text) if text.is_empty() => {}
+        _ => {
+            properties.insert(key.to_string(), value);
+        }
+    }
+}
+
+fn render_rule_value(expression: &str, context: &BTreeMap<String, Value>) -> Value {
+    if let Some(key) = expression.strip_prefix('$') {
+        return context.get(key).cloned().unwrap_or(Value::Null);
+    }
+    Value::String(expression.to_string())
 }
 
 fn is_materialized_derived_property(key: &str) -> bool {
