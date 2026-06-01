@@ -72,6 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rule_property_gaps = lowering_rule_property_gaps(lowering_rules, &emission_properties);
         let emission_property_gaps =
             emission_property_gaps(lowering_rules, &emission_properties, &construct_metaclasses);
+        let elaboration_rule_count = lowering_elaboration_rule_count(lowering_rules);
+        let unimplemented_elaboration_rules = unimplemented_elaboration_rules(lowering_rules);
 
         println!();
         println!("Declarative lowering rules");
@@ -103,6 +105,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  emission properties missing declarative rule properties: {}",
             emission_property_gaps.len()
+        );
+        println!("  elaboration rules: {elaboration_rule_count}");
+        println!(
+            "  elaboration rules without runtime hook: {}",
+            unimplemented_elaboration_rules.len()
         );
 
         if !rules_missing_construct.is_empty() {
@@ -145,6 +152,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Emission properties missing declarative rule properties:");
             for gap in &emission_property_gaps {
                 println!("  {}.{}", gap.metaclass, gap.property);
+            }
+        }
+
+        if !unimplemented_elaboration_rules.is_empty() {
+            println!();
+            println!("Elaboration rules without runtime hook:");
+            for gap in &unimplemented_elaboration_rules {
+                println!("  {}: {}", gap.construct, gap.rule_id);
             }
         }
 
@@ -708,6 +723,44 @@ fn lowering_rule_status_counts(document: &LoweringRuleSeed) -> BTreeMap<String, 
 struct RulePropertyGap {
     metaclass: String,
     property: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ElaborationHookGap {
+    construct: String,
+    rule_id: String,
+}
+
+fn lowering_elaboration_rule_count(rules: &LoweringRuleSeed) -> usize {
+    rules.rules.iter().map(|rule| rule.elaborate.len()).sum()
+}
+
+fn unimplemented_elaboration_rules(rules: &LoweringRuleSeed) -> Vec<ElaborationHookGap> {
+    let mut gaps = Vec::new();
+    for rule in &rules.rules {
+        for step in &rule.elaborate {
+            if !has_runtime_elaboration_hook(&step.id) {
+                gaps.push(ElaborationHookGap {
+                    construct: rule.construct.clone(),
+                    rule_id: step.id.clone(),
+                });
+            }
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
+fn has_runtime_elaboration_hook(rule_id: &str) -> bool {
+    matches!(
+        rule_id,
+        "comment-annotation-target"
+            | "conjugated-port-definition-name"
+            | "connection-end-direction"
+            | "implicit-ref-redefines-target"
+            | "satisfy-name-as-reference-target"
+            | "verify-name-as-reference-target"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
