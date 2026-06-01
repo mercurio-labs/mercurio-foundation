@@ -73,6 +73,37 @@ fn validate_lowering_rules_against_mappings(
                 ));
             }
         }
+        match rule.collect.element.as_str() {
+            "definition" => {
+                if let Some(keyword) = rule.ast.keyword.as_deref()
+                    && rule.ast.node == "GenericDefinitionDecl"
+                    && mappings.definition_construct_for(keyword) != rule.construct
+                {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "lowering rule `{}` definition keyword `{}` does not resolve to its construct",
+                            rule.construct, keyword
+                        ),
+                        None,
+                    ));
+                }
+            }
+            "usage" => {
+                if let Some(keyword) = rule.ast.keyword.as_deref()
+                    && rule.ast.node == "GenericUsageDecl"
+                    && mappings.usage_construct_for(keyword) != rule.construct
+                {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "lowering rule `{}` usage keyword `{}` does not resolve to its construct",
+                            rule.construct, keyword
+                        ),
+                        None,
+                    ));
+                }
+            }
+            _ => {}
+        }
         let emission = mappings.emission_for(&rule.metaclass)?;
         if rule.emit.id_template != emission.id_template {
             return Err(Diagnostic::new(
@@ -196,6 +227,20 @@ mod tests {
         assert_eq!(
             rule.emit.id_template,
             "feature.{owner_path}.{declared_name}"
+        );
+    }
+
+    #[test]
+    fn sysml_mappings_use_lowering_rules_for_generic_ast_keywords() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+
+        assert_eq!(
+            profile.mappings.definition_construct_for("connection"),
+            "ConnectionDefinition"
+        );
+        assert_eq!(
+            profile.mappings.usage_construct_for("satisfy"),
+            "SatisfyUsage"
         );
     }
 

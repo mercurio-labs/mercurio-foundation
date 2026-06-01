@@ -278,7 +278,18 @@ impl MappingBundle {
             .find(|rule| rule.construct == construct)
     }
 
+    pub fn lowering_rule_for_ast(&self, node: &str, keyword: &str) -> Option<&LoweringRule> {
+        self.lowering_rules
+            .as_ref()?
+            .rules
+            .iter()
+            .find(|rule| rule.ast.node == node && rule.ast.keyword.as_deref() == Some(keyword))
+    }
+
     pub fn definition_construct_for(&self, keyword: &str) -> String {
+        if let Some(rule) = self.lowering_rule_for_ast("GenericDefinitionDecl", keyword) {
+            return rule.construct.clone();
+        }
         self.definition_keyword_constructs
             .get(keyword)
             .cloned()
@@ -286,6 +297,9 @@ impl MappingBundle {
     }
 
     pub fn usage_construct_for(&self, keyword: &str) -> String {
+        if let Some(rule) = self.lowering_rule_for_ast("GenericUsageDecl", keyword) {
+            return rule.construct.clone();
+        }
         self.usage_keyword_constructs
             .get(keyword)
             .cloned()
