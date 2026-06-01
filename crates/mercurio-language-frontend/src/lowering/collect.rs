@@ -229,13 +229,13 @@ fn collect_declarations(
             }
             Declaration::PartUsage(usage) => {
                 let owner = owner_package_qualified_name.unwrap_or("root");
-                usages.push(collect_part_usage(usage, owner, "Package", mappings));
+                usages.push(collect_part_usage(usage, owner, "Package", mappings)?);
                 let qualified_name = usage_qualified_name(owner, &usage.name);
                 collect_nested_member_imports(&usage.body_members, &qualified_name, imports);
             }
             Declaration::GenericUsage(usage) => {
                 let owner = owner_package_qualified_name.unwrap_or("root");
-                usages.push(collect_generic_usage(usage, owner, "Package", mappings));
+                usages.push(collect_generic_usage(usage, owner, "Package", mappings)?);
                 let qualified_name = usage_qualified_name(owner, &usage.name);
                 collect_nested_member_imports(&usage.body_members, &qualified_name, imports);
             }
@@ -401,25 +401,12 @@ fn collect_part_definition(
     mappings: &MappingBundle,
 ) -> Result<CollectedDefinition, Diagnostic> {
     let qualified_name = qualify_name(owner_package_segments, &definition.name);
-    let members = definition
-        .members
-        .iter()
-        .filter_map(|member| match member {
-            Declaration::PartUsage(usage) => Some(collect_part_usage(
-                usage,
-                &qualified_name,
-                "PartDefinition",
-                mappings,
-            )),
-            Declaration::GenericUsage(usage) => Some(collect_generic_usage(
-                usage,
-                &qualified_name,
-                "PartDefinition",
-                mappings,
-            )),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let members = collect_usage_members(
+        &definition.members,
+        &qualified_name,
+        "PartDefinition",
+        mappings,
+    )?;
     let specializes = definition_specializations_with_default(
         "PartDefinition",
         &definition.specializes,
@@ -496,7 +483,7 @@ fn collect_generic_definition_plan(
             &definition.specializes,
             mappings,
         ),
-        members: collect_usage_members(&definition.members, qualified_name, construct, mappings),
+        members: collect_usage_members(&definition.members, qualified_name, construct, mappings)?,
         docs: definition.docs.clone(),
     };
 
@@ -523,8 +510,12 @@ fn collect_generic_definition_plan(
                 plan.specializes = definition.specializes.clone();
             }
             ("members", "$ast.members[usage]") | ("end_members", "$ast.members[modifier=end]") => {
-                plan.members =
-                    collect_usage_members(&definition.members, qualified_name, construct, mappings);
+                plan.members = collect_usage_members(
+                    &definition.members,
+                    qualified_name,
+                    construct,
+                    mappings,
+                )?;
             }
             ("docs", "$ast.docs") => {
                 plan.docs = definition.docs.clone();
@@ -568,28 +559,11 @@ fn collect_part_usage(
     owner_qualified_name: &str,
     owner_construct: &str,
     mappings: &MappingBundle,
-) -> CollectedUsage {
+) -> Result<CollectedUsage, Diagnostic> {
     let qualified_name = usage_qualified_name(owner_qualified_name, &usage.name);
-    let members = usage
-        .body_members
-        .iter()
-        .filter_map(|member| match member {
-            Declaration::PartUsage(usage) => Some(collect_part_usage(
-                usage,
-                &qualified_name,
-                "PartUsage",
-                mappings,
-            )),
-            Declaration::GenericUsage(usage) => Some(collect_generic_usage(
-                usage,
-                &qualified_name,
-                "PartUsage",
-                mappings,
-            )),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    CollectedUsage {
+    let members =
+        collect_usage_members(&usage.body_members, &qualified_name, "PartUsage", mappings)?;
+    Ok(CollectedUsage {
         construct: "PartUsage".to_string(),
         owner_construct: owner_construct.to_string(),
         owner_qualified_name: owner_qualified_name.to_string(),
@@ -611,7 +585,7 @@ fn collect_part_usage(
         modifiers: usage.modifiers.clone(),
         docs: usage.docs.clone(),
         span: usage.span.clone(),
-    }
+    })
 }
 
 fn collect_generic_usage(
@@ -619,7 +593,7 @@ fn collect_generic_usage(
     owner_qualified_name: &str,
     owner_construct: &str,
     mappings: &MappingBundle,
-) -> CollectedUsage {
+) -> Result<CollectedUsage, Diagnostic> {
     let construct = mappings.usage_construct_for(&usage.keyword);
     let qualified_name = usage_qualified_name(owner_qualified_name, &usage.name);
     let plan = collect_generic_usage_plan(
@@ -628,9 +602,8 @@ fn collect_generic_usage(
         &qualified_name,
         &construct,
         mappings,
-    )
-    .unwrap_or_else(|_| generic_usage_plan_from_ast(usage, &qualified_name, &construct, mappings));
-    CollectedUsage {
+    )?;
+    Ok(CollectedUsage {
         construct,
         owner_construct: owner_construct.to_string(),
         owner_qualified_name: owner_qualified_name.to_string(),
@@ -652,7 +625,7 @@ fn collect_generic_usage(
         modifiers: plan.modifiers,
         docs: plan.docs,
         span: usage.span.clone(),
-    }
+    })
 }
 
 struct GenericUsageCollectPlan {
@@ -676,8 +649,8 @@ fn generic_usage_plan_from_ast(
     qualified_name: &str,
     construct: &str,
     mappings: &MappingBundle,
-) -> GenericUsageCollectPlan {
-    GenericUsageCollectPlan {
+) -> Result<GenericUsageCollectPlan, Diagnostic> {
+    Ok(GenericUsageCollectPlan {
         declared_name: usage.name.clone(),
         ty: usage.ty.clone(),
         reference_target: usage.reference_target.clone(),
@@ -688,10 +661,10 @@ fn generic_usage_plan_from_ast(
         specializes: usage.specializes.clone(),
         subsets: usage.subsets.clone(),
         redefines: usage.redefines.clone(),
-        members: collect_usage_members(&usage.body_members, qualified_name, construct, mappings),
+        members: collect_usage_members(&usage.body_members, qualified_name, construct, mappings)?,
         modifiers: usage.modifiers.clone(),
         docs: usage.docs.clone(),
-    }
+    })
 }
 
 fn collect_generic_usage_plan(
@@ -701,7 +674,7 @@ fn collect_generic_usage_plan(
     construct: &str,
     mappings: &MappingBundle,
 ) -> Result<GenericUsageCollectPlan, Diagnostic> {
-    let mut plan = generic_usage_plan_from_ast(usage, qualified_name, construct, mappings);
+    let mut plan = generic_usage_plan_from_ast(usage, qualified_name, construct, mappings)?;
     let Some(rule) = rule else {
         return Ok(plan);
     };
@@ -725,8 +698,12 @@ fn collect_generic_usage_plan(
                 plan.docs = usage.docs.clone();
             }
             ("members", "$ast.body_members[usage]") => {
-                plan.members =
-                    collect_usage_members(&usage.body_members, qualified_name, construct, mappings);
+                plan.members = collect_usage_members(
+                    &usage.body_members,
+                    qualified_name,
+                    construct,
+                    mappings,
+                )?;
             }
             ("modifiers", "$ast.modifiers + end") => {
                 plan.modifiers = usage.modifiers.clone();
@@ -769,25 +746,30 @@ fn collect_usage_members(
     qualified_name: &str,
     construct: &str,
     mappings: &MappingBundle,
-) -> Vec<CollectedUsage> {
-    declarations
-        .iter()
-        .filter_map(|member| match member {
-            Declaration::PartUsage(usage) => Some(collect_part_usage(
-                usage,
-                qualified_name,
-                construct,
-                mappings,
-            )),
-            Declaration::GenericUsage(usage) => Some(collect_generic_usage(
-                usage,
-                qualified_name,
-                construct,
-                mappings,
-            )),
-            _ => None,
-        })
-        .collect()
+) -> Result<Vec<CollectedUsage>, Diagnostic> {
+    let mut usages = Vec::new();
+    for member in declarations {
+        match member {
+            Declaration::PartUsage(usage) => {
+                usages.push(collect_part_usage(
+                    usage,
+                    qualified_name,
+                    construct,
+                    mappings,
+                )?);
+            }
+            Declaration::GenericUsage(usage) => {
+                usages.push(collect_generic_usage(
+                    usage,
+                    qualified_name,
+                    construct,
+                    mappings,
+                )?);
+            }
+            _ => {}
+        }
+    }
+    Ok(usages)
 }
 
 fn require_collect_expression(
