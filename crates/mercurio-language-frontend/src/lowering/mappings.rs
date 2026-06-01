@@ -323,6 +323,24 @@ mod tests {
     }
 
     #[test]
+    fn sysml_mappings_load_usage_context_defaults() {
+        let profile = LanguageProfile::load_for_profile("sysml-2.0-pilot-0.57.0").unwrap();
+        let package_usage = test_usage("PartUsage", "Package");
+        let nested_usage = test_usage("PartUsage", "PartDefinition");
+        let connection_usage = test_usage("ConnectionUsage", "Package");
+
+        assert!(!profile.mappings.usage_is_variable(&package_usage));
+        assert!(!profile.mappings.usage_has_type_context(&package_usage));
+        assert!(profile.mappings.usage_is_variable(&nested_usage));
+        assert!(profile.mappings.usage_has_type_context(&nested_usage));
+        assert!(
+            !profile
+                .mappings
+                .usage_counts_as_owned_member(&connection_usage)
+        );
+    }
+
+    #[test]
     fn kerml_profile_has_no_sysml_lowering_rules() {
         let profile = LanguageProfile::load(SourceLanguage::Kerml).unwrap();
 

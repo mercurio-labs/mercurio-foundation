@@ -204,6 +204,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(semantic_defaults) = &semantic_defaults {
         let reference_usage_modifier_rules =
             semantic_default_reference_usage_modifier_rules(semantic_defaults);
+        let usage_context_construct_refs =
+            semantic_default_usage_context_construct_refs(semantic_defaults);
         let usage_type_defaults = semantic_default_usage_type_defaults(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
@@ -221,12 +223,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>();
         let unknown_owner_overrides =
             semantic_default_owner_override_gaps(semantic_defaults, &construct_names);
+        let unknown_usage_context_refs = usage_context_construct_refs
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
 
         println!();
         println!("Semantic defaults");
         println!(
             "  reference usage modifier rules: {}",
             reference_usage_modifier_rules
+        );
+        println!(
+            "  usage context construct refs: {}",
+            usage_context_construct_refs.len()
+        );
+        println!(
+            "  usage context refs without construct mappings: {}",
+            unknown_usage_context_refs.len()
         );
         println!("  usage type defaults: {}", usage_type_defaults.len());
         println!(
@@ -268,6 +282,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("Usage subset defaults without construct mappings:");
             for construct in &unknown_usage_subset_defaults {
+                println!("  {construct}");
+            }
+        }
+
+        if !unknown_usage_context_refs.is_empty() {
+            println!();
+            println!("Usage context refs without construct mappings:");
+            for construct in &unknown_usage_context_refs {
                 println!("  {construct}");
             }
         }
@@ -1032,6 +1054,29 @@ fn semantic_default_reference_usage_modifier_rules(document: &Value) -> usize {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default()
+}
+
+fn semantic_default_usage_context_construct_refs(document: &Value) -> BTreeSet<String> {
+    let mut refs = BTreeSet::new();
+    let Some(context) = document.get("usage_context").and_then(Value::as_object) else {
+        return refs;
+    };
+    for key in [
+        "non_variable_owner_constructs",
+        "no_type_context_owner_constructs",
+        "non_owned_member_constructs",
+    ] {
+        refs.extend(
+            context
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string),
+        );
+    }
+    refs
 }
 
 fn semantic_default_usage_type_defaults(document: &Value) -> BTreeSet<String> {

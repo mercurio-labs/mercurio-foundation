@@ -86,11 +86,23 @@ pub struct SemanticDefaultsSeed {
     #[serde(default)]
     pub reference_usage_semantics: ReferenceUsageSemanticsSeed,
     #[serde(default)]
+    pub usage_context: UsageContextDefaultSeed,
+    #[serde(default)]
     pub usage_type_defaults: BTreeMap<String, UsageTypeDefaultSeed>,
     #[serde(default)]
     pub usage_subset_defaults: BTreeMap<String, UsageSubsetDefaultSeed>,
     #[serde(default)]
     pub usage_family_defaults: BTreeMap<String, UsageFamilyDefaultSeed>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageContextDefaultSeed {
+    #[serde(default)]
+    pub non_variable_owner_constructs: Vec<String>,
+    #[serde(default)]
+    pub no_type_context_owner_constructs: Vec<String>,
+    #[serde(default)]
+    pub non_owned_member_constructs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -594,6 +606,33 @@ impl MappingBundle {
                 })
     }
 
+    pub(crate) fn usage_is_variable(&self, usage: &ResolvedUsage) -> bool {
+        !self
+            .semantic_defaults
+            .usage_context
+            .non_variable_owner_constructs
+            .iter()
+            .any(|owner| owner == &usage.owner_construct)
+    }
+
+    pub(crate) fn usage_counts_as_owned_member(&self, usage: &ResolvedUsage) -> bool {
+        !self
+            .semantic_defaults
+            .usage_context
+            .non_owned_member_constructs
+            .iter()
+            .any(|construct| construct == &usage.construct)
+    }
+
+    pub(crate) fn usage_has_type_context(&self, usage: &ResolvedUsage) -> bool {
+        !self
+            .semantic_defaults
+            .usage_context
+            .no_type_context_owner_constructs
+            .iter()
+            .any(|owner| owner == &usage.owner_construct)
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -1024,8 +1063,13 @@ pub fn transpile_module_with_source(
             render_usage_id(usage, &owner_id, mappings).map(|id| (usage.qualified_name.clone(), id))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
-    let package_member_ids =
-        build_package_member_ids(module, &package_ids, &definition_ids, &top_level_usage_ids);
+    let package_member_ids = build_package_member_ids(
+        module,
+        &package_ids,
+        &definition_ids,
+        &top_level_usage_ids,
+        mappings,
+    );
 
     for package in &module.packages {
         let package_id = package_ids
@@ -1538,7 +1582,7 @@ fn transpile_usage(
         ),
         (
             "featuring_type_ref".to_string(),
-            usage_featuring_type_ref(usage, owner_id)
+            usage_featuring_type_ref(usage, owner_id, mappings)
                 .map(Value::String)
                 .unwrap_or(Value::Null),
         ),
@@ -1655,7 +1699,7 @@ fn transpile_usage(
         ),
         (
             "is_variable".to_string(),
-            Value::Bool(usage_is_variable(usage)),
+            Value::Bool(mappings.usage_is_variable(usage)),
         ),
         ("metatype_ref".to_string(), metatype_ref),
         ("start_line".to_string(), json!(usage.span.start_line)),
@@ -1941,7 +1985,7 @@ fn render_owned_usage_tree_ids(
     };
     let mut ids = Vec::new();
     for (usage, usage_id) in usages.iter().zip(rendered_ids) {
-        if usage_counts_as_owned_member(usage) {
+        if mappings.usage_counts_as_owned_member(usage) {
             ids.push(usage_id);
         }
     }
@@ -2075,10 +2119,7 @@ fn enrich_usage_semantics(
         append_unique_property_ref(&mut element.properties, "definition", "Parts::Part");
     }
 
-    if !matches!(
-        usage.owner_construct.as_str(),
-        "EnumerationDefinition" | "Package"
-    ) {
+    if mappings.usage_has_type_context(usage) {
         if !element.properties.contains_key("featuring_type") {
             element.properties.insert(
                 "featuring_type".to_string(),
@@ -2422,6 +2463,7 @@ fn build_package_member_ids(
     package_ids: &BTreeMap<String, String>,
     definition_ids: &BTreeMap<String, String>,
     usage_ids: &BTreeMap<String, String>,
+    mappings: &MappingBundle,
 ) -> BTreeMap<String, Vec<String>> {
     module
         .packages
@@ -2444,7 +2486,7 @@ fn build_package_member_ids(
             let child_usages = module
                 .usages
                 .iter()
-                .filter(|candidate| usage_counts_as_owned_member(candidate))
+                .filter(|candidate| mappings.usage_counts_as_owned_member(candidate))
                 .filter(|candidate| {
                     is_direct_child(&candidate.qualified_name, &package.qualified_name)
                 })
@@ -2598,13 +2640,6 @@ fn materialized_usage_specialization_refs(
     specialization_refs.to_vec()
 }
 
-fn usage_is_variable(usage: &ResolvedUsage) -> bool {
-    !matches!(
-        usage.owner_construct.as_str(),
-        "AttributeDefinition" | "EnumerationDefinition" | "Package"
-    )
-}
-
 fn usage_is_end(usage: &ResolvedUsage) -> bool {
     usage
         .modifiers
@@ -2612,16 +2647,14 @@ fn usage_is_end(usage: &ResolvedUsage) -> bool {
         .any(|modifier| modifier == "end" || modifier.starts_with("end-"))
 }
 
-fn usage_counts_as_owned_member(usage: &ResolvedUsage) -> bool {
-    usage.construct != "ConnectionUsage"
-}
-
-fn usage_featuring_type_ref(usage: &ResolvedUsage, owner_id: &str) -> Option<String> {
-    (!matches!(
-        usage.owner_construct.as_str(),
-        "EnumerationDefinition" | "Package"
-    ))
-    .then(|| owner_id.to_string())
+fn usage_featuring_type_ref(
+    usage: &ResolvedUsage,
+    owner_id: &str,
+    mappings: &MappingBundle,
+) -> Option<String> {
+    mappings
+        .usage_has_type_context(usage)
+        .then(|| owner_id.to_string())
 }
 
 fn usage_direction<'a>(

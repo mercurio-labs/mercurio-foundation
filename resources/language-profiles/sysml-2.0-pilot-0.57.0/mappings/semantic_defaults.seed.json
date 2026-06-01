@@ -61,6 +61,20 @@
       ]
     }
   },
+  "usage_context": {
+    "non_variable_owner_constructs": [
+      "AttributeDefinition",
+      "EnumerationDefinition",
+      "Package"
+    ],
+    "no_type_context_owner_constructs": [
+      "EnumerationDefinition",
+      "Package"
+    ],
+    "non_owned_member_constructs": [
+      "ConnectionUsage"
+    ]
+  },
   "usage_type_defaults": {
     "AttributeUsage": {
       "type_ref": "Base::DataValue"
