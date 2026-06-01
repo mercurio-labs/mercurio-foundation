@@ -9,6 +9,7 @@ use mercurio_language_contracts::ast::{
 };
 use mercurio_language_contracts::diagnostics::Diagnostic;
 
+use crate::lowering::elaborate::should_annotate_connection_end_direction;
 use crate::lowering::emit::MappingBundle;
 use crate::lowering::ir::ResolvedPackage;
 
@@ -465,7 +466,7 @@ fn collect_generic_definition(
             _ => None,
         })
         .collect::<Vec<_>>();
-    annotate_connection_definition_members(&construct, &mut members);
+    annotate_connection_definition_members(&construct, &mut members, mappings);
     let specializes =
         definition_specializations_with_default(&construct, &definition.specializes, mappings);
 
@@ -618,8 +619,9 @@ fn collect_generic_usage(
 fn annotate_connection_definition_members(
     definition_construct: &str,
     members: &mut [CollectedUsage],
+    mappings: &MappingBundle,
 ) {
-    if definition_construct != "ConnectionDefinition" {
+    if !should_annotate_connection_end_direction(mappings, definition_construct) {
         return;
     }
 

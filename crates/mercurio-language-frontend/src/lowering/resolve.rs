@@ -12,6 +12,9 @@ use crate::lowering::collect::{
     CollectedDefinition, CollectedImport, CollectedUsage, ImportAliases, collect_module,
     collect_modules,
 };
+use crate::lowering::elaborate::{
+    shorthand_reference_target, should_use_implicit_reference_redefinition_target,
+};
 use crate::lowering::emit::MappingBundle;
 use crate::lowering::imports::build_import_alias_map;
 use crate::lowering::indexes::{
@@ -277,6 +280,7 @@ fn resolve_module_with_policy_context(
                 &context.definition_index,
                 &context.local_feature_index,
                 &context.local_usage_map,
+                mappings,
                 policy,
             )
         })
@@ -303,6 +307,7 @@ fn resolve_module_with_policy_context(
                 &context.definition_index,
                 &context.local_feature_index,
                 &context.local_usage_map,
+                mappings,
                 policy,
             )
         })
@@ -376,6 +381,7 @@ fn resolve_definition(
     definition_index: &BTreeMap<String, CollectedDefinition>,
     local_feature_index: &BTreeMap<String, BTreeMap<String, String>>,
     local_usage_map: &BTreeMap<String, CollectedUsage>,
+    mappings: &MappingBundle,
     policy: ResolvePolicy,
 ) -> Result<ResolvedDefinition, Diagnostic> {
     let specializes = definition
@@ -413,6 +419,7 @@ fn resolve_definition(
                 definition_index,
                 local_feature_index,
                 local_usage_map,
+                mappings,
                 policy,
             )
         })
@@ -441,28 +448,17 @@ fn resolve_usage(
     definition_index: &BTreeMap<String, CollectedDefinition>,
     local_feature_index: &BTreeMap<String, BTreeMap<String, String>>,
     local_usage_map: &BTreeMap<String, CollectedUsage>,
+    mappings: &MappingBundle,
     policy: ResolvePolicy,
 ) -> Result<ResolvedUsage, Diagnostic> {
     let mut effective_reference_target = usage.reference_target.clone();
     let mut effective_redefines = usage.redefines.clone();
-    if usage.construct == "ReferenceUsage"
-        && usage.is_implicit_name
-        && usage.declared_name == "ref"
-        && usage.ty.is_none()
-        && effective_reference_target.is_none()
-        && effective_redefines.len() == 1
-    {
+    if should_use_implicit_reference_redefinition_target(mappings, &usage) {
         effective_reference_target = effective_redefines.first().cloned();
         effective_redefines.clear();
     }
-    if matches!(usage.construct.as_str(), "SatisfyUsage" | "VerifyUsage")
-        && effective_reference_target.is_none()
-        && !usage.declared_name.is_empty()
-    {
-        effective_reference_target = Some(QualifiedName {
-            segments: vec![usage.declared_name.clone()],
-            span: usage.span.clone(),
-        });
+    if effective_reference_target.is_none() {
+        effective_reference_target = shorthand_reference_target(mappings, &usage);
     }
     let expression = usage
         .expression
@@ -822,6 +818,7 @@ fn resolve_usage(
                 definition_index,
                 local_feature_index,
                 local_usage_map,
+                mappings,
                 policy,
             )
         })
