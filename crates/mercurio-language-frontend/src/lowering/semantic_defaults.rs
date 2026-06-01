@@ -43,9 +43,13 @@ pub struct UsageContextDefaultSeed {
 pub struct UsagePropertyDefaultSeed {
     pub owner_construct: Option<String>,
     #[serde(default)]
+    pub present_modifiers: Vec<String>,
+    #[serde(default)]
     pub absent_modifiers: Vec<String>,
     #[serde(default)]
     pub property_refs: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub property_values: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

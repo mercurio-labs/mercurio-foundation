@@ -933,9 +933,13 @@ fn usage_property_default_applies(
         return false;
     }
     default
-        .absent_modifiers
+        .present_modifiers
         .iter()
-        .all(|absent| !usage.modifiers.iter().any(|modifier| modifier == absent))
+        .all(|present| usage.modifiers.iter().any(|modifier| modifier == present))
+        && default
+            .absent_modifiers
+            .iter()
+            .all(|absent| !usage.modifiers.iter().any(|modifier| modifier == absent))
 }
 
 fn all_data_value_like_refs(type_refs: &[String]) -> bool {
@@ -1994,12 +1998,6 @@ fn enrich_usage_semantics(
             .properties
             .insert("is_variable".to_string(), Value::Bool(defaults.is_variable));
     }
-    if usage.construct == "StateUsage" && usage.owner_construct == "StateUsage" {
-        element.properties.insert(
-            "parent_state".to_string(),
-            Value::String(owner_id.to_string()),
-        );
-    }
     if usage.construct == "AcceptActionUsage" {
         element
             .properties
@@ -2041,20 +2039,7 @@ fn enrich_usage_semantics(
                 .insert("target".to_string(), Value::String(target.clone()));
         }
     }
-    if usage.construct == "SuccessionUsage"
-        && usage.modifiers.iter().any(|modifier| modifier == "then")
-    {
-        element.properties.insert(
-            "target".to_string(),
-            Value::String(format!("state.{}", usage.qualified_name)),
-        );
-        element.properties.insert(
-            "trigger_kind".to_string(),
-            Value::String("completion".to_string()),
-        );
-    }
-
-    apply_usage_property_defaults(element, usage, mappings);
+    apply_usage_property_defaults(element, usage, owner_id, mappings);
     if !element.properties.contains_key("definition")
         && let Some(type_ref) = element.properties.get("type").cloned()
     {
@@ -2090,6 +2075,7 @@ fn enrich_usage_semantics(
 fn apply_usage_property_defaults(
     element: &mut KirElement,
     usage: &ResolvedUsage,
+    owner_id: &str,
     mappings: &MappingBundle,
 ) {
     for default in mappings.usage_property_defaults(usage) {
@@ -2098,7 +2084,24 @@ fn apply_usage_property_defaults(
                 append_unique_property_ref(&mut element.properties, property, value);
             }
         }
+        for (property, value) in &default.property_values {
+            element.properties.insert(
+                property.clone(),
+                Value::String(resolve_usage_property_default_value(value, usage, owner_id)),
+            );
+        }
     }
+}
+
+fn resolve_usage_property_default_value(
+    value: &str,
+    usage: &ResolvedUsage,
+    owner_id: &str,
+) -> String {
+    value
+        .replace("$owner_id", owner_id)
+        .replace("$qualified_name", &usage.qualified_name)
+        .replace("$declared_name", &usage.declared_name)
 }
 
 fn enrich_trace_relationship_semantics(
@@ -3163,5 +3166,102 @@ mod lowering_golden_tests {
 
         assert_eq!(usage.properties["type"], "Parts::Part");
         assert_eq!(usage.properties["definition"], "Parts::Part");
+    }
+
+    #[test]
+    fn usage_property_values_are_profile_backed_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let child_state = ResolvedUsage {
+            construct: "StateUsage".to_string(),
+            owner_construct: "StateUsage".to_string(),
+            owner_qualified_name: "root.parent".to_string(),
+            qualified_name: "root.parent.child".to_string(),
+            declared_name: "child".to_string(),
+            is_implicit_name: false,
+            has_explicit_type: false,
+            type_ref: None,
+            additional_type_refs: Vec::new(),
+            reference_target: None,
+            allocation_source: None,
+            allocation_target: None,
+            metadata_properties: BTreeMap::new(),
+            multiplicity: None,
+            expression: None,
+            is_derived: false,
+            specializes: Vec::new(),
+            specialized_features: Vec::new(),
+            subsetted_features: Vec::new(),
+            redefined_features: Vec::new(),
+            members: Vec::new(),
+            modifiers: Vec::new(),
+            docs: Vec::new(),
+            span: span(2),
+        };
+        let parent_state = ResolvedUsage {
+            construct: "StateUsage".to_string(),
+            owner_construct: "Package".to_string(),
+            owner_qualified_name: "root".to_string(),
+            qualified_name: "root.parent".to_string(),
+            declared_name: "parent".to_string(),
+            is_implicit_name: false,
+            has_explicit_type: false,
+            type_ref: None,
+            additional_type_refs: Vec::new(),
+            reference_target: None,
+            allocation_source: None,
+            allocation_target: None,
+            metadata_properties: BTreeMap::new(),
+            multiplicity: None,
+            expression: None,
+            is_derived: false,
+            specializes: Vec::new(),
+            specialized_features: Vec::new(),
+            subsetted_features: Vec::new(),
+            redefined_features: Vec::new(),
+            members: vec![child_state],
+            modifiers: Vec::new(),
+            docs: Vec::new(),
+            span: span(1),
+        };
+        let succession = ResolvedUsage {
+            construct: "SuccessionUsage".to_string(),
+            owner_construct: "Package".to_string(),
+            owner_qualified_name: "root".to_string(),
+            qualified_name: "root.next".to_string(),
+            declared_name: "next".to_string(),
+            is_implicit_name: false,
+            has_explicit_type: false,
+            type_ref: None,
+            additional_type_refs: Vec::new(),
+            reference_target: None,
+            allocation_source: None,
+            allocation_target: None,
+            metadata_properties: BTreeMap::new(),
+            multiplicity: None,
+            expression: None,
+            is_derived: false,
+            specializes: Vec::new(),
+            specialized_features: Vec::new(),
+            subsetted_features: Vec::new(),
+            redefined_features: Vec::new(),
+            members: Vec::new(),
+            modifiers: vec!["then".to_string()],
+            docs: Vec::new(),
+            span: span(3),
+        };
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![parent_state, succession],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let child = element(&document, "state.root.parent.child");
+        let succession = element(&document, "succession.root.next.3_1");
+
+        assert_eq!(child.properties["parent_state"], "state.root.parent");
+        assert_eq!(succession.properties["target"], "state.root.next");
+        assert_eq!(succession.properties["trigger_kind"], "completion");
     }
 }

@@ -117,6 +117,25 @@
           ]
         }
       }
+    ],
+    "StateUsage": [
+      {
+        "owner_construct": "StateUsage",
+        "property_values": {
+          "parent_state": "$owner_id"
+        }
+      }
+    ],
+    "SuccessionUsage": [
+      {
+        "present_modifiers": [
+          "then"
+        ],
+        "property_values": {
+          "target": "state.$qualified_name",
+          "trigger_kind": "completion"
+        }
+      }
     ]
   },
   "usage_subset_defaults": {
