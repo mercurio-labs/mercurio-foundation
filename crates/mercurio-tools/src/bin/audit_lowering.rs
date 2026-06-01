@@ -212,6 +212,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let usage_property_defaults = semantic_default_usage_property_defaults(semantic_defaults);
         let usage_property_default_rule_count =
             semantic_default_usage_property_default_rule_count(semantic_defaults);
+        let usage_action_defaults = semantic_default_usage_actions(semantic_defaults);
+        let usage_action_rule_count = semantic_default_usage_action_rule_count(semantic_defaults);
+        let unsupported_usage_actions =
+            unsupported_semantic_default_usage_actions(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
@@ -219,6 +223,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .cloned()
             .collect::<Vec<_>>();
         let unknown_usage_property_defaults = usage_property_defaults
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_usage_action_defaults = usage_action_defaults
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
@@ -278,6 +286,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  usage property defaults without construct mappings: {}",
             unknown_usage_property_defaults.len()
         );
+        println!("  usage actions: {}", usage_action_defaults.len());
+        println!("  usage action rules: {usage_action_rule_count}");
+        println!(
+            "  usage actions without construct mappings: {}",
+            unknown_usage_action_defaults.len()
+        );
+        println!(
+            "  unsupported usage actions: {}",
+            unsupported_usage_actions.len()
+        );
         println!("  usage subset defaults: {}", usage_subset_defaults.len());
         println!(
             "  usage subset defaults without construct mappings: {}",
@@ -318,6 +336,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Usage property defaults without construct mappings:");
             for construct in &unknown_usage_property_defaults {
                 println!("  {construct}");
+            }
+        }
+
+        if !unknown_usage_action_defaults.is_empty() {
+            println!();
+            println!("Usage actions without construct mappings:");
+            for construct in &unknown_usage_action_defaults {
+                println!("  {construct}");
+            }
+        }
+
+        if !unsupported_usage_actions.is_empty() {
+            println!();
+            println!("Unsupported usage actions:");
+            for gap in &unsupported_usage_actions {
+                println!("  {}: {}", gap.construct, gap.action);
             }
         }
 
@@ -1180,6 +1214,26 @@ fn semantic_default_usage_property_default_rule_count(document: &Value) -> usize
         .sum()
 }
 
+fn semantic_default_usage_actions(document: &Value) -> BTreeSet<String> {
+    document
+        .get("usage_actions")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|actions| actions.keys())
+        .cloned()
+        .collect()
+}
+
+fn semantic_default_usage_action_rule_count(document: &Value) -> usize {
+    document
+        .get("usage_actions")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|actions| actions.values())
+        .map(|rules| rules.as_array().map(Vec::len).unwrap_or_default())
+        .sum()
+}
+
 fn semantic_default_usage_subset_defaults(document: &Value) -> BTreeSet<String> {
     document
         .get("usage_subset_defaults")
@@ -1200,6 +1254,44 @@ struct OwnerOverrideGap {
 struct PlaceholderGap {
     path: String,
     placeholder: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct UsageActionGap {
+    construct: String,
+    action: String,
+}
+
+fn unsupported_semantic_default_usage_actions(document: &Value) -> Vec<UsageActionGap> {
+    let mut gaps = Vec::new();
+    let Some(actions) = document.get("usage_actions").and_then(Value::as_object) else {
+        return gaps;
+    };
+    for (construct, rules) in actions {
+        let Some(rules) = rules.as_array() else {
+            continue;
+        };
+        for rule in rules {
+            let Some(action) = rule.get("action").and_then(Value::as_str) else {
+                continue;
+            };
+            if !is_supported_semantic_default_usage_action(action) {
+                gaps.push(UsageActionGap {
+                    construct: construct.clone(),
+                    action: action.to_string(),
+                });
+            }
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
+fn is_supported_semantic_default_usage_action(action: &str) -> bool {
+    matches!(
+        action,
+        "attach_metadata_application" | "source_from_previous_sibling_state"
+    )
 }
 
 fn unsupported_semantic_default_placeholders(document: &Value) -> Vec<PlaceholderGap> {
@@ -1274,6 +1366,7 @@ fn is_supported_semantic_default_placeholder(placeholder: &str) -> bool {
             | "$owner_qualified_name"
             | "$qualified_name"
             | "$reference_target"
+            | "$reference_target_or_owner"
             | "$sibling_state_id_transition_target"
     )
 }

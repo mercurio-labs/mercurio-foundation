@@ -21,7 +21,7 @@ use crate::lowering::ir::{
 };
 use crate::lowering::rules::{LoweringRule, LoweringRuleSeed};
 use crate::lowering::semantic_defaults::{
-    ReferenceModifierSemanticsSeed, SemanticDefaultsSeed, UsagePropertyDefaultSeed,
+    ReferenceModifierSemanticsSeed, SemanticDefaultsSeed, UsageActionSeed, UsagePropertyDefaultSeed,
 };
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Deserialize)]
@@ -573,6 +573,17 @@ impl MappingBundle {
             .collect()
     }
 
+    pub(crate) fn usage_actions(&self, usage: &ResolvedUsage) -> Vec<UsageActionSeed> {
+        self.semantic_defaults
+            .usage_actions
+            .get(&usage.construct)
+            .into_iter()
+            .flatten()
+            .filter(|action| usage_action_applies(action, usage))
+            .cloned()
+            .collect()
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -940,6 +951,11 @@ fn usage_property_default_applies(
             .absent_modifiers
             .iter()
             .all(|absent| !usage.modifiers.iter().any(|modifier| modifier == absent))
+}
+
+fn usage_action_applies(action: &UsageActionSeed, usage: &ResolvedUsage) -> bool {
+    (!action.requires_metadata_properties || !usage.metadata_properties.is_empty())
+        && (!action.requires_previous_state || usage.construct == "AcceptActionUsage")
 }
 
 fn all_data_value_like_refs(type_refs: &[String]) -> bool {
@@ -2216,17 +2232,14 @@ fn transpile_usage_tree(
             source_language,
             mappings,
         )?;
-        if usage.construct == "AcceptActionUsage"
-            && let Some(source_id) = &previous_state_id
-        {
-            element
-                .properties
-                .insert("source".to_string(), Value::String(source_id.clone()));
-        }
-        if usage.construct == "MetadataUsage" && !usage.metadata_properties.is_empty() {
-            let target_id = usage.reference_target.as_deref().unwrap_or(owner_id);
-            attach_metadata_application(elements, target_id, usage);
-        }
+        apply_usage_actions(
+            elements,
+            &mut element,
+            usage,
+            owner_id,
+            previous_state_id.as_deref(),
+            mappings,
+        );
         elements.push(element);
         transpile_usage_tree(
             &usage.members,
@@ -2241,6 +2254,57 @@ fn transpile_usage_tree(
         }
     }
     Ok(())
+}
+
+fn apply_usage_actions(
+    elements: &mut [KirElement],
+    element: &mut KirElement,
+    usage: &ResolvedUsage,
+    owner_id: &str,
+    previous_state_id: Option<&str>,
+    mappings: &MappingBundle,
+) {
+    for action in mappings.usage_actions(usage) {
+        match action.action.as_str() {
+            "attach_metadata_application" => {
+                let Some(target) = action
+                    .target
+                    .as_deref()
+                    .and_then(|target| resolve_usage_action_target(target, usage, owner_id))
+                else {
+                    continue;
+                };
+                attach_metadata_application(elements, &target, usage);
+            }
+            "source_from_previous_sibling_state" => {
+                let Some(source_id) = previous_state_id else {
+                    continue;
+                };
+                element
+                    .properties
+                    .insert("source".to_string(), Value::String(source_id.to_string()));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn resolve_usage_action_target(
+    value: &str,
+    usage: &ResolvedUsage,
+    owner_id: &str,
+) -> Option<String> {
+    match value {
+        "$reference_target_or_owner" => Some(
+            usage
+                .reference_target
+                .clone()
+                .unwrap_or_else(|| owner_id.to_string()),
+        ),
+        "$reference_target" => usage.reference_target.clone(),
+        "$owner_id" => Some(owner_id.to_string()),
+        _ => Some(value.to_string()),
+    }
 }
 
 fn attach_metadata_application(
@@ -3289,5 +3353,88 @@ mod lowering_golden_tests {
         assert_eq!(verify.kind, "SysML::Requirements::VerifyRequirementUsage");
         assert_eq!(verify.properties["source"], "pkg.root");
         assert_eq!(verify.properties["target"], "requirement.reqB");
+    }
+
+    #[test]
+    fn semantic_actions_attach_metadata_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let package = ResolvedPackage {
+            owner_package_qualified_name: None,
+            qualified_name: "root".to_string(),
+            declared_name: "root".to_string(),
+            docs: Vec::new(),
+            span: span(1),
+        };
+        let mut state = reference_usage("targetState");
+        state.construct = "StateUsage".to_string();
+        state.qualified_name = "root.targetState".to_string();
+
+        let mut explicit_metadata = reference_usage("review");
+        explicit_metadata.construct = "MetadataUsage".to_string();
+        explicit_metadata.qualified_name = "root.review".to_string();
+        explicit_metadata.reference_target = Some("state.root.targetState".to_string());
+        explicit_metadata
+            .metadata_properties
+            .insert("status".to_string(), "approved".to_string());
+
+        let mut owner_metadata = reference_usage("ownerNote");
+        owner_metadata.construct = "MetadataUsage".to_string();
+        owner_metadata.qualified_name = "root.ownerNote".to_string();
+        owner_metadata
+            .metadata_properties
+            .insert("level".to_string(), "package".to_string());
+
+        let module = ResolvedModule {
+            packages: vec![package],
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![state, explicit_metadata, owner_metadata],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let state = element(&document, "state.root.targetState");
+        let package = element(&document, "pkg.root");
+
+        assert_eq!(
+            state.properties["metadata"]["review"]["properties"]["status"],
+            "approved"
+        );
+        assert_eq!(
+            package.properties["metadata"]["ownerNote"]["properties"]["level"],
+            "package"
+        );
+    }
+
+    #[test]
+    fn semantic_actions_source_accept_from_previous_state_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut state = reference_usage("ready");
+        state.construct = "StateUsage".to_string();
+        state.owner_construct = "ActionUsage".to_string();
+        state.owner_qualified_name = "root.act".to_string();
+        state.qualified_name = "root.act.ready".to_string();
+
+        let mut accept = reference_usage("acceptAfterReady");
+        accept.construct = "AcceptActionUsage".to_string();
+        accept.owner_construct = "ActionUsage".to_string();
+        accept.owner_qualified_name = "root.act".to_string();
+        accept.qualified_name = "root.act.acceptAfterReady".to_string();
+
+        let mut action = reference_usage("act");
+        action.construct = "ActionUsage".to_string();
+        action.qualified_name = "root.act".to_string();
+        action.members = vec![state, accept];
+
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![action],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let accept = element(&document, "accept.root.act.acceptAfterReady");
+
+        assert_eq!(accept.properties["source"], "state.root.act.ready");
     }
 }

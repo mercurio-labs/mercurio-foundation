@@ -176,6 +176,21 @@
       }
     ]
   },
+  "usage_actions": {
+    "AcceptActionUsage": [
+      {
+        "action": "source_from_previous_sibling_state",
+        "requires_previous_state": true
+      }
+    ],
+    "MetadataUsage": [
+      {
+        "action": "attach_metadata_application",
+        "requires_metadata_properties": true,
+        "target": "$reference_target_or_owner"
+      }
+    ]
+  },
   "usage_subset_defaults": {
     "ItemUsage": {
       "owner_subsetted_feature_refs": {

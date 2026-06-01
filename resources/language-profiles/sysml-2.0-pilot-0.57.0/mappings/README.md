@@ -31,6 +31,9 @@ EMF-lite/MMP-style profile data for behavior that used to live directly in Rust:
   modifiers. They can append refs with `property_refs`, assign string values
   with `property_values`, and override the emitted `kir_kind` for relationship
   compatibility cases such as satisfy/verify.
+- `usage_actions` defines cross-element or traversal-sensitive actions that do
+  not fit simple property defaults. Current actions are
+  `attach_metadata_application` and `source_from_previous_sibling_state`.
 
 `usage_property_defaults.property_values` supports a deliberately small
 placeholder vocabulary. Missing optional placeholders skip the property:
@@ -38,6 +41,9 @@ placeholder vocabulary. Missing optional placeholders skip the property:
 `$allocation_source`, `$allocation_target`, `$reference_target`,
 `$modifier_value_trigger`, `$modifier_value_trigger_kind`, and
 `$sibling_state_id_transition_target`.
+
+`usage_actions.target` supports `$reference_target_or_owner`,
+`$reference_target`, and `$owner_id`.
 
 The lowering path is intentionally split into three profile-backed stages:
 
