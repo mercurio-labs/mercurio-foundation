@@ -898,6 +898,9 @@ fn transpile_import(
 ) -> Result<KirElement, Diagnostic> {
     let metaclass = mappings.metaclass_for("Import")?;
     let emission = mappings.emission_for(metaclass)?;
+    if let Some(rule) = mappings.lowering_rule_for_construct("Import") {
+        validate_rule_emission_compatibility(rule, metaclass, emission)?;
+    }
     let metatype_ref = Value::String(metaclass.to_string());
     let id = render_string(
         &emission.id_template,
