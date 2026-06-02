@@ -221,6 +221,11 @@
       "records_previous_state": true
     }
   },
+  "usage_id_policies": {
+    "EndUsage": {
+      "append_source_location_if_missing_start_col": true
+    }
+  },
   "usage_subset_defaults": {
     "ItemUsage": {
       "owner_subsetted_feature_refs": {

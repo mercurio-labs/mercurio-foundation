@@ -612,6 +612,16 @@ impl MappingBundle {
             .is_some_and(|policy| policy.records_previous_state)
     }
 
+    pub(crate) fn usage_appends_source_location_if_missing_start_col(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> bool {
+        self.semantic_defaults
+            .usage_id_policies
+            .get(&usage.construct)
+            .is_some_and(|policy| policy.append_source_location_if_missing_start_col)
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -2253,7 +2263,9 @@ fn render_usage_id(
             ("start_col".to_string(), json!(usage.span.start_col)),
         ]),
     )?;
-    if usage.construct == "EndUsage" && !id.ends_with(&format!(".{}", usage.span.start_col)) {
+    if mappings.usage_appends_source_location_if_missing_start_col(usage)
+        && !id.ends_with(&format!(".{}", usage.span.start_col))
+    {
         id = format!("{}.{}_{}", id, usage.span.start_line, usage.span.start_col);
     }
     Ok(id)

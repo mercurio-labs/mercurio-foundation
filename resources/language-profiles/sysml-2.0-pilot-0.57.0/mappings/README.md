@@ -42,6 +42,8 @@ data for behavior that used to live directly in Rust:
   references depending on the construct.
 - `usage_traversal_policies` names state carried while walking sibling usages,
   such as which constructs update the previous-state cursor used by actions.
+- `usage_id_policies` names construct-specific ID normalization policies that
+  supplement the KIR emission `id_template`.
 
 `usage_property_defaults.property_values` supports a deliberately small
 placeholder vocabulary. Missing optional placeholders skip the property:
@@ -62,6 +64,9 @@ placeholder vocabulary. Missing optional placeholders skip the property:
 
 `usage_traversal_policies.records_previous_state` marks constructs that update
 the previous-state cursor used by `source_from_previous_sibling_state`.
+
+`usage_id_policies.append_source_location_if_missing_start_col` keeps generated
+IDs unique for constructs whose rendered template needs source-location suffixes.
 
 The lowering path is intentionally split into three profile-backed stages:
 
