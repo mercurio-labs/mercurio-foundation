@@ -25,6 +25,8 @@ pub struct SemanticDefaultsSeed {
     pub usage_specialization_policies: BTreeMap<String, UsageSpecializationPolicySeed>,
     #[serde(default)]
     pub usage_resolution_policies: BTreeMap<String, UsageResolutionPolicySeed>,
+    #[serde(default)]
+    pub usage_traversal_policies: BTreeMap<String, UsageTraversalPolicySeed>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -77,6 +79,12 @@ pub struct UsageSpecializationPolicySeed {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageResolutionPolicySeed {
     pub reference_target_policy: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageTraversalPolicySeed {
+    #[serde(default)]
+    pub records_previous_state: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

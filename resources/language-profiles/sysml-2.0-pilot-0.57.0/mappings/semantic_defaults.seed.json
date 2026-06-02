@@ -216,6 +216,11 @@
       "reference_target_policy": "type_then_reference"
     }
   },
+  "usage_traversal_policies": {
+    "StateUsage": {
+      "records_previous_state": true
+    }
+  },
   "usage_subset_defaults": {
     "ItemUsage": {
       "owner_subsetted_feature_refs": {

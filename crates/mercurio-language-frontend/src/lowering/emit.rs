@@ -605,6 +605,13 @@ impl MappingBundle {
             .and_then(|policy| policy.reference_target_policy.as_deref())
     }
 
+    pub(crate) fn usage_records_previous_state(&self, usage: &ResolvedUsage) -> bool {
+        self.semantic_defaults
+            .usage_traversal_policies
+            .get(&usage.construct)
+            .is_some_and(|policy| policy.records_previous_state)
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -2171,7 +2178,7 @@ fn transpile_usage_tree(
             mappings,
             elements,
         )?;
-        if usage.construct == "StateUsage" {
+        if mappings.usage_records_previous_state(usage) {
             previous_state_id = Some(usage_id);
         }
     }

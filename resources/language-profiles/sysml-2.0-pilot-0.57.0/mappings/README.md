@@ -40,6 +40,8 @@ data for behavior that used to live directly in Rust:
 - `usage_resolution_policies` names resolver ordering policies for cases where
   the same textual reference may prefer annotation targets, types, or feature
   references depending on the construct.
+- `usage_traversal_policies` names state carried while walking sibling usages,
+  such as which constructs update the previous-state cursor used by actions.
 
 `usage_property_defaults.property_values` supports a deliberately small
 placeholder vocabulary. Missing optional placeholders skip the property:
@@ -57,6 +59,9 @@ placeholder vocabulary. Missing optional placeholders skip the property:
 
 `usage_resolution_policies.reference_target_policy` currently supports
 `annotation_target_then_type_then_reference` and `type_then_reference`.
+
+`usage_traversal_policies.records_previous_state` marks constructs that update
+the previous-state cursor used by `source_from_previous_sibling_state`.
 
 The lowering path is intentionally split into three profile-backed stages:
 

@@ -224,6 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             semantic_default_usage_resolution_policies(semantic_defaults);
         let unsupported_usage_resolution_policies =
             unsupported_semantic_default_usage_resolution_policies(semantic_defaults);
+        let usage_traversal_policies = semantic_default_usage_traversal_policies(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
@@ -243,6 +244,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .cloned()
             .collect::<Vec<_>>();
         let unknown_usage_resolution_policies = usage_resolution_policies
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_usage_traversal_policies = usage_traversal_policies
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
@@ -346,6 +351,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  unsupported usage resolution policies: {}",
             unsupported_usage_resolution_policies.len()
         );
+        println!(
+            "  usage traversal policies: {}",
+            usage_traversal_policies.len()
+        );
+        println!(
+            "  usage traversal policies without construct mappings: {}",
+            unknown_usage_traversal_policies.len()
+        );
         println!("  usage subset defaults: {}", usage_subset_defaults.len());
         println!(
             "  usage subset defaults without construct mappings: {}",
@@ -440,6 +453,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Unsupported usage resolution policies:");
             for gap in &unsupported_usage_resolution_policies {
                 println!("  {}: {}", gap.construct, gap.policy);
+            }
+        }
+
+        if !unknown_usage_traversal_policies.is_empty() {
+            println!();
+            println!("Usage traversal policies without construct mappings:");
+            for construct in &unknown_usage_traversal_policies {
+                println!("  {construct}");
             }
         }
 
@@ -1350,6 +1371,16 @@ fn semantic_default_usage_resolution_policies(document: &Value) -> BTreeSet<Stri
         .collect()
 }
 
+fn semantic_default_usage_traversal_policies(document: &Value) -> BTreeSet<String> {
+    document
+        .get("usage_traversal_policies")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|policies| policies.keys())
+        .cloned()
+        .collect()
+}
+
 fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
     let mut refs = BTreeSet::new();
     refs.extend(semantic_default_definition_context_construct_refs(document));
@@ -1359,6 +1390,7 @@ fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
     refs.extend(semantic_default_usage_actions(document));
     refs.extend(semantic_default_usage_specialization_policies(document));
     refs.extend(semantic_default_usage_resolution_policies(document));
+    refs.extend(semantic_default_usage_traversal_policies(document));
     refs.extend(semantic_default_usage_subset_defaults(document));
     refs.extend(semantic_default_usage_family_defaults(document));
     refs.extend(semantic_default_owner_override_refs(document));
