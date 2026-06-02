@@ -7,6 +7,8 @@ use serde_json::Value;
 
 mod binary;
 
+pub use binary::{BINARY_KIR_FORMAT_VERSION, BINARY_KIR_GENERATOR, BinaryKirCacheManifest};
+
 pub const KIR_SCHEMA_VERSION: &str = "0.2";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
 

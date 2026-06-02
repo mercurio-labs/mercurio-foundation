@@ -2,12 +2,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
 use crate::{KIR_SCHEMA_VERSION, KIR_SCHEMA_VERSION_METADATA_KEY, KirDocument, KirElement, KirError};
 
 const MAGIC: &[u8; 4] = b"MKIR";
-const FORMAT_VERSION: u16 = 1;
+pub const BINARY_KIR_FORMAT_VERSION: u16 = 1;
+pub const BINARY_KIR_GENERATOR: &str = concat!("mercurio-kir/", env!("CARGO_PKG_VERSION"));
 
 const TAG_NULL: u8 = 0;
 const TAG_BOOL: u8 = 1;
@@ -18,6 +20,34 @@ const TAG_STRING: u8 = 5;
 const TAG_ARRAY: u8 = 6;
 const TAG_OBJECT: u8 = 7;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BinaryKirCacheManifest {
+    pub binary_format_version: u16,
+    pub kir_schema_version: String,
+    pub source_digest: String,
+    pub binary_digest: String,
+    pub generator: String,
+}
+
+impl BinaryKirCacheManifest {
+    pub fn for_bytes(source_bytes: &[u8], binary_bytes: &[u8]) -> Self {
+        Self {
+            binary_format_version: BINARY_KIR_FORMAT_VERSION,
+            kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+            source_digest: stable_bytes_digest(source_bytes),
+            binary_digest: stable_bytes_digest(binary_bytes),
+            generator: BINARY_KIR_GENERATOR.to_string(),
+        }
+    }
+
+    pub fn is_valid_for_bytes(&self, source_bytes: &[u8], binary_bytes: &[u8]) -> bool {
+        self.binary_format_version == BINARY_KIR_FORMAT_VERSION
+            && self.kir_schema_version == KIR_SCHEMA_VERSION
+            && self.source_digest == stable_bytes_digest(source_bytes)
+            && self.binary_digest == stable_bytes_digest(binary_bytes)
+    }
+}
+
 impl KirDocument {
     pub fn write_binary_to_path(&self, path: &Path) -> Result<(), KirError> {
         if let Some(parent) = path.parent() {
@@ -27,6 +57,49 @@ impl KirDocument {
         let bytes = self.to_binary_bytes()?;
         std::fs::write(path, bytes)?;
         Ok(())
+    }
+
+    pub fn write_binary_cache_to_paths(
+        &self,
+        binary_path: &Path,
+        manifest_path: &Path,
+        source_bytes: &[u8],
+    ) -> Result<BinaryKirCacheManifest, KirError> {
+        if let Some(parent) = binary_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Some(parent) = manifest_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let binary_bytes = self.to_binary_bytes()?;
+        let manifest = BinaryKirCacheManifest::for_bytes(source_bytes, &binary_bytes);
+        std::fs::write(binary_path, &binary_bytes)?;
+        std::fs::write(manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+        Ok(manifest)
+    }
+
+    pub fn from_valid_binary_cache_paths(
+        binary_path: &Path,
+        manifest_path: &Path,
+        source_bytes: &[u8],
+    ) -> Result<Option<Self>, KirError> {
+        let binary_bytes = match std::fs::read(binary_path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(KirError::Io(err)),
+        };
+        let manifest_bytes = match std::fs::read(manifest_path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(KirError::Io(err)),
+        };
+        let manifest: BinaryKirCacheManifest = serde_json::from_slice(&manifest_bytes)?;
+        if !manifest.is_valid_for_bytes(source_bytes, &binary_bytes) {
+            return Ok(None);
+        }
+
+        Self::from_binary_bytes(&binary_bytes).map(Some)
     }
 
     pub fn from_binary_path(path: &Path) -> Result<Self, KirError> {
@@ -40,7 +113,7 @@ impl KirDocument {
         let string_table = StringTable::from_document(&document)?;
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
-        write_u16(&mut out, FORMAT_VERSION)?;
+        write_u16(&mut out, BINARY_KIR_FORMAT_VERSION)?;
         write_string_table(&mut out, &string_table)?;
         write_properties(&mut out, &document.metadata, &string_table)?;
         write_u32(&mut out, document.elements.len())?;
@@ -62,7 +135,7 @@ impl KirDocument {
         }
 
         let format_version = read_u16(&mut cursor)?;
-        if format_version != FORMAT_VERSION {
+        if format_version != BINARY_KIR_FORMAT_VERSION {
             return Err(KirError::Binary(format!(
                 "unsupported binary KIR format version {format_version}"
             )));
@@ -358,9 +431,22 @@ fn read_f64(cursor: &mut Cursor<&[u8]>) -> Result<f64, KirError> {
     Ok(f64::from_le_bytes(bytes))
 }
 
+fn stable_bytes_digest(bytes: &[u8]) -> String {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+
+    let mut hash = OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
 
     use serde_json::json;
 
@@ -409,5 +495,76 @@ mod tests {
     fn binary_kir_rejects_wrong_magic() {
         let error = KirDocument::from_binary_bytes(b"NOPE").unwrap_err();
         assert!(error.to_string().contains("invalid magic header"));
+    }
+
+    #[test]
+    fn binary_cache_manifest_validates_source_and_binary_bytes() {
+        let document = KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                json!(KIR_SCHEMA_VERSION),
+            )]),
+            elements: vec![KirElement {
+                id: "type.Demo.A".to_string(),
+                kind: "model.Type".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([("qualified_name".to_string(), json!("Demo.A"))]),
+            }],
+        };
+        let source_bytes = br#"{"demo":"source"}"#;
+        let binary_bytes = document.to_binary_bytes().unwrap();
+        let manifest = super::BinaryKirCacheManifest::for_bytes(source_bytes, &binary_bytes);
+
+        assert!(manifest.is_valid_for_bytes(source_bytes, &binary_bytes));
+        assert!(!manifest.is_valid_for_bytes(br#"{"demo":"changed"}"#, &binary_bytes));
+        assert!(!manifest.is_valid_for_bytes(source_bytes, b"changed"));
+    }
+
+    #[test]
+    fn binary_cache_load_returns_none_for_stale_manifest() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mercurio_binary_cache_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let binary_path = temp_dir.join("model.mkir");
+        let manifest_path = temp_dir.join("model.mkir.json");
+        let source_bytes = br#"{"demo":"source"}"#;
+        let document = KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                json!(KIR_SCHEMA_VERSION),
+            )]),
+            elements: vec![KirElement {
+                id: "type.Demo.A".to_string(),
+                kind: "model.Type".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([("qualified_name".to_string(), json!("Demo.A"))]),
+            }],
+        };
+
+        document
+            .write_binary_cache_to_paths(&binary_path, &manifest_path, source_bytes)
+            .unwrap();
+        let loaded =
+            KirDocument::from_valid_binary_cache_paths(&binary_path, &manifest_path, source_bytes)
+                .unwrap()
+                .unwrap();
+        assert_eq!(loaded, document.normalized_for_persistence());
+        assert!(
+            KirDocument::from_valid_binary_cache_paths(
+                &binary_path,
+                &manifest_path,
+                br#"{"demo":"changed"}"#,
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }

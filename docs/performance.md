@@ -59,3 +59,5 @@ Use release builds for real measurements. Debug builds are useful only for smoke
 The synthetic KIR model uses one package and `N` type elements linked by specialization. This intentionally stresses common KIR operations and graph/runtime relationship handling without depending on a source language parser.
 
 Binary KIR is intended as a warm-load cache format. JSON remains the human-readable interchange/debug format. The first binary format stores a versioned header, a string table, element records, metadata, and structured property values. Future cache layers can build on this by storing graph or runtime artifacts directly.
+
+Binary cache entries should be paired with a manifest. The manifest records the binary format version, KIR schema version, generator version, source digest, and binary digest. A loader should use the binary cache only when the manifest matches the current source bytes and binary bytes; otherwise it should rebuild from the canonical source/text KIR and write a fresh binary cache.
