@@ -18,3 +18,4 @@ pub mod resolve;
 pub mod rules;
 pub mod semantic_actions;
 pub mod semantic_defaults;
+pub mod semantic_properties;

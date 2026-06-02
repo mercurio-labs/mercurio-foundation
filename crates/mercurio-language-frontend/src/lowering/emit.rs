@@ -24,6 +24,9 @@ use crate::lowering::semantic_actions::apply_usage_actions;
 use crate::lowering::semantic_defaults::{
     ReferenceModifierSemanticsSeed, SemanticDefaultsSeed, UsageActionSeed, UsagePropertyDefaultSeed,
 };
+use crate::lowering::semantic_properties::{
+    apply_usage_property_defaults, usage_property_default_applies,
+};
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Deserialize)]
 pub struct PilotConstructSeed {
@@ -933,25 +936,6 @@ fn reference_direction_from_modifiers(
                 .any(|modifier| modifier == *direction)
         })
         .cloned()
-}
-
-fn usage_property_default_applies(
-    default: &UsagePropertyDefaultSeed,
-    usage: &ResolvedUsage,
-) -> bool {
-    if let Some(owner_construct) = &default.owner_construct
-        && owner_construct != &usage.owner_construct
-    {
-        return false;
-    }
-    default
-        .present_modifiers
-        .iter()
-        .all(|present| usage.modifiers.iter().any(|modifier| modifier == present))
-        && default
-            .absent_modifiers
-            .iter()
-            .all(|absent| !usage.modifiers.iter().any(|modifier| modifier == absent))
 }
 
 fn usage_action_applies(action: &UsageActionSeed, usage: &ResolvedUsage) -> bool {
@@ -2047,67 +2031,6 @@ fn enrich_usage_semantics(
     }
 }
 
-fn apply_usage_property_defaults(
-    element: &mut KirElement,
-    usage: &ResolvedUsage,
-    owner_id: &str,
-    mappings: &MappingBundle,
-) {
-    for default in mappings.usage_property_defaults(usage) {
-        if let Some(kir_kind) = &default.kir_kind {
-            element.kind = kir_kind.clone();
-        }
-        for (property, refs) in &default.property_refs {
-            for value in refs {
-                append_unique_property_ref(&mut element.properties, property, value);
-            }
-        }
-        for (property, value) in &default.property_values {
-            if let Some(value) = resolve_usage_property_default_value(value, usage, owner_id) {
-                element
-                    .properties
-                    .insert(property.clone(), Value::String(value));
-            }
-        }
-    }
-}
-
-fn resolve_usage_property_default_value(
-    value: &str,
-    usage: &ResolvedUsage,
-    owner_id: &str,
-) -> Option<String> {
-    let mut resolved = value.to_string();
-    for (placeholder, replacement) in [
-        ("$owner_id", Some(owner_id.to_string())),
-        ("$qualified_name", Some(usage.qualified_name.clone())),
-        ("$declared_name", Some(usage.declared_name.clone())),
-        ("$allocation_source", usage.allocation_source.clone()),
-        ("$allocation_target", usage.allocation_target.clone()),
-        ("$reference_target", usage.reference_target.clone()),
-        (
-            "$modifier_value_trigger_kind",
-            modifier_value(&usage.modifiers, "trigger_kind").map(str::to_string),
-        ),
-        (
-            "$modifier_value_trigger",
-            modifier_value(&usage.modifiers, "trigger").map(str::to_string),
-        ),
-        (
-            "$sibling_state_id_transition_target",
-            modifier_value(&usage.modifiers, "transition_target")
-                .and_then(|target| sibling_state_id(&usage.owner_qualified_name, target)),
-        ),
-    ] {
-        if !resolved.contains(placeholder) {
-            continue;
-        }
-        let replacement = replacement?;
-        resolved = resolved.replace(placeholder, &replacement);
-    }
-    Some(resolved)
-}
-
 fn usage_display_name(usage: &ResolvedUsage, mappings: &MappingBundle) -> Option<String> {
     if usage.is_implicit_name {
         return mappings
@@ -2120,14 +2043,14 @@ fn usage_display_name(usage: &ResolvedUsage, mappings: &MappingBundle) -> Option
     (!usage.declared_name.is_empty()).then(|| usage.declared_name.clone())
 }
 
-fn modifier_value<'a>(modifiers: &'a [String], key: &str) -> Option<&'a str> {
+pub(crate) fn modifier_value<'a>(modifiers: &'a [String], key: &str) -> Option<&'a str> {
     let prefix = format!("{key}=");
     modifiers
         .iter()
         .find_map(|modifier| modifier.strip_prefix(&prefix))
 }
 
-fn sibling_state_id(owner_qualified_name: &str, target: &str) -> Option<String> {
+pub(crate) fn sibling_state_id(owner_qualified_name: &str, target: &str) -> Option<String> {
     let target_qualified = if target.contains('.') {
         target.to_string()
     } else {
@@ -2147,7 +2070,11 @@ fn display_name_for_ref(value: &str) -> String {
         .to_string()
 }
 
-fn append_unique_property_ref(properties: &mut BTreeMap<String, Value>, key: &str, value: &str) {
+pub(crate) fn append_unique_property_ref(
+    properties: &mut BTreeMap<String, Value>,
+    key: &str,
+    value: &str,
+) {
     let updated = match properties.get(key) {
         Some(Value::String(existing)) if existing == value => return,
         Some(Value::String(existing)) => Value::Array(vec![
