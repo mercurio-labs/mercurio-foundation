@@ -205,6 +205,17 @@
       "materialized_refs_policy": "prepend_feature_for_specialized_actions_without_multiplicity"
     }
   },
+  "usage_resolution_policies": {
+    "CommentUsage": {
+      "reference_target_policy": "annotation_target_then_type_then_reference"
+    },
+    "SatisfyUsage": {
+      "reference_target_policy": "type_then_reference"
+    },
+    "VerifyUsage": {
+      "reference_target_policy": "type_then_reference"
+    }
+  },
   "usage_subset_defaults": {
     "ItemUsage": {
       "owner_subsetted_feature_refs": {

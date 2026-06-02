@@ -37,6 +37,9 @@ data for behavior that used to live directly in Rust:
 - `usage_specialization_policies` names small Rust-executed specialization
   algorithms that are profile-selected and audited rather than hard-coded to a
   construct in the emission path.
+- `usage_resolution_policies` names resolver ordering policies for cases where
+  the same textual reference may prefer annotation targets, types, or feature
+  references depending on the construct.
 
 `usage_property_defaults.property_values` supports a deliberately small
 placeholder vocabulary. Missing optional placeholders skip the property:
@@ -51,6 +54,9 @@ placeholder vocabulary. Missing optional placeholders skip the property:
 
 `usage_specialization_policies.materialized_refs_policy` currently supports
 `prepend_feature_for_specialized_actions_without_multiplicity`.
+
+`usage_resolution_policies.reference_target_policy` currently supports
+`annotation_target_then_type_then_reference` and `type_then_reference`.
 
 The lowering path is intentionally split into three profile-backed stages:
 

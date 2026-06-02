@@ -516,7 +516,9 @@ fn resolve_usage(
     let reference_target = effective_reference_target
         .as_ref()
         .map(|name| {
-            if usage.construct == "CommentUsage" {
+            let reference_target_policy =
+                mappings.usage_reference_target_resolution_policy(&usage.construct);
+            if reference_target_policy == Some("annotation_target_then_type_then_reference") {
                 resolve_comment_annotation_target(&usage, name, local_definitions, local_usage_map)
                     .or_else(|| {
                         resolve_type_reference_in_scope(
@@ -544,7 +546,7 @@ fn resolve_usage(
                             local_usage_map,
                         )
                     })
-            } else if matches!(usage.construct.as_str(), "SatisfyUsage" | "VerifyUsage") {
+            } else if reference_target_policy == Some("type_then_reference") {
                 resolve_type_reference_in_scope(
                     name,
                     &usage.owner_qualified_name,

@@ -598,6 +598,13 @@ impl MappingBundle {
             .and_then(|policy| policy.materialized_refs_policy.as_deref())
     }
 
+    pub(crate) fn usage_reference_target_resolution_policy(&self, construct: &str) -> Option<&str> {
+        self.semantic_defaults
+            .usage_resolution_policies
+            .get(construct)
+            .and_then(|policy| policy.reference_target_policy.as_deref())
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)

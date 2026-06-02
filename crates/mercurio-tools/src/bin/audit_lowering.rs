@@ -220,6 +220,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             semantic_default_usage_specialization_policies(semantic_defaults);
         let unsupported_usage_specialization_policies =
             unsupported_semantic_default_usage_specialization_policies(semantic_defaults);
+        let usage_resolution_policies =
+            semantic_default_usage_resolution_policies(semantic_defaults);
+        let unsupported_usage_resolution_policies =
+            unsupported_semantic_default_usage_resolution_policies(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
@@ -235,6 +239,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .cloned()
             .collect::<Vec<_>>();
         let unknown_usage_specialization_policies = usage_specialization_policies
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_usage_resolution_policies = usage_resolution_policies
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
@@ -326,6 +334,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  unsupported usage specialization policies: {}",
             unsupported_usage_specialization_policies.len()
         );
+        println!(
+            "  usage resolution policies: {}",
+            usage_resolution_policies.len()
+        );
+        println!(
+            "  usage resolution policies without construct mappings: {}",
+            unknown_usage_resolution_policies.len()
+        );
+        println!(
+            "  unsupported usage resolution policies: {}",
+            unsupported_usage_resolution_policies.len()
+        );
         println!("  usage subset defaults: {}", usage_subset_defaults.len());
         println!(
             "  usage subset defaults without construct mappings: {}",
@@ -403,6 +423,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("Unsupported usage specialization policies:");
             for gap in &unsupported_usage_specialization_policies {
+                println!("  {}: {}", gap.construct, gap.policy);
+            }
+        }
+
+        if !unknown_usage_resolution_policies.is_empty() {
+            println!();
+            println!("Usage resolution policies without construct mappings:");
+            for construct in &unknown_usage_resolution_policies {
+                println!("  {construct}");
+            }
+        }
+
+        if !unsupported_usage_resolution_policies.is_empty() {
+            println!();
+            println!("Unsupported usage resolution policies:");
+            for gap in &unsupported_usage_resolution_policies {
                 println!("  {}: {}", gap.construct, gap.policy);
             }
         }
@@ -1304,6 +1340,16 @@ fn semantic_default_usage_specialization_policies(document: &Value) -> BTreeSet<
         .collect()
 }
 
+fn semantic_default_usage_resolution_policies(document: &Value) -> BTreeSet<String> {
+    document
+        .get("usage_resolution_policies")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|policies| policies.keys())
+        .cloned()
+        .collect()
+}
+
 fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
     let mut refs = BTreeSet::new();
     refs.extend(semantic_default_definition_context_construct_refs(document));
@@ -1312,6 +1358,7 @@ fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
     refs.extend(semantic_default_usage_property_defaults(document));
     refs.extend(semantic_default_usage_actions(document));
     refs.extend(semantic_default_usage_specialization_policies(document));
+    refs.extend(semantic_default_usage_resolution_policies(document));
     refs.extend(semantic_default_usage_subset_defaults(document));
     refs.extend(semantic_default_usage_family_defaults(document));
     refs.extend(semantic_default_owner_override_refs(document));
@@ -1388,6 +1435,12 @@ struct UsageSpecializationPolicyGap {
     policy: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct UsageResolutionPolicyGap {
+    construct: String,
+    policy: String,
+}
+
 fn unsupported_semantic_default_usage_actions(document: &Value) -> Vec<UsageActionGap> {
     let mut gaps = Vec::new();
     let Some(actions) = document.get("usage_actions").and_then(Value::as_object) else {
@@ -1452,6 +1505,41 @@ fn is_supported_semantic_default_usage_specialization_policy(policy: &str) -> bo
     matches!(
         policy,
         "prepend_feature_for_specialized_actions_without_multiplicity"
+    )
+}
+
+fn unsupported_semantic_default_usage_resolution_policies(
+    document: &Value,
+) -> Vec<UsageResolutionPolicyGap> {
+    let mut gaps = Vec::new();
+    let Some(policies) = document
+        .get("usage_resolution_policies")
+        .and_then(Value::as_object)
+    else {
+        return gaps;
+    };
+    for (construct, policy) in policies {
+        let Some(policy) = policy
+            .get("reference_target_policy")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if !is_supported_semantic_default_usage_resolution_policy(policy) {
+            gaps.push(UsageResolutionPolicyGap {
+                construct: construct.clone(),
+                policy: policy.to_string(),
+            });
+        }
+    }
+    gaps.sort();
+    gaps
+}
+
+fn is_supported_semantic_default_usage_resolution_policy(policy: &str) -> bool {
+    matches!(
+        policy,
+        "annotation_target_then_type_then_reference" | "type_then_reference"
     )
 }
 
