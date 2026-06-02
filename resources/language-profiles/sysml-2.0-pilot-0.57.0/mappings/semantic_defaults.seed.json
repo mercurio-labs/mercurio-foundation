@@ -200,6 +200,11 @@
       }
     ]
   },
+  "usage_specialization_policies": {
+    "PerformActionUsage": {
+      "materialized_refs_policy": "prepend_feature_for_specialized_actions_without_multiplicity"
+    }
+  },
   "usage_subset_defaults": {
     "ItemUsage": {
       "owner_subsetted_feature_refs": {

@@ -588,6 +588,16 @@ impl MappingBundle {
             .collect()
     }
 
+    pub(crate) fn usage_materialized_specialization_policy(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> Option<&str> {
+        self.semantic_defaults
+            .usage_specialization_policies
+            .get(&usage.construct)
+            .and_then(|policy| policy.materialized_refs_policy.as_deref())
+    }
+
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
         self.definition_default_specializations
             .get(construct)
@@ -1497,6 +1507,7 @@ fn transpile_usage(
     );
     let materialized_specialization_refs = materialized_usage_specialization_refs(
         usage,
+        mappings,
         &specialization_refs,
         &specialized_feature_refs,
     );
@@ -2413,10 +2424,14 @@ fn usage_specialization_refs(
 
 fn materialized_usage_specialization_refs(
     usage: &ResolvedUsage,
+    mappings: &MappingBundle,
     specialization_refs: &[String],
     specialized_feature_refs: &[String],
 ) -> Vec<String> {
-    if usage.construct == "PerformActionUsage" && usage.multiplicity.is_none() {
+    if mappings.usage_materialized_specialization_policy(usage)
+        == Some("prepend_feature_for_specialized_actions_without_multiplicity")
+        && usage.multiplicity.is_none()
+    {
         let specialized = specialized_feature_refs
             .iter()
             .cloned()
@@ -3201,6 +3216,34 @@ mod lowering_golden_tests {
         assert_eq!(comment.properties["body"], "review this");
         assert_eq!(comment.properties["locale"], "en-US");
         assert_eq!(comment.properties["annotatedElement"], "part.root.target");
+    }
+
+    #[test]
+    fn perform_action_materialized_specialization_policy_is_profile_backed() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut perform = reference_usage("doIt");
+        perform.construct = "PerformActionUsage".to_string();
+        perform.qualified_name = "root.doIt".to_string();
+        perform.specialized_features = vec!["feature.root.action".to_string()];
+
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![perform],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let perform = element(&document, "perform.root.doIt");
+        let specializes = perform.properties["specializes"]
+            .as_array()
+            .expect("specializes refs")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(specializes.first().copied(), Some("kerml.Feature"));
+        assert!(!specializes.contains(&"feature.root.action"));
     }
 
     #[test]

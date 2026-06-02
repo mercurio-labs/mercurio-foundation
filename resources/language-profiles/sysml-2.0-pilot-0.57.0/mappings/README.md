@@ -34,6 +34,9 @@ data for behavior that used to live directly in Rust:
 - `usage_actions` defines cross-element or traversal-sensitive actions that do
   not fit simple property defaults. Current actions are
   `attach_metadata_application` and `source_from_previous_sibling_state`.
+- `usage_specialization_policies` names small Rust-executed specialization
+  algorithms that are profile-selected and audited rather than hard-coded to a
+  construct in the emission path.
 
 `usage_property_defaults.property_values` supports a deliberately small
 placeholder vocabulary. Missing optional placeholders skip the property:
@@ -45,6 +48,9 @@ placeholder vocabulary. Missing optional placeholders skip the property:
 
 `usage_actions.target` supports `$reference_target_or_owner`,
 `$reference_target`, and `$owner_id`.
+
+`usage_specialization_policies.materialized_refs_policy` currently supports
+`prepend_feature_for_specialized_actions_without_multiplicity`.
 
 The lowering path is intentionally split into three profile-backed stages:
 

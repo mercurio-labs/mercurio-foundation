@@ -21,6 +21,8 @@ pub struct SemanticDefaultsSeed {
     pub usage_property_defaults: BTreeMap<String, Vec<UsagePropertyDefaultSeed>>,
     #[serde(default)]
     pub usage_actions: BTreeMap<String, Vec<UsageActionSeed>>,
+    #[serde(default)]
+    pub usage_specialization_policies: BTreeMap<String, UsageSpecializationPolicySeed>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -63,6 +65,11 @@ pub struct UsageActionSeed {
     #[serde(default)]
     pub requires_previous_state: bool,
     pub target: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UsageSpecializationPolicySeed {
+    pub materialized_refs_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
