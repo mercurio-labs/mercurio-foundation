@@ -1956,25 +1956,6 @@ fn enrich_usage_semantics(
         element.properties.remove("declared_name");
     }
 
-    if usage.construct == "CommentUsage" {
-        if let Some(body) = usage.metadata_properties.get("body") {
-            element
-                .properties
-                .insert("body".to_string(), Value::String(body.clone()));
-        }
-        if let Some(locale) = usage.metadata_properties.get("locale") {
-            element
-                .properties
-                .insert("locale".to_string(), Value::String(locale.clone()));
-        }
-        if let Some(target) = &usage.reference_target {
-            element.properties.insert(
-                "annotatedElement".to_string(),
-                Value::String(target.clone()),
-            );
-        }
-    }
-
     if let Some(defaults) = mappings.usage_family_default(&usage.construct, &usage.owner_construct)
     {
         insert_property_ref_if_missing(&mut element.properties, "type", &defaults.type_ref);
@@ -3191,6 +3172,35 @@ mod lowering_golden_tests {
         assert_eq!(verify.kind, "SysML::Requirements::VerifyRequirementUsage");
         assert_eq!(verify.properties["source"], "pkg.root");
         assert_eq!(verify.properties["target"], "requirement.reqB");
+    }
+
+    #[test]
+    fn comment_properties_are_profile_backed_in_kir() {
+        let mappings = MappingBundle::load().unwrap();
+        let mut comment = reference_usage("note");
+        comment.construct = "CommentUsage".to_string();
+        comment.qualified_name = "root.note".to_string();
+        comment.reference_target = Some("part.root.target".to_string());
+        comment
+            .metadata_properties
+            .insert("body".to_string(), "review this".to_string());
+        comment
+            .metadata_properties
+            .insert("locale".to_string(), "en-US".to_string());
+
+        let module = ResolvedModule {
+            packages: Vec::new(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            usages: vec![comment],
+        };
+
+        let document = transpile_module(&module, "golden.sysml", mappings).unwrap();
+        let comment = element(&document, "comment.root.note.1.1");
+
+        assert_eq!(comment.properties["body"], "review this");
+        assert_eq!(comment.properties["locale"], "en-US");
+        assert_eq!(comment.properties["annotatedElement"], "part.root.target");
     }
 
     #[test]

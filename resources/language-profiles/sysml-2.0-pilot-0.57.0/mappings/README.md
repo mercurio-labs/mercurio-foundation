@@ -39,7 +39,8 @@ data for behavior that used to live directly in Rust:
 placeholder vocabulary. Missing optional placeholders skip the property:
 `$owner_id`, `$qualified_name`, `$declared_name`, `$owner_qualified_name`,
 `$allocation_source`, `$allocation_target`, `$reference_target`,
-`$modifier_value_trigger`, `$modifier_value_trigger_kind`, and
+`$metadata_body`, `$metadata_locale`, `$modifier_value_trigger`,
+`$modifier_value_trigger_kind`, and
 `$sibling_state_id_transition_target`.
 
 `usage_actions.target` supports `$reference_target_or_owner`,

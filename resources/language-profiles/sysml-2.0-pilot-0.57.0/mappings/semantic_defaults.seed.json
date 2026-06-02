@@ -122,6 +122,15 @@
         }
       }
     ],
+    "CommentUsage": [
+      {
+        "property_values": {
+          "annotatedElement": "$reference_target",
+          "body": "$metadata_body",
+          "locale": "$metadata_locale"
+        }
+      }
+    ],
     "PartUsage": [
       {
         "owner_construct": "ItemDefinition",

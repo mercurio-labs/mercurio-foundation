@@ -1433,6 +1433,8 @@ fn is_supported_semantic_default_placeholder(placeholder: &str) -> bool {
         "$allocation_source"
             | "$allocation_target"
             | "$declared_name"
+            | "$metadata_body"
+            | "$metadata_locale"
             | "$modifier_value_trigger"
             | "$modifier_value_trigger_kind"
             | "$owner_id"

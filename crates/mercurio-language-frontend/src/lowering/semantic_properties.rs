@@ -66,6 +66,14 @@ fn resolve_usage_property_default_value(
         ("$allocation_target", usage.allocation_target.clone()),
         ("$reference_target", usage.reference_target.clone()),
         (
+            "$metadata_body",
+            usage.metadata_properties.get("body").cloned(),
+        ),
+        (
+            "$metadata_locale",
+            usage.metadata_properties.get("locale").cloned(),
+        ),
+        (
             "$modifier_value_trigger_kind",
             modifier_value(&usage.modifiers, "trigger_kind").map(str::to_string),
         ),
