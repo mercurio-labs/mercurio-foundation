@@ -113,6 +113,6 @@ else:
     rebuild from source
 ```
 
-The first `runtime.mruntime` and `graph.mgraph` implementations are intentionally conservative: they use versioned binary envelopes around serialized artifacts. This establishes cache validation and load-order behavior. The next optimization is replacing those payloads with compact numeric records.
+`runtime.mruntime` and `graph.mgraph` use versioned binary envelopes with compact numeric records. The payload starts with a shared string table, then stores element ids, kinds, property keys, edge relations, and derived-index values as numeric references. Property values still use structured JSON bytes inside the record stream because KIR property values remain open-ended.
 
-Compact graph/runtime binaries should use numeric ids internally: element id table, kind table, property key table, edge relation table, element records, property records, derived-index records, and edge records. Public APIs can still expose strings at the boundary.
+The compact payload includes element records, property records, edge records, derived-index records, and datalog explanation records. Public APIs still expose strings at the boundary.

@@ -439,6 +439,14 @@ impl ElementProperties {
         properties
     }
 
+    pub(crate) fn from_declared_for_artifact(
+        element_id: String,
+        declared: BTreeMap<String, Value>,
+    ) -> Self {
+        let mut property_key_interner = HashMap::new();
+        Self::new(element_id, declared, &mut property_key_interner)
+    }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         if key == "element_id" {
             return Some(&self.element_id_value);

@@ -82,6 +82,16 @@ pub struct DerivedIndexes {
     explanations: BTreeMap<Fact, Explanation>,
 }
 
+impl DerivedIndexes {
+    pub(crate) fn explanations(&self) -> &BTreeMap<Fact, Explanation> {
+        &self.explanations
+    }
+
+    pub(crate) fn set_explanations(&mut self, explanations: BTreeMap<Fact, Explanation>) {
+        self.explanations = explanations;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct ExplanationEntry {

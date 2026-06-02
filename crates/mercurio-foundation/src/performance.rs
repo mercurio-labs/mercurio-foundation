@@ -11,6 +11,10 @@ use crate::graph::{Graph, GraphArtifact};
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 use crate::mutation::diff_kir_documents;
 use crate::runtime::{Runtime, RuntimeArtifact};
+use crate::workspace_cache::{
+    graph_artifact_from_binary_bytes, graph_artifact_to_binary_bytes,
+    runtime_artifact_from_binary_bytes, runtime_artifact_to_binary_bytes,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -643,33 +647,12 @@ fn write_perf_graph_cache(path: &Path, graph: &GraphArtifact) -> Result<(), Box<
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let payload = serde_json::to_vec(graph)?;
-    let mut bytes = Vec::with_capacity(10 + payload.len());
-    bytes.extend_from_slice(b"MGRF");
-    bytes.extend_from_slice(&1_u16.to_le_bytes());
-    bytes.extend_from_slice(&u32::try_from(payload.len())?.to_le_bytes());
-    bytes.extend_from_slice(&payload);
-    std::fs::write(path, bytes)?;
+    std::fs::write(path, graph_artifact_to_binary_bytes(graph)?)?;
     Ok(())
 }
 
 fn read_perf_graph_cache(path: &Path) -> Result<GraphArtifact, Box<dyn Error>> {
-    let bytes = std::fs::read(path)?;
-    if bytes.len() < 10 || &bytes[0..4] != b"MGRF" {
-        return Err("invalid graph cache header".into());
-    }
-    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != 1 {
-        return Err(format!("unsupported graph cache version {version}").into());
-    }
-    let payload_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
-    let payload = bytes
-        .get(10..10 + payload_len)
-        .ok_or("truncated graph cache payload")?;
-    if bytes.len() != 10 + payload_len {
-        return Err("trailing graph cache bytes".into());
-    }
-    Ok(serde_json::from_slice(payload)?)
+    Ok(graph_artifact_from_binary_bytes(&std::fs::read(path)?)?)
 }
 
 fn write_perf_runtime_cache(
@@ -679,33 +662,12 @@ fn write_perf_runtime_cache(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let payload = serde_json::to_vec(runtime_artifact)?;
-    let mut bytes = Vec::with_capacity(10 + payload.len());
-    bytes.extend_from_slice(b"MRUN");
-    bytes.extend_from_slice(&1_u16.to_le_bytes());
-    bytes.extend_from_slice(&u32::try_from(payload.len())?.to_le_bytes());
-    bytes.extend_from_slice(&payload);
-    std::fs::write(path, bytes)?;
+    std::fs::write(path, runtime_artifact_to_binary_bytes(runtime_artifact)?)?;
     Ok(())
 }
 
 fn read_perf_runtime_cache(path: &Path) -> Result<RuntimeArtifact, Box<dyn Error>> {
-    let bytes = std::fs::read(path)?;
-    if bytes.len() < 10 || &bytes[0..4] != b"MRUN" {
-        return Err("invalid runtime cache header".into());
-    }
-    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != 1 {
-        return Err(format!("unsupported runtime cache version {version}").into());
-    }
-    let payload_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
-    let payload = bytes
-        .get(10..10 + payload_len)
-        .ok_or("truncated runtime cache payload")?;
-    if bytes.len() != 10 + payload_len {
-        return Err("trailing runtime cache bytes".into());
-    }
-    Ok(serde_json::from_slice(payload)?)
+    Ok(runtime_artifact_from_binary_bytes(&std::fs::read(path)?)?)
 }
 
 fn run_emf_comparison(command: Option<&str>, output_dir: &Path) -> EmfComparisonReport {

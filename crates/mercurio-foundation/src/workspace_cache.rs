@@ -1,4 +1,6 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6,14 +8,15 @@ use serde::{Deserialize, Serialize};
 
 use mercurio_language_contracts::LanguageRegistry;
 
-use crate::graph::{Graph, GraphArtifact};
+use crate::datalog::{DerivedIndexes, Explanation, Fact};
+use crate::graph::{Edge, Element, ElementProperties, Graph, GraphArtifact};
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::runtime::{Runtime, RuntimeArtifact};
 use crate::source_set::{
     SourceDocument, compile_source_documents, compile_source_documents_with_registry,
 };
 
-const CACHE_SCHEMA_VERSION: u32 = 5;
+const CACHE_SCHEMA_VERSION: u32 = 6;
 const ARTIFACT_FAMILY_COMPILE: &str = "compile";
 const DOCUMENT_FILE_NAME: &str = "document.kir.json";
 const GRAPH_ARTIFACT_FILE_NAME: &str = "graph.mgraph";
@@ -21,8 +24,8 @@ const GRAPH_ARTIFACT_MANIFEST_FILE_NAME: &str = "graph.mgraph.manifest.json";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const RUNTIME_CACHE_FILE_NAME: &str = "runtime.mruntime";
 const RUNTIME_CACHE_MANIFEST_FILE_NAME: &str = "runtime.mruntime.manifest.json";
-const GRAPH_CACHE_FORMAT_VERSION: u16 = 1;
-const RUNTIME_CACHE_FORMAT_VERSION: u16 = 1;
+const GRAPH_CACHE_FORMAT_VERSION: u16 = 2;
+const RUNTIME_CACHE_FORMAT_VERSION: u16 = 2;
 
 #[derive(Debug, Clone)]
 pub struct PersistentWorkspaceCache {
@@ -693,8 +696,8 @@ fn load_runtime_artifact_from_graph_cache(
         })
 }
 
-fn graph_artifact_to_binary_bytes(graph: &GraphArtifact) -> Result<Vec<u8>, KirError> {
-    let payload = serde_json::to_vec(graph)?;
+pub(crate) fn graph_artifact_to_binary_bytes(graph: &GraphArtifact) -> Result<Vec<u8>, KirError> {
+    let payload = compact_graph_payload_to_bytes(graph)?;
     let mut bytes = Vec::with_capacity(10 + payload.len());
     bytes.extend_from_slice(b"MGRF");
     bytes.extend_from_slice(&GRAPH_CACHE_FORMAT_VERSION.to_le_bytes());
@@ -707,7 +710,7 @@ fn graph_artifact_to_binary_bytes(graph: &GraphArtifact) -> Result<Vec<u8>, KirE
     Ok(bytes)
 }
 
-fn graph_artifact_from_binary_bytes(bytes: &[u8]) -> Result<GraphArtifact, KirError> {
+pub(crate) fn graph_artifact_from_binary_bytes(bytes: &[u8]) -> Result<GraphArtifact, KirError> {
     if bytes.len() < 10 || &bytes[0..4] != b"MGRF" {
         return Err(KirError::Model("invalid graph cache header".to_string()));
     }
@@ -724,13 +727,13 @@ fn graph_artifact_from_binary_bytes(bytes: &[u8]) -> Result<GraphArtifact, KirEr
     if bytes.len() != 10 + payload_len {
         return Err(KirError::Model("trailing graph cache bytes".to_string()));
     }
-    Ok(serde_json::from_slice(payload)?)
+    compact_graph_payload_from_bytes(payload)
 }
 
-fn runtime_artifact_to_binary_bytes(
+pub(crate) fn runtime_artifact_to_binary_bytes(
     runtime_artifact: &RuntimeArtifact,
 ) -> Result<Vec<u8>, KirError> {
-    let payload = serde_json::to_vec(runtime_artifact)?;
+    let payload = compact_runtime_payload_to_bytes(runtime_artifact)?;
     let mut bytes = Vec::with_capacity(10 + payload.len());
     bytes.extend_from_slice(b"MRUN");
     bytes.extend_from_slice(&RUNTIME_CACHE_FORMAT_VERSION.to_le_bytes());
@@ -743,7 +746,9 @@ fn runtime_artifact_to_binary_bytes(
     Ok(bytes)
 }
 
-fn runtime_artifact_from_binary_bytes(bytes: &[u8]) -> Result<RuntimeArtifact, KirError> {
+pub(crate) fn runtime_artifact_from_binary_bytes(
+    bytes: &[u8],
+) -> Result<RuntimeArtifact, KirError> {
     if bytes.len() < 10 || &bytes[0..4] != b"MRUN" {
         return Err(KirError::Model("invalid runtime cache header".to_string()));
     }
@@ -760,7 +765,485 @@ fn runtime_artifact_from_binary_bytes(bytes: &[u8]) -> Result<RuntimeArtifact, K
     if bytes.len() != 10 + payload_len {
         return Err(KirError::Model("trailing runtime cache bytes".to_string()));
     }
-    Ok(serde_json::from_slice(payload)?)
+    compact_runtime_payload_from_bytes(payload)
+}
+
+fn compact_graph_payload_to_bytes(graph: &GraphArtifact) -> Result<Vec<u8>, KirError> {
+    let mut strings = StringTableBuilder::default();
+    for element in &graph.elements {
+        strings.intern(&element.element_id)?;
+        strings.intern(element.kind.as_ref())?;
+        for key in element.properties.keys() {
+            strings.intern(key.as_ref())?;
+        }
+    }
+    for edge in &graph.edges {
+        strings.intern(edge.relation.as_ref())?;
+    }
+
+    let mut writer = BinaryWriter::new();
+    writer.write_string_table(strings.values())?;
+    write_graph_records(&mut writer, &strings, graph)?;
+    Ok(writer.into_bytes())
+}
+
+fn compact_graph_payload_from_bytes(bytes: &[u8]) -> Result<GraphArtifact, KirError> {
+    let mut reader = BinaryReader::new(bytes);
+    let strings = reader.read_string_table()?;
+    let graph = read_graph_records(&mut reader, &strings)?;
+    reader.finish()?;
+    Ok(graph)
+}
+
+fn compact_runtime_payload_to_bytes(runtime: &RuntimeArtifact) -> Result<Vec<u8>, KirError> {
+    let mut strings = StringTableBuilder::default();
+    for element in &runtime.graph.elements {
+        strings.intern(&element.element_id)?;
+        strings.intern(element.kind.as_ref())?;
+        for key in element.properties.keys() {
+            strings.intern(key.as_ref())?;
+        }
+    }
+    for edge in &runtime.graph.edges {
+        strings.intern(edge.relation.as_ref())?;
+    }
+    for (left, right) in &runtime.derived.subtypes {
+        strings.intern(left)?;
+        strings.intern(right)?;
+    }
+    for (left, right) in &runtime.derived.ownership {
+        strings.intern(left)?;
+        strings.intern(right)?;
+    }
+    for (left, right) in &runtime.derived.inherited_features {
+        strings.intern(left)?;
+        strings.intern(right)?;
+    }
+    for value in &runtime.derived.requirements {
+        strings.intern(value)?;
+    }
+    for (key, values) in &runtime.derived.satisfied_by {
+        strings.intern(key)?;
+        for value in values {
+            strings.intern(value)?;
+        }
+    }
+    for (key, values) in &runtime.derived.verified_by {
+        strings.intern(key)?;
+        for value in values {
+            strings.intern(value)?;
+        }
+    }
+    for (fact, explanation) in runtime.derived.explanations() {
+        intern_fact_strings(&mut strings, fact)?;
+        strings.intern(&explanation.rule_id)?;
+        for source_fact in &explanation.source_facts {
+            intern_fact_strings(&mut strings, source_fact)?;
+        }
+    }
+
+    let mut writer = BinaryWriter::new();
+    writer.write_string_table(strings.values())?;
+    write_graph_records(&mut writer, &strings, &runtime.graph)?;
+    write_string_pair_set(&mut writer, &strings, &runtime.derived.subtypes)?;
+    write_string_pair_set(&mut writer, &strings, &runtime.derived.ownership)?;
+    write_string_pair_set(&mut writer, &strings, &runtime.derived.inherited_features)?;
+    write_string_set(&mut writer, &strings, &runtime.derived.requirements)?;
+    write_string_set_map(&mut writer, &strings, &runtime.derived.satisfied_by)?;
+    write_string_set_map(&mut writer, &strings, &runtime.derived.verified_by)?;
+    write_explanations(&mut writer, &strings, runtime.derived.explanations())?;
+    Ok(writer.into_bytes())
+}
+
+fn compact_runtime_payload_from_bytes(bytes: &[u8]) -> Result<RuntimeArtifact, KirError> {
+    let mut reader = BinaryReader::new(bytes);
+    let strings = reader.read_string_table()?;
+    let graph = read_graph_records(&mut reader, &strings)?;
+    let mut derived = DerivedIndexes::default();
+    derived.subtypes = read_string_pair_set(&mut reader, &strings)?;
+    derived.ownership = read_string_pair_set(&mut reader, &strings)?;
+    derived.inherited_features = read_string_pair_set(&mut reader, &strings)?;
+    derived.requirements = read_string_set(&mut reader, &strings)?;
+    derived.satisfied_by = read_string_set_map(&mut reader, &strings)?;
+    derived.verified_by = read_string_set_map(&mut reader, &strings)?;
+    derived.set_explanations(read_explanations(&mut reader, &strings)?);
+    reader.finish()?;
+    Ok(RuntimeArtifact { graph, derived })
+}
+
+fn intern_fact_strings(strings: &mut StringTableBuilder, fact: &Fact) -> Result<(), KirError> {
+    strings.intern(&fact.predicate)?;
+    for term in &fact.terms {
+        strings.intern(term)?;
+    }
+    Ok(())
+}
+
+fn write_graph_records(
+    writer: &mut BinaryWriter,
+    strings: &StringTableBuilder,
+    graph: &GraphArtifact,
+) -> Result<(), KirError> {
+    writer.write_len(graph.elements.len(), "graph element count")?;
+    for element in &graph.elements {
+        writer.write_u32(element.id);
+        writer.write_u32(strings.index_of(&element.element_id)?);
+        writer.write_u32(strings.index_of(element.kind.as_ref())?);
+        writer.write_u8(element.layer);
+        writer.write_len(element.properties.len(), "element property count")?;
+        for (key, value) in element.properties.iter() {
+            writer.write_u32(strings.index_of(key.as_ref())?);
+            writer.write_json_value(value)?;
+        }
+    }
+    writer.write_len(graph.edges.len(), "graph edge count")?;
+    for edge in &graph.edges {
+        writer.write_u32(edge.source);
+        writer.write_u32(edge.target);
+        writer.write_u32(strings.index_of(edge.relation.as_ref())?);
+    }
+    Ok(())
+}
+
+fn read_graph_records(
+    reader: &mut BinaryReader<'_>,
+    strings: &[String],
+) -> Result<GraphArtifact, KirError> {
+    let element_count = reader.read_len("graph element count")?;
+    let mut elements = Vec::with_capacity(element_count);
+    for _ in 0..element_count {
+        let id = reader.read_u32()?;
+        let element_id = reader.read_string_ref(strings)?.to_string();
+        let kind = Arc::<str>::from(reader.read_string_ref(strings)?.to_string());
+        let layer = reader.read_u8()?;
+        let property_count = reader.read_len("element property count")?;
+        let mut properties = BTreeMap::new();
+        for _ in 0..property_count {
+            let key = reader.read_string_ref(strings)?.to_string();
+            let value = reader.read_json_value()?;
+            properties.insert(key, value);
+        }
+        elements.push(Element {
+            id,
+            element_id: element_id.clone(),
+            kind,
+            layer,
+            properties: ElementProperties::from_declared_for_artifact(element_id, properties),
+        });
+    }
+    let edge_count = reader.read_len("graph edge count")?;
+    let mut edges = Vec::with_capacity(edge_count);
+    for _ in 0..edge_count {
+        edges.push(Edge {
+            source: reader.read_u32()?,
+            target: reader.read_u32()?,
+            relation: Arc::<str>::from(reader.read_string_ref(strings)?.to_string()),
+        });
+    }
+    Ok(GraphArtifact { elements, edges })
+}
+
+fn write_string_pair_set(
+    writer: &mut BinaryWriter,
+    strings: &StringTableBuilder,
+    values: &BTreeSet<(String, String)>,
+) -> Result<(), KirError> {
+    writer.write_len(values.len(), "string pair set count")?;
+    for (left, right) in values {
+        writer.write_u32(strings.index_of(left)?);
+        writer.write_u32(strings.index_of(right)?);
+    }
+    Ok(())
+}
+
+fn read_string_pair_set(
+    reader: &mut BinaryReader<'_>,
+    strings: &[String],
+) -> Result<BTreeSet<(String, String)>, KirError> {
+    let count = reader.read_len("string pair set count")?;
+    let mut values = BTreeSet::new();
+    for _ in 0..count {
+        values.insert((
+            reader.read_string_ref(strings)?.to_string(),
+            reader.read_string_ref(strings)?.to_string(),
+        ));
+    }
+    Ok(values)
+}
+
+fn write_string_set(
+    writer: &mut BinaryWriter,
+    strings: &StringTableBuilder,
+    values: &BTreeSet<String>,
+) -> Result<(), KirError> {
+    writer.write_len(values.len(), "string set count")?;
+    for value in values {
+        writer.write_u32(strings.index_of(value)?);
+    }
+    Ok(())
+}
+
+fn read_string_set(
+    reader: &mut BinaryReader<'_>,
+    strings: &[String],
+) -> Result<BTreeSet<String>, KirError> {
+    let count = reader.read_len("string set count")?;
+    let mut values = BTreeSet::new();
+    for _ in 0..count {
+        values.insert(reader.read_string_ref(strings)?.to_string());
+    }
+    Ok(values)
+}
+
+fn write_string_set_map(
+    writer: &mut BinaryWriter,
+    strings: &StringTableBuilder,
+    values: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), KirError> {
+    writer.write_len(values.len(), "string set map count")?;
+    for (key, set) in values {
+        writer.write_u32(strings.index_of(key)?);
+        write_string_set(writer, strings, set)?;
+    }
+    Ok(())
+}
+
+fn read_string_set_map(
+    reader: &mut BinaryReader<'_>,
+    strings: &[String],
+) -> Result<BTreeMap<String, BTreeSet<String>>, KirError> {
+    let count = reader.read_len("string set map count")?;
+    let mut values = BTreeMap::new();
+    for _ in 0..count {
+        let key = reader.read_string_ref(strings)?.to_string();
+        let set = read_string_set(reader, strings)?;
+        values.insert(key, set);
+    }
+    Ok(values)
+}
+
+fn write_explanations(
+    writer: &mut BinaryWriter,
+    strings: &StringTableBuilder,
+    explanations: &BTreeMap<Fact, Explanation>,
+) -> Result<(), KirError> {
+    writer.write_len(explanations.len(), "explanation count")?;
+    for (fact, explanation) in explanations {
+        write_fact(writer, strings, fact)?;
+        writer.write_u32(strings.index_of(&explanation.rule_id)?);
+        writer.write_len(explanation.source_facts.len(), "source fact count")?;
+        for source_fact in &explanation.source_facts {
+            write_fact(writer, strings, source_fact)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_explanations(
+    reader: &mut BinaryReader<'_>,
+    strings: &[String],
+) -> Result<BTreeMap<Fact, Explanation>, KirError> {
+    let count = reader.read_len("explanation count")?;
+    let mut explanations = BTreeMap::new();
+    for _ in 0..count {
+        let fact = read_fact(reader, strings)?;
+        let rule_id = reader.read_string_ref(strings)?.to_string();
+        let source_fact_count = reader.read_len("source fact count")?;
+        let mut source_facts = Vec::with_capacity(source_fact_count);
+        for _ in 0..source_fact_count {
+            source_facts.push(read_fact(reader, strings)?);
+        }
+        explanations.insert(
+            fact,
+            Explanation {
+                rule_id,
+                source_facts,
+            },
+        );
+    }
+    Ok(explanations)
+}
+
+fn write_fact(
+    writer: &mut BinaryWriter,
+    strings: &StringTableBuilder,
+    fact: &Fact,
+) -> Result<(), KirError> {
+    writer.write_u32(strings.index_of(&fact.predicate)?);
+    writer.write_len(fact.terms.len(), "fact term count")?;
+    for term in &fact.terms {
+        writer.write_u32(strings.index_of(term)?);
+    }
+    Ok(())
+}
+
+fn read_fact(reader: &mut BinaryReader<'_>, strings: &[String]) -> Result<Fact, KirError> {
+    let predicate = reader.read_string_ref(strings)?.to_string();
+    let term_count = reader.read_len("fact term count")?;
+    let mut terms = Vec::with_capacity(term_count);
+    for _ in 0..term_count {
+        terms.push(reader.read_string_ref(strings)?.to_string());
+    }
+    Ok(Fact { predicate, terms })
+}
+
+#[derive(Default)]
+struct StringTableBuilder {
+    by_value: HashMap<String, u32>,
+    values: Vec<String>,
+}
+
+impl StringTableBuilder {
+    fn intern(&mut self, value: &str) -> Result<u32, KirError> {
+        if let Some(index) = self.by_value.get(value) {
+            return Ok(*index);
+        }
+        let index = u32::try_from(self.values.len())
+            .map_err(|_| KirError::Model("string table exceeds u32".to_string()))?;
+        self.values.push(value.to_string());
+        self.by_value.insert(value.to_string(), index);
+        Ok(index)
+    }
+
+    fn index_of(&self, value: &str) -> Result<u32, KirError> {
+        self.by_value
+            .get(value)
+            .copied()
+            .ok_or_else(|| KirError::Model(format!("missing string table value `{value}`")))
+    }
+
+    fn values(&self) -> &[String] {
+        &self.values
+    }
+}
+
+struct BinaryWriter {
+    bytes: Vec<u8>,
+}
+
+impl BinaryWriter {
+    fn new() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.bytes.push(value);
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_len(&mut self, value: usize, label: &str) -> Result<(), KirError> {
+        let value =
+            u32::try_from(value).map_err(|_| KirError::Model(format!("{label} exceeds u32")))?;
+        self.write_u32(value);
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, value: &[u8], label: &str) -> Result<(), KirError> {
+        self.write_len(value.len(), label)?;
+        self.bytes.extend_from_slice(value);
+        Ok(())
+    }
+
+    fn write_string_table(&mut self, values: &[String]) -> Result<(), KirError> {
+        self.write_len(values.len(), "string table count")?;
+        for value in values {
+            self.write_bytes(value.as_bytes(), "string table value length")?;
+        }
+        Ok(())
+    }
+
+    fn write_json_value(&mut self, value: &serde_json::Value) -> Result<(), KirError> {
+        let bytes = serde_json::to_vec(value)?;
+        self.write_bytes(&bytes, "JSON value length")
+    }
+}
+
+struct BinaryReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> BinaryReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn finish(&self) -> Result<(), KirError> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(KirError::Model("trailing compact cache bytes".to_string()))
+        }
+    }
+
+    fn read_u8(&mut self) -> Result<u8, KirError> {
+        let value = *self
+            .bytes
+            .get(self.offset)
+            .ok_or_else(|| KirError::Model("truncated compact cache u8".to_string()))?;
+        self.offset += 1;
+        Ok(value)
+    }
+
+    fn read_u32(&mut self) -> Result<u32, KirError> {
+        let bytes = self.read_exact(4, "u32")?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    fn read_len(&mut self, label: &str) -> Result<usize, KirError> {
+        let value = self.read_u32()?;
+        usize::try_from(value).map_err(|_| KirError::Model(format!("{label} exceeds usize")))
+    }
+
+    fn read_exact(&mut self, len: usize, label: &str) -> Result<&'a [u8], KirError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| KirError::Model(format!("{label} length overflows")))?;
+        let bytes = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| KirError::Model(format!("truncated compact cache {label}")))?;
+        self.offset = end;
+        Ok(bytes)
+    }
+
+    fn read_bytes(&mut self, label: &str) -> Result<&'a [u8], KirError> {
+        let len = self.read_len(label)?;
+        self.read_exact(len, label)
+    }
+
+    fn read_string_table(&mut self) -> Result<Vec<String>, KirError> {
+        let count = self.read_len("string table count")?;
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            let bytes = self.read_bytes("string table value")?;
+            let value = std::str::from_utf8(bytes)
+                .map_err(|err| KirError::Model(format!("invalid string table utf8: {err}")))?;
+            values.push(value.to_string());
+        }
+        Ok(values)
+    }
+
+    fn read_string_ref<'b>(&mut self, strings: &'b [String]) -> Result<&'b str, KirError> {
+        let index = self.read_u32()? as usize;
+        strings
+            .get(index)
+            .map(String::as_str)
+            .ok_or_else(|| KirError::Model(format!("invalid string table index {index}")))
+    }
+
+    fn read_json_value(&mut self) -> Result<serde_json::Value, KirError> {
+        let bytes = self.read_bytes("JSON value")?;
+        Ok(serde_json::from_slice(bytes)?)
+    }
 }
 
 fn cache_source_bytes(
