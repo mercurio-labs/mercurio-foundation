@@ -18,11 +18,11 @@ The goal of this repository is to make the modeling substrate useful on its own:
 - `mercurio-foundation` loads libraries, builds runtime graphs, and computes deterministic derived values.
 - `mercurio-kir` owns the KIR document model, validation, and artifact IO.
 - `mercurio-language-contracts` owns host-facing language service contracts.
-- `mercurio-tools` contains maintainer tools for diagnostics, benchmarks, demos, and transitional comparison workflows.
+- `mercurio-kir` and `mercurio-language-contracts` define the portable data and language-service contracts used by sibling repositories.
 - `resources/` contains bundled runtime and standard library artifacts.
 - `examples/` and `fixtures/` provide SysML, KerML, and KIR models for tests and demonstrations.
 
-SysML and KerML language libraries live in the sibling `mercurio-sysml` repository. The command-line host lives in the sibling `mercurio-cli` repository. Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI orchestration live in the sibling `mercurio-reasoning` repository. The hosted product, UI, and privileged console API live in the private `mercurio-product` repository.
+SysML and KerML language libraries and language maintainer tools live in the sibling `mercurio-sysml` repository. The command-line host lives in `mercurio-sysml-cli`. Python, WASM, and UI-facing adapters live in the sibling `mercurio-adapter` repository. Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI orchestration live in the sibling `mercurio-reasoning` repository. The hosted product, UI, and privileged console API live in the private `mercurio-product` repository.
 
 ## Core Concepts
 
@@ -89,7 +89,6 @@ mercurio project new my-model --name "My Model"
 
 - `Cargo.toml` - workspace manifest
 - `crates/mercurio-foundation/` - foundation library crate
-- `crates/mercurio-tools/` - maintainer diagnostics, benchmarks, demos, and Pilot comparison tools
 - `crates/mercurio-kir/` - KIR document and validation crate
 - `crates/mercurio-language-contracts/` - host-facing language service contracts
 - `examples/` - KIR JSON models and SysML/KerML example corpora

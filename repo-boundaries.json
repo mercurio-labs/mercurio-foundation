@@ -1,13 +1,8 @@
 {
   "allowed_core_crates": [
-    "mercurio-cli",
     "mercurio-foundation",
     "mercurio-kir",
-    "mercurio-language-contracts",
-    "mercurio-python",
-    "mercurio-tools",
-    "mercurio-views",
-    "mercurio-wasm"
+    "mercurio-language-contracts"
   ],
   "known_migration_crates": [],
   "forbidden_dependencies": {},

@@ -12,10 +12,16 @@ KIR + parser + compiler + stdlib + deterministic graph/query/runtime
 | Current crate | Target repo | Target crate / package | Action |
 | --- | --- | --- | --- |
 | `crates/mercurio-core` | `mercurio-core` | split into `mercurio-kir`, `mercurio-sysml`, `mercurio-compiler`, `mercurio-runtime`, `mercurio-stdlib` | split |
-| `crates/mercurio-cli` | `mercurio-core` | `mercurio-cli` | keep, then trim reasoning commands |
-| `crates/mercurio-wasm` | `mercurio-core` | `mercurio-wasm` | keep, core bindings only |
-| `crates/mercurio-python` | `mercurio-core` | `mercurio-python` | keep, core bindings only |
-| `crates/mercurio-tools` | `mercurio-core` | `mercurio-tools` or `xtask` | keep temporarily; split public audit tools from migration-only tools |
+| `crates/mercurio-cli` | `mercurio-core` | `mercurio-sysml-cli` | moved out of foundation |
+| `crates/mercurio-wasm` | `mercurio-core` | `mercurio-adapter` | moved out of foundation |
+| `crates/mercurio-python` | `mercurio-core` | `mercurio-adapter` | moved out of foundation |
+| `crates/mercurio-tools` | `mercurio-core` | `mercurio-sysml` | moved with SysML/metamodel tooling |
+
+Open boundary: `crates/mercurio-foundation` still directly depends on the
+SysML/KerML language crates for source parsing, authoring, project loading,
+linting, and source-set compilation. Removing that dependency requires changing
+those APIs to consume registered `LanguageService` implementations instead of
+calling concrete SysML/KerML parser modules.
 | `crates/mercurio-reasoner-api` | `mercurio-reasoning` | `mercurio-reasoner-api` | moved |
 | `crates/mercurio-plugin-api` | `mercurio-reasoning` | `mercurio-plugin-api` | moved |
 | `crates/mercurio-reference-capabilities` | `mercurio-reasoning` | `mercurio-reference-capabilities` | moved |
