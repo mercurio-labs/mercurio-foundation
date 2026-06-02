@@ -22,14 +22,17 @@ For a smaller smoke run:
 cargo run -p mercurio-foundation --bin kir_performance -- --sizes 100,1000 --edits 10 --output-dir target/kir-performance-smoke
 ```
 
-By default, runtime construction and semantic diff are skipped above 100,000 elements. Those guards keep the full ladder from exhausting memory while still measuring creation, validation, JSON persistence, JSON load, graph construction, and mutation for 1M elements. Override with `--max-runtime-size` and `--max-diff-size`.
+By default, runtime construction and semantic diff are skipped above 100,000 elements. Those guards keep the full ladder from exhausting memory while still measuring creation, validation, JSON persistence, binary KIR persistence, JSON load, binary KIR load, graph construction, and mutation for 1M elements. Override with `--max-runtime-size` and `--max-diff-size`.
 
 The JSON report includes:
 
 - synthetic KIR creation time
 - persisted KIR validation time
 - JSON write time
+- binary KIR write time
 - JSON load time
+- binary KIR load time
+- JSON and binary KIR file sizes
 - graph construction time
 - runtime construction time
 - KIR mutation time
@@ -54,3 +57,5 @@ The harness sets `MERCURIO_PERF_OUTPUT_DIR` for the external command and capture
 Use release builds for real measurements. Debug builds are useful only for smoke checks.
 
 The synthetic KIR model uses one package and `N` type elements linked by specialization. This intentionally stresses common KIR operations and graph/runtime relationship handling without depending on a source language parser.
+
+Binary KIR is intended as a warm-load cache format. JSON remains the human-readable interchange/debug format. The first binary format stores a versioned header, a string table, element records, metadata, and structured property values. Future cache layers can build on this by storing graph or runtime artifacts directly.

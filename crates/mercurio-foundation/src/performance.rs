@@ -148,6 +148,8 @@ pub struct KirPerformanceScenarioReport {
     pub edit_count: usize,
     pub file_path: String,
     pub json_bytes: u64,
+    pub binary_file_path: String,
+    pub binary_bytes: u64,
     pub timings: KirPerformanceTimings,
     pub memory: KirPerformanceMemory,
     pub diff_summary: SemanticDiffSummary,
@@ -158,7 +160,9 @@ pub struct KirPerformanceTimings {
     pub create_kir: TimingMetric,
     pub validate_created: TimingMetric,
     pub write_json: TimingMetric,
+    pub write_binary: TimingMetric,
     pub load_json: TimingMetric,
+    pub load_binary: TimingMetric,
     pub build_graph: TimingMetric,
     pub build_runtime: Option<TimingMetric>,
     pub mutate_kir: TimingMetric,
@@ -293,6 +297,7 @@ fn run_kir_performance_scenario(
 ) -> Result<KirPerformanceScenarioReport, Box<dyn Error>> {
     let total_timer = Instant::now();
     let file_path = output_dir.join(format!("kir-{model_size}.json"));
+    let binary_file_path = output_dir.join(format!("kir-{model_size}.mkir"));
 
     let create_timer = Instant::now();
     let document = synthetic_kir_document(model_size);
@@ -307,12 +312,22 @@ fn run_kir_performance_scenario(
     document.write_pretty_to_path(&file_path)?;
     let write_json = TimingMetric::from_duration(write_timer.elapsed());
     let json_bytes = std::fs::metadata(&file_path)?.len();
+
+    let write_binary_timer = Instant::now();
+    document.write_binary_to_path(&binary_file_path)?;
+    let write_binary = TimingMetric::from_duration(write_binary_timer.elapsed());
+    let binary_bytes = std::fs::metadata(&binary_file_path)?.len();
     drop(document);
 
     let load_timer = Instant::now();
     let graph_document = KirDocument::from_path(&file_path)?;
     let load_json = TimingMetric::from_duration(load_timer.elapsed());
     let after_load = current_memory();
+
+    let load_binary_timer = Instant::now();
+    let binary_document = KirDocument::from_binary_path(&binary_file_path)?;
+    let load_binary = TimingMetric::from_duration(load_binary_timer.elapsed());
+    drop(binary_document);
 
     let graph_timer = Instant::now();
     let graph = Graph::from_document(graph_document)?;
@@ -381,6 +396,7 @@ fn run_kir_performance_scenario(
 
     if !keep_files {
         let _ = std::fs::remove_file(&file_path);
+        let _ = std::fs::remove_file(&binary_file_path);
     }
 
     Ok(KirPerformanceScenarioReport {
@@ -388,11 +404,15 @@ fn run_kir_performance_scenario(
         edit_count,
         file_path: file_path.display().to_string(),
         json_bytes,
+        binary_file_path: binary_file_path.display().to_string(),
+        binary_bytes,
         timings: KirPerformanceTimings {
             create_kir,
             validate_created,
             write_json,
+            write_binary,
             load_json,
+            load_binary,
             build_graph,
             build_runtime,
             mutate_kir,
