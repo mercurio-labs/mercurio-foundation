@@ -120,4 +120,4 @@ else:
 
 `runtime.mruntime` uses a versioned binary envelope with compact numeric records. The payload starts with a shared string table, then stores element ids, kinds, property keys, edge relations, and derived-index values as numeric references. Property values still use structured JSON bytes inside the record stream because KIR property values remain open-ended.
 
-The compact payload includes element records, property records, edge records, derived-index records, and datalog explanation records. Public APIs still expose strings at the boundary.
+The compact payload is split into a hot runtime section and a diagnostic section. Normal warm loads decode only the hot section: element records, property records, edge records, and derived-index records. Datalog explanation records are stored separately as diagnostic data so ordinary workspace open does not pay their decode cost. Public APIs still expose strings at the boundary.

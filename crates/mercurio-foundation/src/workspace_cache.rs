@@ -22,7 +22,7 @@ const DOCUMENT_FILE_NAME: &str = "document.kir.json";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const RUNTIME_CACHE_FILE_NAME: &str = "runtime.mruntime";
 const RUNTIME_CACHE_MANIFEST_FILE_NAME: &str = "runtime.mruntime.manifest.json";
-const RUNTIME_CACHE_FORMAT_VERSION: u16 = 2;
+const RUNTIME_CACHE_FORMAT_VERSION: u16 = 3;
 
 #[derive(Debug, Clone)]
 pub struct PersistentWorkspaceCache {
@@ -751,13 +751,6 @@ fn compact_runtime_payload_to_bytes(runtime: &RuntimeArtifact) -> Result<Vec<u8>
             strings.intern(value)?;
         }
     }
-    for (fact, explanation) in runtime.derived.explanations() {
-        intern_fact_strings(&mut strings, fact)?;
-        strings.intern(&explanation.rule_id)?;
-        for source_fact in &explanation.source_facts {
-            intern_fact_strings(&mut strings, source_fact)?;
-        }
-    }
 
     let mut writer = BinaryWriter::new();
     writer.write_string_table(strings.values())?;
@@ -768,7 +761,8 @@ fn compact_runtime_payload_to_bytes(runtime: &RuntimeArtifact) -> Result<Vec<u8>
     write_string_set(&mut writer, &strings, &runtime.derived.requirements)?;
     write_string_set_map(&mut writer, &strings, &runtime.derived.satisfied_by)?;
     write_string_set_map(&mut writer, &strings, &runtime.derived.verified_by)?;
-    write_explanations(&mut writer, &strings, runtime.derived.explanations())?;
+    let diagnostic_section = diagnostic_payload_to_bytes(runtime.derived.explanations())?;
+    writer.write_bytes(&diagnostic_section, "runtime diagnostic section length")?;
     Ok(writer.into_bytes())
 }
 
@@ -783,9 +777,36 @@ fn compact_runtime_payload_from_bytes(bytes: &[u8]) -> Result<RuntimeArtifact, K
     derived.requirements = read_string_set(&mut reader, &strings)?;
     derived.satisfied_by = read_string_set_map(&mut reader, &strings)?;
     derived.verified_by = read_string_set_map(&mut reader, &strings)?;
-    derived.set_explanations(read_explanations(&mut reader, &strings)?);
+    let _diagnostic_section = reader.read_bytes("runtime diagnostic section")?;
     reader.finish()?;
     Ok(RuntimeArtifact { graph, derived })
+}
+
+fn diagnostic_payload_to_bytes(
+    explanations: &BTreeMap<Fact, Explanation>,
+) -> Result<Vec<u8>, KirError> {
+    let mut strings = StringTableBuilder::default();
+    for (fact, explanation) in explanations {
+        intern_fact_strings(&mut strings, fact)?;
+        strings.intern(&explanation.rule_id)?;
+        for source_fact in &explanation.source_facts {
+            intern_fact_strings(&mut strings, source_fact)?;
+        }
+    }
+
+    let mut writer = BinaryWriter::new();
+    writer.write_string_table(strings.values())?;
+    write_explanations(&mut writer, &strings, explanations)?;
+    Ok(writer.into_bytes())
+}
+
+#[cfg(test)]
+fn diagnostic_payload_from_bytes(bytes: &[u8]) -> Result<BTreeMap<Fact, Explanation>, KirError> {
+    let mut reader = BinaryReader::new(bytes);
+    let strings = reader.read_string_table()?;
+    let explanations = read_explanations(&mut reader, &strings)?;
+    reader.finish()?;
+    Ok(explanations)
 }
 
 fn intern_fact_strings(strings: &mut StringTableBuilder, fact: &Fact) -> Result<(), KirError> {
@@ -956,6 +977,7 @@ fn write_explanations(
     Ok(())
 }
 
+#[cfg(test)]
 fn read_explanations(
     reader: &mut BinaryReader<'_>,
     strings: &[Arc<str>],
@@ -994,6 +1016,7 @@ fn write_fact(
     Ok(())
 }
 
+#[cfg(test)]
 fn read_fact(reader: &mut BinaryReader<'_>, strings: &[Arc<str>]) -> Result<Fact, KirError> {
     let predicate = reader.read_string_ref(strings)?.to_string();
     let term_count = reader.read_len("fact term count")?;
@@ -1488,7 +1511,65 @@ mod tests {
             hit_runtime.graph().elements()
         );
         assert_eq!(miss_runtime.graph().edges(), hit_runtime.graph().edges());
-        assert_eq!(miss_runtime.derived(), hit_runtime.derived());
+        assert_eq!(
+            miss_runtime.derived().subtypes,
+            hit_runtime.derived().subtypes
+        );
+        assert_eq!(
+            miss_runtime.derived().ownership,
+            hit_runtime.derived().ownership
+        );
+        assert_eq!(
+            miss_runtime.derived().inherited_features,
+            hit_runtime.derived().inherited_features
+        );
+        assert_eq!(
+            miss_runtime.derived().requirements,
+            hit_runtime.derived().requirements
+        );
+        assert_eq!(
+            miss_runtime.derived().satisfied_by,
+            hit_runtime.derived().satisfied_by
+        );
+        assert_eq!(
+            miss_runtime.derived().verified_by,
+            hit_runtime.derived().verified_by
+        );
+        assert!(!miss_runtime.derived().explanations().is_empty());
+        assert!(hit_runtime.derived().explanations().is_empty());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_cache_diagnostic_explanations_round_trip_separately() {
+        let root = temp_dir("persistent_runtime_diagnostics");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = test_library_context();
+        let sources = vec![
+            SourceDocument::new("domain.model", "package Domain { part def Camera; }"),
+            SourceDocument::new(
+                "usage.model",
+                "package Usage {
+                  part camera : Domain.Camera;
+                }",
+            ),
+        ];
+
+        let result = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+        let explanations = result.runtime_artifact.derived.explanations();
+        let bytes = super::diagnostic_payload_to_bytes(explanations).unwrap();
+        let decoded = super::diagnostic_payload_from_bytes(&bytes).unwrap();
+
+        assert!(!explanations.is_empty());
+        assert_eq!(decoded, *explanations);
 
         std::fs::remove_dir_all(root).unwrap();
     }
