@@ -67,7 +67,7 @@ fn export_from_pilot(
     let interactive_jar = find_interactive_jar(&pilot_root)?;
     let classes_dir = repo_path("target/pilot-exporter-classes");
     let java_source = repo_path(
-        "tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotLoweringEvidenceExporter.java",
+        "../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotLoweringEvidenceExporter.java",
     );
 
     compile_java_exporter(&interactive_jar, &java_source, &classes_dir)?;

@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use mercurio_core::frontend::kerml::{compile_kerml_text, parse_kerml};
 use mercurio_core::{
     Graph, KirDocument, MetamodelAttributeRegistry, SnapshotMode, SyntaxSnapshot,
     SyntaxSnapshotNode, SyntaxSourceSpan, build_rust_syntax_snapshot, build_semantic_snapshot,
     build_semantic_snapshot_with_registry, compare_snapshots, compare_syntax_snapshots,
     default_stdlib_path, load_pilot_export, normalize_pilot_export_for_compare, repo_path,
 };
+use mercurio_kerml::{compile_kerml_text, parse_kerml};
 use mercurio_tools::{default_kerml_examples_root, default_pilot_root};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -589,8 +589,9 @@ fn run_java_exporter(
     let library_root = pilot_root.join("sysml.library");
     let interactive_jar = find_interactive_jar(&pilot_root)?;
     let classes_dir = repo_path("target/pilot-exporter-classes");
-    let java_source =
-        repo_path("tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java");
+    let java_source = repo_path(
+        "../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java",
+    );
     compile_java_exporter(
         &interactive_jar,
         &java_source,

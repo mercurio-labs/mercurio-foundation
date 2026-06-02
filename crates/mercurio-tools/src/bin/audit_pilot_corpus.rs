@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use mercurio_core::frontend::lexer::lex;
 use mercurio_core::frontend::resolver::resolve_module;
-use mercurio_core::frontend::sysml::parse_sysml;
 use mercurio_core::frontend::transpile::{MappingBundle, transpile_module};
 use mercurio_core::{KirDocument, default_stdlib_path, repo_path};
+use mercurio_sysml::parse_sysml;
 use mercurio_tools::default_pilot_root;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

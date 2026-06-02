@@ -200,7 +200,7 @@ Candidate facts:
 
 Implementation anchors:
 
-- `tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotStdlibExporter.java`
+- `../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotStdlibExporter.java`
 - `crates/mercurio-core/src/frontend/pilot.rs`
 - `crates/mercurio-tools/src/bin/import_pilot_stdlib.rs`
 - `crates/mercurio-tools/src/bin/build_stdlib_release.rs`

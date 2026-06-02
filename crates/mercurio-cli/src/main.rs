@@ -6,16 +6,16 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use mercurio_core::frontend::ast::{Declaration, SysmlModule};
 use mercurio_core::frontend::diagnostics::Diagnostic;
-use mercurio_core::frontend::kerml::compile_kerml_text;
-use mercurio_core::frontend::sysml::compile_sysml_text_with_context_report;
 use mercurio_core::plugin_registry as registry;
 use mercurio_core::{
-    KirDocument, KparPackageBuild, KparPackageSource, LibraryProviderConfig, LintReport,
-    LintSeverity, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
+    KirDocument, KparPackageBuild, KparPackageSource, LanguageRegistry, LibraryProviderConfig,
+    LintReport, LintSeverity, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
     PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, QueryEngine, QueryResultSet, Runtime,
     SemanticCompileStatus, SourceLanguage, default_stdlib_path, lint_text, parse_query,
     resolve_project_context_for_language, write_kpar_package,
 };
+use mercurio_kerml::KermlLanguageModule;
+use mercurio_sysml::SysmlLanguageModule;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -2040,44 +2040,44 @@ fn parse_source(source: &SourceInput) -> Result<SysmlModule, Diagnostic> {
 }
 
 fn compile_source(source: &SourceInput, stdlib: &KirDocument) -> CompileResponse {
-    match source.language {
-        SourceLanguage::Sysml => {
-            let report = compile_sysml_text_with_context_report(
-                &source.content,
-                &source.source_name,
-                &[],
-                stdlib,
-            );
-            CompileResponse {
-                source: source.source_name.clone(),
-                language: Some(source.language),
-                status: compile_status_str(report.status),
-                project_descriptor: ProjectDescriptorOutput::not_set(),
-                diagnostics: report.diagnostics,
-                document: report.document,
-            }
-        }
-        SourceLanguage::Kerml => {
-            match compile_kerml_text(&source.content, &source.source_name, stdlib) {
-                Ok(document) => CompileResponse {
-                    source: source.source_name.clone(),
-                    language: Some(source.language),
-                    status: "ok",
-                    project_descriptor: ProjectDescriptorOutput::not_set(),
-                    diagnostics: Vec::new(),
-                    document: Some(document),
-                },
-                Err(diagnostic) => CompileResponse {
-                    source: source.source_name.clone(),
-                    language: Some(source.language),
-                    status: "failed",
-                    project_descriptor: ProjectDescriptorOutput::not_set(),
-                    diagnostics: vec![diagnostic],
-                    document: None,
-                },
-            }
-        }
+    let registry = default_language_registry();
+    let language_id = source.language.as_str();
+    let Some(service) = registry.service_for_language(language_id) else {
+        return CompileResponse {
+            source: source.source_name.clone(),
+            language: Some(source.language),
+            status: "failed",
+            project_descriptor: ProjectDescriptorOutput::not_set(),
+            diagnostics: vec![Diagnostic::new(
+                format!("no registered language service for `{language_id}`"),
+                None,
+            )],
+            document: None,
+        };
+    };
+    let report = service.compile(
+        &source.content,
+        mercurio_core::CompileContext {
+            source_name: &source.source_name,
+            library_context: stdlib,
+        },
+    );
+
+    CompileResponse {
+        source: source.source_name.clone(),
+        language: Some(source.language),
+        status: compile_status_str(report.status),
+        project_descriptor: ProjectDescriptorOutput::not_set(),
+        diagnostics: report.diagnostics,
+        document: report.document,
     }
+}
+
+fn default_language_registry() -> LanguageRegistry {
+    let mut registry = LanguageRegistry::new();
+    registry.register(KermlLanguageModule);
+    registry.register(SysmlLanguageModule);
+    registry
 }
 
 fn compile_kpar_model_input(

@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use mercurio_core::graph::{Element, GraphArtifact};
 use mercurio_core::{
-    Edge, Graph, KirDocument, KirElement, MetamodelAttributeRegistry, compile_sysml_text,
-    default_stdlib_path,
+    Edge, Graph, KirDocument, KirElement, MetamodelAttributeRegistry, default_stdlib_path,
 };
+use mercurio_sysml::compile_sysml_text;
 use mercurio_views::{
     DiagramDirectionDto, DiagramKindDto, DiagramLayoutOptionsDto, DiagramQueryOptionsDto,
     DiagramRenderRequestDto, DiagramSpecDto, DiagramStyleOptionsDto, DiagramSymbolDto,

@@ -1,31 +1,32 @@
 # Mercurio
 
-Mercurio is the open source Rust library and CLI workspace for working with SysML v2, KerML, and Mercurio's KIR JSON model representation.
+Mercurio Foundation is the reusable Rust library workspace for Mercurio's KIR JSON model representation, semantic graph/runtime APIs, and host-facing contracts.
 
-The goal of this repository is to make the modeling kernel useful on its own: parse source models, compile them into semantic KIR, lint them, package them, and expose reusable library APIs that private products and external tools can build on.
+The goal of this repository is to make the modeling substrate useful on its own: load and validate KIR, build semantic graphs, run deterministic runtime/query operations, and expose reusable library APIs that source-language repos, private products, and external tools can build on.
 
 ## Objectives
 
-- Provide a reusable Rust library for SysML v2 and KerML model processing.
-- Keep the core model semantics independent from any particular server, desktop app, or hosted product.
-- Offer a small public CLI that demonstrates the library without requiring the private product repo.
+- Provide reusable Rust libraries for KIR, graph/runtime/query behavior, and host contracts.
+- Keep the foundation model semantics independent from any particular source language, server, desktop app, or hosted product.
+- Support host applications that register source-language services such as SysML and KerML.
 - Use KIR as the stable semantic interchange format for graph queries, derived values, package loading, and downstream applications.
 - Optimize for high-performance model loading, compilation, and runtime use.
 - Keep maintainer-only diagnostics, benchmarks, and Pilot comparison workflows separate from the public CLI.
 
 ## What Lives Here
 
-- `mercurio-core` parses, compiles, lints, loads libraries, builds runtime graphs, and computes derived values.
-- `mercurio-cli` provides the public `mercurio` command for project, parse, compile, query, evaluate, lint, package, and completion workflows.
-- `mercurio-tools` contains maintainer tools for diagnostics, benchmarks, demos, and Pilot comparison/export workflows.
+- `mercurio-foundation` loads libraries, builds runtime graphs, and computes deterministic derived values.
+- `mercurio-kir` owns the KIR document model, validation, and artifact IO.
+- `mercurio-language-contracts` owns host-facing language service contracts.
+- `mercurio-tools` contains maintainer tools for diagnostics, benchmarks, demos, and transitional comparison workflows.
 - `resources/` contains bundled runtime and standard library artifacts.
 - `examples/` and `fixtures/` provide SysML, KerML, and KIR models for tests and demonstrations.
 
-Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI orchestration live in the sibling `mercurio-reasoning` repository. The hosted product, UI, and privileged console API live in the private `mercurio-product` repository. They depend on `mercurio-core` for domain behavior.
+SysML and KerML language libraries live in the sibling `mercurio-sysml` repository. The command-line host lives in the sibling `mercurio-cli` repository. Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI orchestration live in the sibling `mercurio-reasoning` repository. The hosted product, UI, and privileged console API live in the private `mercurio-product` repository.
 
 ## Core Concepts
 
-- Source languages: Mercurio reads `.sysml` and `.kerml` files. Inline CLI text defaults to SysML unless `--language kerml` is provided.
+- Source languages: host applications register language services. SysML and KerML are provided by the sibling `mercurio-sysml` repository.
 - KIR: Mercurio's validated semantic JSON format, used by graph queries, derived values, projections, package loading, and product hosts.
 - Standard library: semantic compilation and linting use the bundled default standard library unless a command is given `--stdlib PATH`.
 - Project descriptors: `.mercurio-project.json` files describe baseline and dependency libraries in a single `libraries` array.
@@ -34,7 +35,7 @@ Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI o
 ## Requirements
 
 - Rust toolchain with Cargo
-- Java, only for Pilot comparison/export tools under `tools/pilot-exporter`
+- Java, only for Pilot comparison/export tools under `../mercurio-sysml/tools/pilot-exporter`
 
 Most commands assume you are running them from the repository root.
 
@@ -87,15 +88,15 @@ mercurio project new my-model --name "My Model"
 ## Repository Layout
 
 - `Cargo.toml` - workspace manifest
-- `crates/mercurio-core/` - library crate
-- `crates/mercurio-cli/` - public command-line binary
+- `crates/mercurio-foundation/` - foundation library crate
 - `crates/mercurio-tools/` - maintainer diagnostics, benchmarks, demos, and Pilot comparison tools
-- `crates/mercurio-core/src/frontend/` - SysML, KerML, linting, formatting, and resolver code
+- `crates/mercurio-kir/` - KIR document and validation crate
+- `crates/mercurio-language-contracts/` - host-facing language service contracts
 - `examples/` - KIR JSON models and SysML/KerML example corpora
 - `fixtures/` - test fixtures
 - `resources/` - bundled runtime and library resources
 - `docs/` - user docs plus development architecture and implementation notes
-- `tools/pilot-exporter/` - Java helper used by Pilot comparison workflows
+- `../mercurio-sysml/tools/pilot-exporter/` - Java helper used by Pilot comparison workflows
 
 ## Performance
 

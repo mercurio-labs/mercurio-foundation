@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use mercurio_core::frontend::ast::{Declaration, QualifiedName};
-use mercurio_core::frontend::sysml::parse_sysml;
+use mercurio_sysml::parse_sysml;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

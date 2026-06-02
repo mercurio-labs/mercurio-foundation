@@ -12,7 +12,7 @@ reviewed profile data.
 The Pilot-side exporter scaffold lives at:
 
 ```text
-tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotLoweringEvidenceExporter.java
+../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotLoweringEvidenceExporter.java
 ```
 
 It currently targets Ecore/EMF class and structural-feature evidence. Grammar

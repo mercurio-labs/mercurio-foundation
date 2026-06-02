@@ -9,6 +9,6 @@ name = "mercurio_core_native"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-mercurio-core = { path = "../mercurio-core" }
+mercurio-core = { package = "mercurio-foundation", path = "../mercurio-foundation" }
 pyo3 = { workspace = true, features = ["extension-module"] }
 serde_json.workspace = true

@@ -131,6 +131,7 @@ pub use library::{
     PackageKirCache, PackageKirCacheManifest, ResolvedLibraryArtifact,
     load_baseline_library_document, write_kpar_package,
 };
+pub use mercurio_language_contracts::{CompileContext, LanguageRegistry, LanguageService};
 pub use metadata::{
     ElementMetadataView, KirMetadataAnnotation, MetadataView, metadata_annotations,
     metadata_annotations_named, metadata_string_property,

@@ -2,10 +2,7 @@
 members = [
     "crates/mercurio-kir",
     "crates/mercurio-language-contracts",
-    "crates/mercurio-language-frontend",
-    "crates/mercurio-core",
-    "crates/mercurio-kerml",
-    "crates/mercurio-sysml",
+    "crates/mercurio-foundation",
     "crates/mercurio-views",
     "crates/mercurio-cli",
     "crates/mercurio-python",

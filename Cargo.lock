@@ -812,7 +812,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
- "mercurio-core",
+ "mercurio-foundation",
+ "mercurio-kerml",
+ "mercurio-sysml",
  "reqwest",
  "serde",
  "serde_json",
@@ -820,7 +822,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mercurio-core"
+name = "mercurio-foundation"
 version = "0.1.0"
 dependencies = [
  "mercurio-kerml",
@@ -840,7 +842,6 @@ dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
  "mercurio-language-frontend",
- "serde_json",
 ]
 
 [[package]]
@@ -855,6 +856,7 @@ dependencies = [
 name = "mercurio-language-contracts"
 version = "0.1.0"
 dependencies = [
+ "mercurio-kir",
  "serde",
  "serde_json",
 ]
@@ -873,7 +875,7 @@ dependencies = [
 name = "mercurio-python"
 version = "0.1.0"
 dependencies = [
- "mercurio-core",
+ "mercurio-foundation",
  "pyo3",
  "serde_json",
 ]
@@ -886,14 +888,15 @@ dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
  "mercurio-language-frontend",
- "serde_json",
 ]
 
 [[package]]
 name = "mercurio-tools"
 version = "0.1.0"
 dependencies = [
- "mercurio-core",
+ "mercurio-foundation",
+ "mercurio-kerml",
+ "mercurio-sysml",
  "mercurio-views",
  "serde",
  "serde_json",
@@ -905,7 +908,7 @@ dependencies = [
 name = "mercurio-views"
 version = "0.1.0"
 dependencies = [
- "mercurio-core",
+ "mercurio-foundation",
  "serde",
  "serde_json",
 ]
@@ -915,7 +918,7 @@ name = "mercurio-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "mercurio-core",
+ "mercurio-foundation",
  "mercurio-views",
  "serde",
  "serde-wasm-bindgen",

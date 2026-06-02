@@ -73,7 +73,9 @@ name = "derived_feature_burndown"
 path = "src/bin/derived_feature_burndown.rs"
 
 [dependencies]
-mercurio-core = { path = "../mercurio-core" }
+mercurio-core = { package = "mercurio-foundation", path = "../mercurio-foundation" }
+mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
+mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 mercurio-views = { path = "../mercurio-views" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

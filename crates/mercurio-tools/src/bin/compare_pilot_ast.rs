@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use mercurio_core::frontend::sysml::parse_sysml;
 use mercurio_core::{
     SyntaxComparisonReport, SyntaxSnapshot, SyntaxSnapshotNode, SyntaxSourceSpan,
     build_rust_syntax_snapshot, compare_syntax_snapshots, repo_path,
 };
+use mercurio_sysml::parse_sysml;
 use mercurio_tools::default_pilot_root;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -576,8 +576,9 @@ fn export_syntax_from_pilot(
     let library_root = pilot_root.join("sysml.library");
     let interactive_jar = find_interactive_jar(&pilot_root)?;
     let classes_dir = repo_path("target/pilot-exporter-classes");
-    let java_source =
-        repo_path("tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java");
+    let java_source = repo_path(
+        "../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java",
+    );
     let export_path = repo_path(&format!(
         "target/pilot_ast_export.{}.json",
         relative_path_slug(relative_path)

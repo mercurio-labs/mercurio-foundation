@@ -17,6 +17,7 @@ These are the highest-level documents. Other plans should reinforce these bounda
 - [Frontend To KIR Theory Of Operation](FRONTEND_TO_KIR_THEORY_OF_OPERATION.md): source-to-KIR pipeline and implementation anchors.
 - [Project Descriptor and Library Provider Plan](PROJECT_DESCRIPTOR_AND_MOUNT_PLAN.md): project descriptors, libraries, baseline libraries, providers, and caches.
 - [Plugin Architecture](PLUGIN_ARCHITECTURE.md): plugin packages, registries, WASM services, verification, loading, and caches.
+- [Repo Split Implementation](REPO_SPLIT_IMPLEMENTATION.md): library-first split into core, SysML/KerML language libraries, CLI host, and examples.
 - [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md): shared cache/evidence key model for compiled and derived semantic artifacts.
 - [Proposal And Draft Overlay Lifecycle](PROPOSAL_DRAFT_LIFECYCLE.md): shared lifecycle for drafts, proposals, overlays, and PR bindings.
 

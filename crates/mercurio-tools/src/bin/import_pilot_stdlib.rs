@@ -310,8 +310,9 @@ fn export_from_pilot(
     let library_root = pilot_root.join("sysml.library");
     let interactive_jar = find_interactive_jar(&pilot_root)?;
     let classes_dir = repo_path("target/pilot-exporter-classes");
-    let java_source =
-        repo_path("tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotStdlibExporter.java");
+    let java_source = repo_path(
+        "../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotStdlibExporter.java",
+    );
 
     compile_java_exporter(&interactive_jar, &java_source, &classes_dir)?;
     run_java_exporter(&interactive_jar, &classes_dir, &library_root, export_path)?;

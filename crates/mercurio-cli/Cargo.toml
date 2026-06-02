@@ -11,7 +11,9 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
-mercurio-core = { path = "../mercurio-core" }
+mercurio-core = { package = "mercurio-foundation", path = "../mercurio-foundation" }
+mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
+mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 reqwest = { workspace = true, features = ["blocking"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

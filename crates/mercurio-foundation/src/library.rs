@@ -1068,8 +1068,7 @@ pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(),
         writer
             .start_file(KPAR_PRECOMPILED_KIR_ENTRY, options)
             .map_err(zip_error_to_kir_error)?;
-        let document = document.clone().normalized_for_persistence();
-        writer.write_all(serde_json::to_string_pretty(&document)?.as_bytes())?;
+        writer.write_all(serde_json::to_string_pretty(document)?.as_bytes())?;
     }
 
     for source in &sources {

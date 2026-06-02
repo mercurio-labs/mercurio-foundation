@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use mercurio_core::frontend::ast::Declaration;
 use mercurio_core::frontend::lexer::lex;
 use mercurio_core::frontend::resolver::resolve_module;
-use mercurio_core::frontend::sysml::parse_sysml;
 use mercurio_core::frontend::transpile::MappingBundle;
 use mercurio_core::ir::KirDocument;
+use mercurio_sysml::parse_sysml;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::env::args()

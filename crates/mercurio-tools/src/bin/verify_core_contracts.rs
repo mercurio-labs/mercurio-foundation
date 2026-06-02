@@ -4,11 +4,12 @@ use mercurio_core::{
     CURRENT_DEFAULT_PROFILE_ID, CommitMode, CommitStrategy, CoreMutationFeasibilityService,
     ElementRef, Graph, KirDocument, KirElement, LocalPackageRepository, ModelWorkspace,
     MutationContext, MutationFeasibilityService, MutationProposal, SemanticConcept,
-    SemanticMutation, SessionError, WorkspaceSnapshot, compile_sysml_text,
-    default_language_profile, default_metamodel_registry, default_stdlib_path, diff_kir_documents,
-    elements_with_metadata, generate_python_wrappers, load_authoring_project_from_sysml,
-    load_language_profile, requirement_traces, workspace_revision_for_kir_document,
+    SemanticMutation, SessionError, WorkspaceSnapshot, default_language_profile,
+    default_metamodel_registry, default_stdlib_path, diff_kir_documents, elements_with_metadata,
+    generate_python_wrappers, load_authoring_project_from_sysml, load_language_profile,
+    requirement_traces, workspace_revision_for_kir_document,
 };
+use mercurio_sysml::compile_sysml_text;
 
 fn main() {
     if let Err(error) = run() {

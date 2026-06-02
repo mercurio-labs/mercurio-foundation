@@ -88,6 +88,6 @@ If lookup fails:
 
 ## Pilot Tools Require Java And Pilot Inputs
 
-The public CLI does not require Java. Java is only needed for Pilot comparison/export tools under `tools/pilot-exporter`.
+The public CLI does not require Java. Java is only needed for Pilot comparison/export tools under `../mercurio-sysml/tools/pilot-exporter`.
 
 Pilot comparison commands also need a Pilot checkout or exported Pilot artifacts.

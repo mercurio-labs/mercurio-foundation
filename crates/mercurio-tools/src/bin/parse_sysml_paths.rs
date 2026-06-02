@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use mercurio_core::frontend::sysml::parse_sysml;
+use mercurio_sysml::parse_sysml;
 use mercurio_tools::default_pilot_root;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

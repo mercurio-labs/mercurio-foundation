@@ -462,7 +462,7 @@ fn mapping_rules_digest() -> Result<String, KirError> {
 
 fn compiler_digest() -> String {
     digest_labeled_chunks([
-        ("crate".as_bytes(), "mercurio-core".as_bytes()),
+        ("crate".as_bytes(), "mercurio-foundation".as_bytes()),
         ("version".as_bytes(), env!("CARGO_PKG_VERSION").as_bytes()),
         ("kir_schema".as_bytes(), KIR_SCHEMA_VERSION.as_bytes()),
     ])

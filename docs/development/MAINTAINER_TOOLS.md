@@ -6,7 +6,7 @@ Status: maintainer reference.
 
 The `mercurio-tools` crate contains diagnostics, benchmark, demo, and Pilot comparison binaries. These are useful for maintainers, but they are separate from the public CLI surface.
 
-Pilot comparison tools expect a Pilot checkout or exported Pilot artifacts. Java is required only for the Pilot helper under `tools/pilot-exporter`.
+Pilot comparison tools expect a Pilot checkout or exported Pilot artifacts. Java is required only for the Pilot helper under `../mercurio-sysml/tools/pilot-exporter`.
 
 Peer repository roots can be supplied either by command-line flags or environment variables:
 

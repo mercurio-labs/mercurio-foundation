@@ -8,6 +8,7 @@ pub mod diagnostics;
 pub mod expression;
 pub mod lexer;
 pub mod reports;
+pub mod service;
 
 pub use ast::*;
 pub use diagnostics::Diagnostic;
@@ -17,6 +18,7 @@ pub use expression::{
     UnaryExpressionOp,
 };
 pub use reports::{ParseReport, SemanticCompileReport, SemanticCompileStatus};
+pub use service::{CompileContext, LanguageRegistry, LanguageService};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

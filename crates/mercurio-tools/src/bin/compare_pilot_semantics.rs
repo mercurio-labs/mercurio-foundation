@@ -880,8 +880,9 @@ fn export_model_from_pilot(
     let library_root = pilot_root.join("sysml.library");
     let interactive_jar = find_interactive_jar(&pilot_root)?;
     let classes_dir = repo_path("target/pilot-exporter-classes");
-    let java_source =
-        repo_path("tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java");
+    let java_source = repo_path(
+        "../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java",
+    );
     let export_path = repo_path(&format!(
         "target/pilot_model_export.compare.{}.json",
         relative_path_slug(relative_path)
@@ -978,8 +979,9 @@ fn export_corpus_group_from_pilot(
     let library_root = pilot_root.join("sysml.library");
     let interactive_jar = find_interactive_jar(&pilot_root)?;
     let classes_dir = repo_path("target/pilot-exporter-classes");
-    let java_source =
-        repo_path("tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java");
+    let java_source = repo_path(
+        "../mercurio-sysml/tools/pilot-exporter/src/main/java/dev/mercurio/pilot/PilotModelExporter.java",
+    );
     let export_path = repo_path(&format!(
         "target/pilot_model_export.compare.batch.{group_slug}.json"
     ));
