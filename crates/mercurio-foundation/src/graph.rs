@@ -439,12 +439,15 @@ impl ElementProperties {
         properties
     }
 
-    pub(crate) fn from_declared_for_artifact(
+    pub(crate) fn from_declared_arc_for_artifact(
         element_id: String,
-        declared: BTreeMap<String, Value>,
+        mut declared: BTreeMap<Arc<str>, Value>,
     ) -> Self {
-        let mut property_key_interner = HashMap::new();
-        Self::new(element_id, declared, &mut property_key_interner)
+        declared.remove("element_id");
+        Self {
+            element_id_value: Value::String(element_id),
+            declared,
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {

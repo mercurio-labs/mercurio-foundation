@@ -824,19 +824,19 @@ fn write_graph_records(
 
 fn read_graph_records(
     reader: &mut BinaryReader<'_>,
-    strings: &[String],
+    strings: &[Arc<str>],
 ) -> Result<GraphArtifact, KirError> {
     let element_count = reader.read_len("graph element count")?;
     let mut elements = Vec::with_capacity(element_count);
     for _ in 0..element_count {
         let id = reader.read_u32()?;
         let element_id = reader.read_string_ref(strings)?.to_string();
-        let kind = Arc::<str>::from(reader.read_string_ref(strings)?.to_string());
+        let kind = reader.read_string_arc(strings)?;
         let layer = reader.read_u8()?;
         let property_count = reader.read_len("element property count")?;
         let mut properties = BTreeMap::new();
         for _ in 0..property_count {
-            let key = reader.read_string_ref(strings)?.to_string();
+            let key = reader.read_string_arc(strings)?;
             let value = reader.read_json_value()?;
             properties.insert(key, value);
         }
@@ -845,7 +845,7 @@ fn read_graph_records(
             element_id: element_id.clone(),
             kind,
             layer,
-            properties: ElementProperties::from_declared_for_artifact(element_id, properties),
+            properties: ElementProperties::from_declared_arc_for_artifact(element_id, properties),
         });
     }
     let edge_count = reader.read_len("graph edge count")?;
@@ -854,7 +854,7 @@ fn read_graph_records(
         edges.push(Edge {
             source: reader.read_u32()?,
             target: reader.read_u32()?,
-            relation: Arc::<str>::from(reader.read_string_ref(strings)?.to_string()),
+            relation: reader.read_string_arc(strings)?,
         });
     }
     Ok(GraphArtifact { elements, edges })
@@ -875,7 +875,7 @@ fn write_string_pair_set(
 
 fn read_string_pair_set(
     reader: &mut BinaryReader<'_>,
-    strings: &[String],
+    strings: &[Arc<str>],
 ) -> Result<BTreeSet<(String, String)>, KirError> {
     let count = reader.read_len("string pair set count")?;
     let mut values = BTreeSet::new();
@@ -902,7 +902,7 @@ fn write_string_set(
 
 fn read_string_set(
     reader: &mut BinaryReader<'_>,
-    strings: &[String],
+    strings: &[Arc<str>],
 ) -> Result<BTreeSet<String>, KirError> {
     let count = reader.read_len("string set count")?;
     let mut values = BTreeSet::new();
@@ -927,7 +927,7 @@ fn write_string_set_map(
 
 fn read_string_set_map(
     reader: &mut BinaryReader<'_>,
-    strings: &[String],
+    strings: &[Arc<str>],
 ) -> Result<BTreeMap<String, BTreeSet<String>>, KirError> {
     let count = reader.read_len("string set map count")?;
     let mut values = BTreeMap::new();
@@ -958,7 +958,7 @@ fn write_explanations(
 
 fn read_explanations(
     reader: &mut BinaryReader<'_>,
-    strings: &[String],
+    strings: &[Arc<str>],
 ) -> Result<BTreeMap<Fact, Explanation>, KirError> {
     let count = reader.read_len("explanation count")?;
     let mut explanations = BTreeMap::new();
@@ -994,7 +994,7 @@ fn write_fact(
     Ok(())
 }
 
-fn read_fact(reader: &mut BinaryReader<'_>, strings: &[String]) -> Result<Fact, KirError> {
+fn read_fact(reader: &mut BinaryReader<'_>, strings: &[Arc<str>]) -> Result<Fact, KirError> {
     let predicate = reader.read_string_ref(strings)?.to_string();
     let term_count = reader.read_len("fact term count")?;
     let mut terms = Vec::with_capacity(term_count);
@@ -1110,7 +1110,15 @@ impl<'a> BinaryReader<'a> {
     }
 
     fn read_u32(&mut self) -> Result<u32, KirError> {
-        let bytes = self.read_exact(4, "u32")?;
+        let end = self
+            .offset
+            .checked_add(4)
+            .ok_or_else(|| KirError::Model("u32 length overflows".to_string()))?;
+        if end > self.bytes.len() {
+            return Err(KirError::Model("truncated compact cache u32".to_string()));
+        }
+        let bytes = &self.bytes[self.offset..end];
+        self.offset = end;
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
@@ -1137,23 +1145,31 @@ impl<'a> BinaryReader<'a> {
         self.read_exact(len, label)
     }
 
-    fn read_string_table(&mut self) -> Result<Vec<String>, KirError> {
+    fn read_string_table(&mut self) -> Result<Vec<Arc<str>>, KirError> {
         let count = self.read_len("string table count")?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
             let bytes = self.read_bytes("string table value")?;
             let value = std::str::from_utf8(bytes)
                 .map_err(|err| KirError::Model(format!("invalid string table utf8: {err}")))?;
-            values.push(value.to_string());
+            values.push(Arc::<str>::from(value));
         }
         Ok(values)
     }
 
-    fn read_string_ref<'b>(&mut self, strings: &'b [String]) -> Result<&'b str, KirError> {
+    fn read_string_ref<'b>(&mut self, strings: &'b [Arc<str>]) -> Result<&'b str, KirError> {
         let index = self.read_u32()? as usize;
         strings
             .get(index)
-            .map(String::as_str)
+            .map(AsRef::as_ref)
+            .ok_or_else(|| KirError::Model(format!("invalid string table index {index}")))
+    }
+
+    fn read_string_arc(&mut self, strings: &[Arc<str>]) -> Result<Arc<str>, KirError> {
+        let index = self.read_u32()? as usize;
+        strings
+            .get(index)
+            .cloned()
             .ok_or_else(|| KirError::Model(format!("invalid string table index {index}")))
     }
 
