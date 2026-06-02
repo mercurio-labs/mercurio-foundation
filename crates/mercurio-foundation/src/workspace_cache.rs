@@ -6,19 +6,23 @@ use serde::{Deserialize, Serialize};
 
 use mercurio_language_contracts::LanguageRegistry;
 
+use crate::graph::{Graph, GraphArtifact};
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::runtime::{Runtime, RuntimeArtifact};
 use crate::source_set::{
     SourceDocument, compile_source_documents, compile_source_documents_with_registry,
 };
 
-const CACHE_SCHEMA_VERSION: u32 = 3;
+const CACHE_SCHEMA_VERSION: u32 = 4;
 const ARTIFACT_FAMILY_COMPILE: &str = "compile";
 const DOCUMENT_FILE_NAME: &str = "document.kir.json";
 const BINARY_DOCUMENT_FILE_NAME: &str = "document.mkir";
 const BINARY_DOCUMENT_MANIFEST_FILE_NAME: &str = "document.mkir.manifest.json";
+const GRAPH_ARTIFACT_FILE_NAME: &str = "graph.mgraph";
+const GRAPH_ARTIFACT_MANIFEST_FILE_NAME: &str = "graph.mgraph.manifest.json";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const RUNTIME_ARTIFACT_FILE_NAME: &str = "runtime-artifact.json";
+const GRAPH_CACHE_FORMAT_VERSION: u16 = 1;
 
 #[derive(Debug, Clone)]
 pub struct PersistentWorkspaceCache {
@@ -79,7 +83,22 @@ pub struct WorkspaceCompileCacheOutputs {
     pub binary_kir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_kir_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_artifact: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_artifact_manifest: Option<String>,
     pub runtime_artifact: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct GraphCacheManifest {
+    graph_format_version: u16,
+    kir_schema_version: String,
+    source_digest: String,
+    graph_digest: String,
+    generator: String,
+    element_count: usize,
+    edge_count: usize,
 }
 
 enum CacheLookup {
@@ -231,9 +250,11 @@ impl PersistentWorkspaceCache {
         let document_path = artifact_dir.join(DOCUMENT_FILE_NAME);
         let binary_document_path = artifact_dir.join(BINARY_DOCUMENT_FILE_NAME);
         let binary_document_manifest_path = artifact_dir.join(BINARY_DOCUMENT_MANIFEST_FILE_NAME);
+        let graph_artifact_path = artifact_dir.join(GRAPH_ARTIFACT_FILE_NAME);
+        let graph_artifact_manifest_path = artifact_dir.join(GRAPH_ARTIFACT_MANIFEST_FILE_NAME);
         let runtime_artifact_path = artifact_dir.join(RUNTIME_ARTIFACT_FILE_NAME);
 
-        if !manifest_path.is_file() || !runtime_artifact_path.is_file() {
+        if !manifest_path.is_file() {
             return Ok(CacheLookup::Miss);
         }
 
@@ -274,15 +295,36 @@ impl PersistentWorkspaceCache {
                 }
             }
         };
-        let runtime_artifact =
+        let runtime_artifact = if runtime_artifact_path.is_file() {
             match serde_json::from_str(&std::fs::read_to_string(&runtime_artifact_path)?) {
                 Ok(artifact) => artifact,
-                Err(err) => {
-                    return Ok(CacheLookup::Rejected(format!(
-                        "cached runtime artifact is invalid: {err}"
-                    )));
+                Err(_) => match load_runtime_artifact_from_graph_cache(
+                    &graph_artifact_path,
+                    &graph_artifact_manifest_path,
+                    &binary_cache_source,
+                )? {
+                    Some(artifact) => artifact,
+                    None => {
+                        return Ok(CacheLookup::Rejected(
+                            "cached runtime artifact and graph cache are invalid".to_string(),
+                        ));
+                    }
+                },
+            }
+        } else {
+            match load_runtime_artifact_from_graph_cache(
+                &graph_artifact_path,
+                &graph_artifact_manifest_path,
+                &binary_cache_source,
+            )? {
+                Some(artifact) => artifact,
+                None => {
+                    return Ok(CacheLookup::Rejected(
+                        "cached runtime artifact and graph cache are missing".to_string(),
+                    ));
                 }
-            };
+            }
+        };
         Ok(CacheLookup::Hit {
             document,
             runtime_artifact,
@@ -362,6 +404,8 @@ impl PersistentWorkspaceCache {
                 kir: DOCUMENT_FILE_NAME.to_string(),
                 binary_kir: Some(BINARY_DOCUMENT_FILE_NAME.to_string()),
                 binary_kir_manifest: Some(BINARY_DOCUMENT_MANIFEST_FILE_NAME.to_string()),
+                graph_artifact: Some(GRAPH_ARTIFACT_FILE_NAME.to_string()),
+                graph_artifact_manifest: Some(GRAPH_ARTIFACT_MANIFEST_FILE_NAME.to_string()),
                 runtime_artifact: RUNTIME_ARTIFACT_FILE_NAME.to_string(),
             },
         };
@@ -374,6 +418,12 @@ impl PersistentWorkspaceCache {
         std::fs::write(
             dir.join(RUNTIME_ARTIFACT_FILE_NAME),
             serde_json::to_string_pretty(runtime_artifact)?,
+        )?;
+        write_graph_artifact_cache(
+            &dir.join(GRAPH_ARTIFACT_FILE_NAME),
+            &dir.join(GRAPH_ARTIFACT_MANIFEST_FILE_NAME),
+            &runtime_artifact.graph,
+            &binary_cache_source_bytes(key, files)?,
         )?;
         std::fs::write(
             dir.join(MANIFEST_FILE_NAME),
@@ -403,6 +453,17 @@ impl PersistentWorkspaceCache {
         let _: RuntimeArtifact = serde_json::from_str(&std::fs::read_to_string(
             dir.join(RUNTIME_ARTIFACT_FILE_NAME),
         )?)?;
+        if load_runtime_artifact_from_graph_cache(
+            &dir.join(GRAPH_ARTIFACT_FILE_NAME),
+            &dir.join(GRAPH_ARTIFACT_MANIFEST_FILE_NAME),
+            &binary_source,
+        )?
+        .is_none()
+        {
+            return Err(KirError::Model(
+                "persistent cache graph artifact failed manifest validation".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -490,10 +551,121 @@ fn manifest_rejection_reason(
     {
         return Some("manifest binary KIR manifest path is not recognized".to_string());
     }
+    if manifest.outputs.graph_artifact.as_deref() != Some(GRAPH_ARTIFACT_FILE_NAME) {
+        return Some("manifest graph artifact path is not recognized".to_string());
+    }
+    if manifest.outputs.graph_artifact_manifest.as_deref() != Some(GRAPH_ARTIFACT_MANIFEST_FILE_NAME)
+    {
+        return Some("manifest graph artifact manifest path is not recognized".to_string());
+    }
     if manifest.outputs.runtime_artifact != RUNTIME_ARTIFACT_FILE_NAME {
         return Some("manifest runtime artifact path is not recognized".to_string());
     }
     None
+}
+
+fn write_graph_artifact_cache(
+    graph_path: &Path,
+    manifest_path: &Path,
+    graph: &GraphArtifact,
+    source_bytes: &[u8],
+) -> Result<(), KirError> {
+    if let Some(parent) = graph_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if let Some(parent) = manifest_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let graph_bytes = graph_artifact_to_binary_bytes(graph)?;
+    let manifest = GraphCacheManifest {
+        graph_format_version: GRAPH_CACHE_FORMAT_VERSION,
+        kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+        source_digest: digest_labeled_chunks([("source".as_bytes(), source_bytes)]),
+        graph_digest: digest_labeled_chunks([("graph".as_bytes(), graph_bytes.as_slice())]),
+        generator: format!("mercurio-foundation/{}", env!("CARGO_PKG_VERSION")),
+        element_count: graph.elements.len(),
+        edge_count: graph.edges.len(),
+    };
+    std::fs::write(graph_path, graph_bytes)?;
+    std::fs::write(manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    Ok(())
+}
+
+fn load_runtime_artifact_from_graph_cache(
+    graph_path: &Path,
+    manifest_path: &Path,
+    source_bytes: &[u8],
+) -> Result<Option<RuntimeArtifact>, KirError> {
+    let graph_bytes = match std::fs::read(graph_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(KirError::Io(err)),
+    };
+    let manifest_bytes = match std::fs::read(manifest_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(KirError::Io(err)),
+    };
+    let manifest: GraphCacheManifest = match serde_json::from_slice(&manifest_bytes) {
+        Ok(manifest) => manifest,
+        Err(_) => return Ok(None),
+    };
+    if manifest.graph_format_version != GRAPH_CACHE_FORMAT_VERSION
+        || manifest.kir_schema_version != KIR_SCHEMA_VERSION
+        || manifest.source_digest != digest_labeled_chunks([("source".as_bytes(), source_bytes)])
+        || manifest.graph_digest != digest_labeled_chunks([("graph".as_bytes(), graph_bytes.as_slice())])
+    {
+        return Ok(None);
+    }
+    let graph_artifact = match graph_artifact_from_binary_bytes(&graph_bytes) {
+        Ok(artifact) => artifact,
+        Err(_) => return Ok(None),
+    };
+    if graph_artifact.elements.len() != manifest.element_count
+        || graph_artifact.edges.len() != manifest.edge_count
+    {
+        return Ok(None);
+    }
+    let graph = Graph::from_artifact(graph_artifact)
+        .map_err(|err| KirError::Model(format!("cached graph artifact is invalid: {err}")))?;
+    Runtime::from_graph(graph)
+        .map(Runtime::into_artifact)
+        .map(Some)
+        .map_err(|err| KirError::Model(format!("failed to rebuild runtime from graph cache: {err}")))
+}
+
+fn graph_artifact_to_binary_bytes(graph: &GraphArtifact) -> Result<Vec<u8>, KirError> {
+    let payload = serde_json::to_vec(graph)?;
+    let mut bytes = Vec::with_capacity(10 + payload.len());
+    bytes.extend_from_slice(b"MGRF");
+    bytes.extend_from_slice(&GRAPH_CACHE_FORMAT_VERSION.to_le_bytes());
+    bytes.extend_from_slice(
+        &u32::try_from(payload.len())
+            .map_err(|_| KirError::Model("graph artifact payload exceeds u32".to_string()))?
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(&payload);
+    Ok(bytes)
+}
+
+fn graph_artifact_from_binary_bytes(bytes: &[u8]) -> Result<GraphArtifact, KirError> {
+    if bytes.len() < 10 || &bytes[0..4] != b"MGRF" {
+        return Err(KirError::Model("invalid graph cache header".to_string()));
+    }
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version != GRAPH_CACHE_FORMAT_VERSION {
+        return Err(KirError::Model(format!(
+            "unsupported graph cache version {version}"
+        )));
+    }
+    let payload_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
+    let payload = bytes
+        .get(10..10 + payload_len)
+        .ok_or_else(|| KirError::Model("truncated graph cache payload".to_string()))?;
+    if bytes.len() != 10 + payload_len {
+        return Err(KirError::Model("trailing graph cache bytes".to_string()));
+    }
+    Ok(serde_json::from_slice(payload)?)
 }
 
 fn binary_cache_source_bytes(
@@ -628,8 +800,9 @@ mod tests {
 
     use super::{
         BINARY_DOCUMENT_FILE_NAME, BINARY_DOCUMENT_MANIFEST_FILE_NAME, DOCUMENT_FILE_NAME,
-        PersistentCacheStatus, PersistentWorkspaceCache, WorkspaceCompileCacheManifest,
-        binary_cache_source_bytes, source_file_fingerprints, workspace_compile_artifact_key,
+        GRAPH_ARTIFACT_MANIFEST_FILE_NAME, PersistentCacheStatus, PersistentWorkspaceCache,
+        RUNTIME_ARTIFACT_FILE_NAME, WorkspaceCompileCacheManifest, binary_cache_source_bytes,
+        source_file_fingerprints, workspace_compile_artifact_key,
     };
     use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
     use crate::runtime::Runtime;
@@ -1092,6 +1265,122 @@ mod tests {
     }
 
     #[test]
+    fn persistent_compile_cache_rebuilds_runtime_from_graph_cache() {
+        let root = temp_dir("persistent_graph_runtime_rebuild");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = test_library_context();
+        let sources = vec![SourceDocument::new(
+            "demo.model",
+            "package Demo { part def Thing; }",
+        )];
+
+        let first = cache
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+        let dir = artifact_dir(&cache, &first.artifact_key);
+        std::fs::write(dir.join(RUNTIME_ARTIFACT_FILE_NAME), "{ bad").unwrap();
+
+        let second = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+
+        assert_eq!(second.cache_status, PersistentCacheStatus::PersistentHit);
+        assert_eq!(first.document, second.document);
+        let rebuilt_runtime = Runtime::from_artifact(second.runtime_artifact).unwrap();
+        assert!(!rebuilt_runtime.graph().elements().is_empty());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_rebuilds_runtime_from_graph_cache_when_json_runtime_missing() {
+        let root = temp_dir("persistent_graph_runtime_missing");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = test_library_context();
+        let sources = vec![SourceDocument::new(
+            "demo.model",
+            "package Demo { part def Thing; }",
+        )];
+
+        let first = cache
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+        let dir = artifact_dir(&cache, &first.artifact_key);
+        std::fs::remove_file(dir.join(RUNTIME_ARTIFACT_FILE_NAME)).unwrap();
+
+        let second = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+
+        assert_eq!(second.cache_status, PersistentCacheStatus::PersistentHit);
+        assert_eq!(first.document, second.document);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_rejects_stale_graph_cache_when_runtime_missing() {
+        let root = temp_dir("persistent_graph_stale");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = test_library_context();
+        let sources = vec![SourceDocument::new(
+            "demo.model",
+            "package Demo { part def Thing; }",
+        )];
+
+        let first = cache
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+        let dir = artifact_dir(&cache, &first.artifact_key);
+        std::fs::remove_file(dir.join(RUNTIME_ARTIFACT_FILE_NAME)).unwrap();
+        mutate_graph_manifest(&dir, |manifest| {
+            manifest.graph_digest = "fnv1a64:stale".to_string();
+        });
+
+        let second = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            second.cache_status,
+            PersistentCacheStatus::PersistentRejected { .. }
+        ));
+        assert_eq!(first.document, second.document);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn source_file_fingerprints_are_path_order_independent() {
         let left = vec![
             SourceDocument::new("b.model", "package B {}"),
@@ -1128,6 +1417,8 @@ mod tests {
                 kir: "document.kir.json".to_string(),
                 binary_kir: Some("document.mkir".to_string()),
                 binary_kir_manifest: Some("document.mkir.manifest.json".to_string()),
+                graph_artifact: Some("graph.mgraph".to_string()),
+                graph_artifact_manifest: Some("graph.mgraph.manifest.json".to_string()),
                 runtime_artifact: "runtime-artifact.json".to_string(),
             },
         };
@@ -1151,6 +1442,17 @@ mod tests {
     ) {
         let path = artifact_dir.join(BINARY_DOCUMENT_MANIFEST_FILE_NAME);
         let mut manifest: BinaryKirCacheManifest =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        mutate(&mut manifest);
+        std::fs::write(&path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+    }
+
+    fn mutate_graph_manifest(
+        artifact_dir: &std::path::Path,
+        mutate: impl FnOnce(&mut super::GraphCacheManifest),
+    ) {
+        let path = artifact_dir.join(GRAPH_ARTIFACT_MANIFEST_FILE_NAME);
+        let mut manifest: super::GraphCacheManifest =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         mutate(&mut manifest);
         std::fs::write(&path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();

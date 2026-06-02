@@ -62,13 +62,13 @@ Binary KIR is intended as a warm-load cache format. JSON remains the human-reada
 
 Binary cache entries should be paired with a manifest. The manifest records the binary format version, KIR schema version, generator version, source digest, and binary digest. A loader should use the binary cache only when the manifest matches the current source bytes and binary bytes; otherwise it should rebuild from the canonical source/text KIR and write a fresh binary cache.
 
-Workspace compile artifacts now store both `document.kir.json` and `document.mkir`. On a cache hit, the workspace cache loads `document.mkir` first when its manifest matches the compile inputs. If the binary cache is stale, missing, or malformed, the loader falls back to `document.kir.json`. If both are unusable, the compile artifact is rejected and rebuilt from source.
+Workspace compile artifacts now store `document.kir.json`, `document.mkir`, and `graph.mgraph`. On a cache hit, the workspace cache loads `document.mkir` first when its manifest matches the compile inputs. If the binary cache is stale, missing, or malformed, the loader falls back to `document.kir.json`. If the runtime artifact is missing or malformed, the loader can rebuild it from `graph.mgraph` when the graph manifest matches the compile inputs. If all usable cache layers fail, the compile artifact is rejected and rebuilt from source.
 
 ## Phase 2: Graph Cache
 
 Binary KIR still reconstructs a full `KirDocument` and then builds a `Graph`. The next warm-load cache layer should store a graph artifact so a workspace can skip document reconstruction and graph construction when compile inputs are unchanged.
 
-Proposed artifact set:
+Implemented artifact set:
 
 ```text
 runtime-artifact.json
@@ -105,3 +105,5 @@ else:
 ```
 
 The graph binary should use numeric ids internally: element id table, kind table, property key table, edge relation table, element records, property records, and edge records. Public APIs can still expose strings at the boundary.
+
+The first `graph.mgraph` implementation is intentionally conservative: it uses a versioned binary envelope around a serialized `GraphArtifact`. This establishes cache validation and load-order behavior. The next optimization is replacing that payload with compact numeric records.
