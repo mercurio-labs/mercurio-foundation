@@ -1575,6 +1575,34 @@ mod tests {
     }
 
     #[test]
+    fn runtime_cache_v3_fixture_decodes_hot_runtime_section() {
+        let bytes = decode_hex_fixture(include_str!("../tests/fixtures/runtime_cache_v3.hex"));
+
+        assert_eq!(&bytes[0..4], b"MRUN");
+        assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 3);
+
+        let artifact = super::runtime_artifact_from_binary_bytes(&bytes).unwrap();
+
+        assert_eq!(artifact.graph.elements.len(), 1);
+        assert_eq!(artifact.graph.edges.len(), 0);
+        let element = &artifact.graph.elements[0];
+        assert_eq!(element.id, 0);
+        assert_eq!(element.element_id, "pkg.Fixture");
+        assert_eq!(element.kind.as_ref(), "model.Package");
+        assert_eq!(element.layer, 2);
+        assert_eq!(
+            element.properties.get("qualified_name"),
+            Some(&Value::String("Fixture".to_string()))
+        );
+        assert_eq!(
+            element.properties.get("declared_name"),
+            Some(&Value::String("Fixture".to_string()))
+        );
+        assert!(artifact.derived.subtypes.is_empty());
+        assert!(artifact.derived.explanations().is_empty());
+    }
+
+    #[test]
     fn persistent_compile_cache_invalidates_changed_source() {
         let root = temp_dir("persistent_changed_source");
         let cache = PersistentWorkspaceCache::for_workspace_root(&root);
@@ -1964,5 +1992,17 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn decode_hex_fixture(input: &str) -> Vec<u8> {
+        let hex = input
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        assert!(hex.len() % 2 == 0);
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).unwrap())
+            .collect()
     }
 }
