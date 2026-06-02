@@ -28,7 +28,7 @@ Measure warm-load cache layers:
 cargo run --release -p mercurio-foundation --bin cache_performance -- --sizes 1000,10000,100000 --output-dir target/cache-performance --keep-files
 ```
 
-This reports cold document-to-runtime timing plus warm-load paths for text KIR, binary KIR, graph cache, and runtime artifact cache.
+This reports cold document-to-runtime timing plus warm-load paths for text KIR, graph cache, pretty runtime JSON, and `runtime.mruntime`.
 
 By default, runtime construction and semantic diff are skipped above 100,000 elements. Those guards keep the full ladder from exhausting memory while still measuring creation, validation, JSON persistence, binary KIR persistence, JSON load, binary KIR load, graph construction, and mutation for 1M elements. Override with `--max-runtime-size` and `--max-diff-size`.
 
@@ -66,52 +66,53 @@ Use release builds for real measurements. Debug builds are useful only for smoke
 
 The synthetic KIR model uses one package and `N` type elements linked by specialization. This intentionally stresses common KIR operations and graph/runtime relationship handling without depending on a source language parser.
 
-Binary KIR is intended as a warm-load cache format. JSON remains the human-readable interchange/debug format. The first binary format stores a versioned header, a string table, element records, metadata, and structured property values. Future cache layers can build on this by storing graph or runtime artifacts directly.
+Binary KIR is available as a compact KIR persistence format. JSON remains the human-readable interchange/debug format. The first binary format stores a versioned header, a string table, element records, metadata, and structured property values.
 
-Binary cache entries should be paired with a manifest. The manifest records the binary format version, KIR schema version, generator version, source digest, and binary digest. A loader should use the binary cache only when the manifest matches the current source bytes and binary bytes; otherwise it should rebuild from the canonical source/text KIR and write a fresh binary cache.
+Workspace compile cache no longer writes `.mkir` by default. Because text KIR remains the canonical portable artifact, a workspace `.mkir` was additive storage and still required runtime construction. The warm-load cache now targets runtime state directly.
 
-Workspace compile artifacts now store `document.kir.json`, `document.mkir`, and `graph.mgraph`. On a cache hit, the workspace cache loads `document.mkir` first when its manifest matches the compile inputs. If the binary cache is stale, missing, or malformed, the loader falls back to `document.kir.json`. If the runtime artifact is missing or malformed, the loader can rebuild it from `graph.mgraph` when the graph manifest matches the compile inputs. If all usable cache layers fail, the compile artifact is rejected and rebuilt from source.
+Workspace compile artifacts now store `document.kir.json`, `runtime.mruntime`, and `graph.mgraph`. On a cache hit, the workspace cache loads canonical text KIR first, then loads `runtime.mruntime` when its manifest matches the compile inputs. If the runtime cache is stale, missing, or malformed, the loader can rebuild it from `graph.mgraph` when the graph manifest matches the compile inputs. If all usable runtime cache layers fail, the compile artifact is rejected and rebuilt from source.
 
-## Phase 2: Graph Cache
+## Workspace Cache Layers
 
-Binary KIR still reconstructs a full `KirDocument` and then builds a `Graph`. The next warm-load cache layer should store a graph artifact so a workspace can skip document reconstruction and graph construction when compile inputs are unchanged.
+The cache keeps text KIR as the canonical document and stores runtime-focused warm-load artifacts so a workspace can avoid repeated runtime construction when compile inputs are unchanged.
 
 Implemented artifact set:
 
 ```text
-runtime-artifact.json
 document.kir.json
-document.mkir
-document.mkir.manifest.json
+runtime.mruntime
+runtime.mruntime.manifest.json
 graph.mgraph
 graph.mgraph.manifest.json
 manifest.json
 ```
 
-The graph cache manifest should include:
+The runtime and graph cache manifests include:
 
-- graph binary format version
+- cache format version
 - KIR schema version
 - compile artifact key digest
-- binary KIR digest or source input digest
-- graph generator version
-- element count and edge count
+- source input digest
+- artifact digest
+- generator version
+- element, edge, and derived-index counts where applicable
 
 Load order:
 
 ```text
-if valid runtime artifact:
+if valid text KIR:
+    load KirDocument
+else:
+    rebuild from source
+
+if valid runtime.mruntime:
     load RuntimeArtifact
-else if valid binary graph:
+else if valid graph.mgraph:
     load GraphArtifact -> materialize runtime indexes
-else if valid binary KIR:
-    load KirDocument -> build Graph -> materialize runtime indexes
-else if valid text KIR:
-    load KirDocument -> build Graph -> materialize runtime indexes
 else:
     rebuild from source
 ```
 
-The graph binary should use numeric ids internally: element id table, kind table, property key table, edge relation table, element records, property records, and edge records. Public APIs can still expose strings at the boundary.
+The first `runtime.mruntime` and `graph.mgraph` implementations are intentionally conservative: they use versioned binary envelopes around serialized artifacts. This establishes cache validation and load-order behavior. The next optimization is replacing those payloads with compact numeric records.
 
-The first `graph.mgraph` implementation is intentionally conservative: it uses a versioned binary envelope around a serialized `GraphArtifact`. This establishes cache validation and load-order behavior. The next optimization is replacing that payload with compact numeric records.
+Compact graph/runtime binaries should use numeric ids internally: element id table, kind table, property key table, edge relation table, element records, property records, derived-index records, and edge records. Public APIs can still expose strings at the boundary.
