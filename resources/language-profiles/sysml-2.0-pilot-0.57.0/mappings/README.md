@@ -26,6 +26,8 @@ data for behavior that used to live directly in Rust:
   modifier precedence.
 - `usage_type_defaults`, `usage_subset_defaults`, and `usage_family_defaults`
   define default type, subset, specialization, and family behavior.
+  `usage_subset_defaults.suppress_default_for_modifiers` suppresses default
+  subset behavior when a listed modifier is present.
 - `usage_property_defaults` defines guarded property additions and small
   elaborations. Rules can match owner constructs, required modifiers, and absent
   modifiers. They can append refs with `property_refs`, assign string values

@@ -376,6 +376,19 @@ impl MappingBundle {
             return Vec::new();
         };
 
+        if default
+            .suppress_default_for_modifiers
+            .iter()
+            .any(|modifier| {
+                usage
+                    .modifiers
+                    .iter()
+                    .any(|usage_modifier| usage_modifier == modifier)
+            })
+        {
+            return Vec::new();
+        }
+
         for modifier in &usage.modifiers {
             if let Some(owner_defaults) =
                 default.modifier_owner_subsetted_feature_refs.get(modifier)
@@ -2618,10 +2631,6 @@ fn usage_subsetted_feature_refs(
     }
 
     if !usage.redefined_features.is_empty() {
-        return Vec::new();
-    }
-
-    if usage.construct == "PartUsage" && usage.modifiers.iter().any(|modifier| modifier == "end") {
         return Vec::new();
     }
 

@@ -1937,12 +1937,6 @@ fn hardcoded_lowering_policy_burndown() -> Vec<HardcodedLoweringPolicy> {
             extraction: "candidate named policy for explicit-type specialized feature handling",
         },
         HardcodedLoweringPolicy {
-            construct: "PartUsage",
-            category: "subset refs",
-            location: "lowering/emit.rs::usage_subsetted_feature_refs",
-            extraction: "candidate usage_subset_defaults flag for suppressing end-part defaults",
-        },
-        HardcodedLoweringPolicy {
             construct: "ConnectionUsage/ReferenceUsage",
             category: "resolver",
             location: "lowering/resolve.rs::resolve_connection_end_specialization",

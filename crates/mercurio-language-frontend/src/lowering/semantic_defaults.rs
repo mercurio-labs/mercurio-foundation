@@ -142,6 +142,8 @@ pub struct UsageSubsetDefaultSeed {
     #[serde(default)]
     pub subsetted_feature_refs: Vec<String>,
     #[serde(default)]
+    pub suppress_default_for_modifiers: Vec<String>,
+    #[serde(default)]
     pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub modifier_owner_subsetted_feature_refs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
