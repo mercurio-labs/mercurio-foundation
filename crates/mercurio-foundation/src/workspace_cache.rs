@@ -547,14 +547,14 @@ fn manifest_rejection_reason(
     if manifest.outputs.binary_kir.as_deref() != Some(BINARY_DOCUMENT_FILE_NAME) {
         return Some("manifest binary KIR output path is not recognized".to_string());
     }
-    if manifest.outputs.binary_kir_manifest.as_deref() != Some(BINARY_DOCUMENT_MANIFEST_FILE_NAME)
-    {
+    if manifest.outputs.binary_kir_manifest.as_deref() != Some(BINARY_DOCUMENT_MANIFEST_FILE_NAME) {
         return Some("manifest binary KIR manifest path is not recognized".to_string());
     }
     if manifest.outputs.graph_artifact.as_deref() != Some(GRAPH_ARTIFACT_FILE_NAME) {
         return Some("manifest graph artifact path is not recognized".to_string());
     }
-    if manifest.outputs.graph_artifact_manifest.as_deref() != Some(GRAPH_ARTIFACT_MANIFEST_FILE_NAME)
+    if manifest.outputs.graph_artifact_manifest.as_deref()
+        != Some(GRAPH_ARTIFACT_MANIFEST_FILE_NAME)
     {
         return Some("manifest graph artifact manifest path is not recognized".to_string());
     }
@@ -613,7 +613,8 @@ fn load_runtime_artifact_from_graph_cache(
     if manifest.graph_format_version != GRAPH_CACHE_FORMAT_VERSION
         || manifest.kir_schema_version != KIR_SCHEMA_VERSION
         || manifest.source_digest != digest_labeled_chunks([("source".as_bytes(), source_bytes)])
-        || manifest.graph_digest != digest_labeled_chunks([("graph".as_bytes(), graph_bytes.as_slice())])
+        || manifest.graph_digest
+            != digest_labeled_chunks([("graph".as_bytes(), graph_bytes.as_slice())])
     {
         return Ok(None);
     }
@@ -631,7 +632,9 @@ fn load_runtime_artifact_from_graph_cache(
     Runtime::from_graph(graph)
         .map(Runtime::into_artifact)
         .map(Some)
-        .map_err(|err| KirError::Model(format!("failed to rebuild runtime from graph cache: {err}")))
+        .map_err(|err| {
+            KirError::Model(format!("failed to rebuild runtime from graph cache: {err}"))
+        })
 }
 
 fn graph_artifact_to_binary_bytes(graph: &GraphArtifact) -> Result<Vec<u8>, KirError> {
@@ -794,8 +797,8 @@ fn unique_cache_nonce() -> u64 {
 mod tests {
     use std::collections::BTreeMap;
 
-    use mercurio_language_contracts::LanguageRegistry;
     use mercurio_kir::BinaryKirCacheManifest;
+    use mercurio_language_contracts::LanguageRegistry;
     use serde_json::Value;
 
     use super::{
@@ -1076,8 +1079,11 @@ mod tests {
                 &test_language_registry(),
             )
             .unwrap();
-        std::fs::write(artifact_dir(&cache, &first.artifact_key).join(DOCUMENT_FILE_NAME), "{ bad")
-            .unwrap();
+        std::fs::write(
+            artifact_dir(&cache, &first.artifact_key).join(DOCUMENT_FILE_NAME),
+            "{ bad",
+        )
+        .unwrap();
 
         let second = cache
             .compile_source_documents_with_registry(

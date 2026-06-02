@@ -22,6 +22,14 @@ For a smaller smoke run:
 cargo run -p mercurio-foundation --bin kir_performance -- --sizes 100,1000 --edits 10 --output-dir target/kir-performance-smoke
 ```
 
+Measure warm-load cache layers:
+
+```powershell
+cargo run --release -p mercurio-foundation --bin cache_performance -- --sizes 1000,10000,100000 --output-dir target/cache-performance --keep-files
+```
+
+This reports cold document-to-runtime timing plus warm-load paths for text KIR, binary KIR, graph cache, and runtime artifact cache.
+
 By default, runtime construction and semantic diff are skipped above 100,000 elements. Those guards keep the full ladder from exhausting memory while still measuring creation, validation, JSON persistence, binary KIR persistence, JSON load, binary KIR load, graph construction, and mutation for 1M elements. Override with `--max-runtime-size` and `--max-diff-size`.
 
 The JSON report includes:

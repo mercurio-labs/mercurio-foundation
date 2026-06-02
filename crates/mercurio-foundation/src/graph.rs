@@ -220,19 +220,25 @@ impl Graph {
     }
 
     pub fn outgoing_edges(&self, id: NodeId) -> impl Iterator<Item = &Edge> {
-        self.outgoing.get(id as usize).into_iter().flat_map(|edges| {
-            edges
-                .iter()
-                .filter_map(|edge_index| self.edges.get(*edge_index))
-        })
+        self.outgoing
+            .get(id as usize)
+            .into_iter()
+            .flat_map(|edges| {
+                edges
+                    .iter()
+                    .filter_map(|edge_index| self.edges.get(*edge_index))
+            })
     }
 
     pub fn incoming_edges(&self, id: NodeId) -> impl Iterator<Item = &Edge> {
-        self.incoming.get(id as usize).into_iter().flat_map(|edges| {
-            edges
-                .iter()
-                .filter_map(|edge_index| self.edges.get(*edge_index))
-        })
+        self.incoming
+            .get(id as usize)
+            .into_iter()
+            .flat_map(|edges| {
+                edges
+                    .iter()
+                    .filter_map(|edge_index| self.edges.get(*edge_index))
+            })
     }
 
     pub fn outgoing(&self, id: NodeId, relation: &str) -> impl Iterator<Item = &Edge> {
@@ -487,9 +493,7 @@ impl<'de> Deserialize<'de> for ElementProperties {
         D: Deserializer<'de>,
     {
         let mut declared = BTreeMap::<String, Value>::deserialize(deserializer)?;
-        let element_id_value = declared
-            .remove("element_id")
-            .unwrap_or(Value::Null);
+        let element_id_value = declared.remove("element_id").unwrap_or(Value::Null);
         let declared = declared
             .into_iter()
             .map(|(key, value)| (Arc::<str>::from(key), value))

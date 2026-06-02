@@ -331,7 +331,10 @@ pub fn enrich_semantic_reasoning_context_with_graph(
             continue;
         }
         let mut attributes = element.properties.to_btree_map();
-        attributes.insert("kirKind".to_string(), Value::String(element.kind.to_string()));
+        attributes.insert(
+            "kirKind".to_string(),
+            Value::String(element.kind.to_string()),
+        );
         attributes.insert("kirLayer".to_string(), Value::from(element.layer));
         context.elements.push(SemanticElementContext {
             element: ElementRef::new(element.element_id.clone()),

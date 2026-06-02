@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::graph::Graph;
+use crate::graph::{Graph, GraphArtifact};
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 use crate::mutation::diff_kir_documents;
 use crate::runtime::Runtime;
@@ -118,6 +118,23 @@ pub struct KirPerformanceConfig {
     pub max_diff_size: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachePerformanceConfig {
+    pub model_sizes: Vec<usize>,
+    pub output_dir: PathBuf,
+    pub keep_files: bool,
+}
+
+impl Default for CachePerformanceConfig {
+    fn default() -> Self {
+        Self {
+            model_sizes: vec![1_000, 10_000, 100_000],
+            output_dir: std::env::temp_dir().join("mercurio-cache-performance"),
+            keep_files: false,
+        }
+    }
+}
+
 impl Default for KirPerformanceConfig {
     fn default() -> Self {
         Self {
@@ -140,6 +157,33 @@ pub struct KirPerformanceReport {
     pub edit_count_requested: usize,
     pub scenarios: Vec<KirPerformanceScenarioReport>,
     pub emf_comparison: EmfComparisonReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CachePerformanceReport {
+    pub generated_at_unix_seconds: u64,
+    pub output_dir: String,
+    pub keep_files: bool,
+    pub scenarios: Vec<CachePerformanceScenarioReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CachePerformanceScenarioReport {
+    pub model_size: usize,
+    pub text_kir_bytes: u64,
+    pub binary_kir_bytes: u64,
+    pub graph_cache_bytes: u64,
+    pub runtime_artifact_bytes: u64,
+    pub timings: CachePerformanceTimings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CachePerformanceTimings {
+    pub cold_document_to_runtime: TimingMetric,
+    pub text_kir_to_runtime: TimingMetric,
+    pub binary_kir_to_runtime: TimingMetric,
+    pub graph_cache_to_runtime: TimingMetric,
+    pub runtime_artifact_to_runtime: TimingMetric,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -284,6 +328,109 @@ pub fn run_kir_performance(
         edit_count_requested: config.edit_count,
         scenarios,
         emf_comparison,
+    })
+}
+
+pub fn run_cache_performance(
+    config: CachePerformanceConfig,
+) -> Result<CachePerformanceReport, Box<dyn Error>> {
+    std::fs::create_dir_all(&config.output_dir)?;
+    let generated_at_unix_seconds = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let mut scenarios = Vec::with_capacity(config.model_sizes.len());
+
+    for model_size in &config.model_sizes {
+        scenarios.push(run_cache_performance_scenario(
+            *model_size,
+            &config.output_dir,
+            config.keep_files,
+        )?);
+    }
+
+    Ok(CachePerformanceReport {
+        generated_at_unix_seconds,
+        output_dir: config.output_dir.display().to_string(),
+        keep_files: config.keep_files,
+        scenarios,
+    })
+}
+
+fn run_cache_performance_scenario(
+    model_size: usize,
+    output_dir: &Path,
+    keep_files: bool,
+) -> Result<CachePerformanceScenarioReport, Box<dyn Error>> {
+    let scenario_dir = output_dir.join(format!("cache-{model_size}"));
+    std::fs::create_dir_all(&scenario_dir)?;
+    let text_kir_path = scenario_dir.join("document.kir.json");
+    let binary_kir_path = scenario_dir.join("document.mkir");
+    let graph_cache_path = scenario_dir.join("graph.mgraph");
+    let runtime_artifact_path = scenario_dir.join("runtime-artifact.json");
+
+    let document = synthetic_kir_document(model_size);
+
+    let cold_timer = Instant::now();
+    let cold_runtime = Runtime::from_document(document.clone())?;
+    let cold_document_to_runtime = TimingMetric::from_duration(cold_timer.elapsed());
+    let runtime_artifact = cold_runtime.artifact();
+    let graph_artifact = runtime_artifact.graph.clone();
+    drop(cold_runtime);
+
+    document.write_pretty_to_path(&text_kir_path)?;
+    document.write_binary_to_path(&binary_kir_path)?;
+    write_perf_graph_cache(&graph_cache_path, &graph_artifact)?;
+    std::fs::write(
+        &runtime_artifact_path,
+        serde_json::to_string_pretty(&runtime_artifact)?,
+    )?;
+    drop(document);
+
+    let text_timer = Instant::now();
+    let text_document = KirDocument::from_path(&text_kir_path)?;
+    let text_runtime = Runtime::from_document(text_document)?;
+    let text_kir_to_runtime = TimingMetric::from_duration(text_timer.elapsed());
+    drop(text_runtime);
+
+    let binary_timer = Instant::now();
+    let binary_document = KirDocument::from_binary_path(&binary_kir_path)?;
+    let binary_runtime = Runtime::from_document(binary_document)?;
+    let binary_kir_to_runtime = TimingMetric::from_duration(binary_timer.elapsed());
+    drop(binary_runtime);
+
+    let graph_timer = Instant::now();
+    let graph_artifact = read_perf_graph_cache(&graph_cache_path)?;
+    let graph_runtime = Runtime::from_graph(Graph::from_artifact(graph_artifact)?)?;
+    let graph_cache_to_runtime = TimingMetric::from_duration(graph_timer.elapsed());
+    drop(graph_runtime);
+
+    let runtime_timer = Instant::now();
+    let runtime_artifact: crate::runtime::RuntimeArtifact =
+        serde_json::from_str(&std::fs::read_to_string(&runtime_artifact_path)?)?;
+    let runtime = Runtime::from_artifact(runtime_artifact)?;
+    let runtime_artifact_to_runtime = TimingMetric::from_duration(runtime_timer.elapsed());
+    drop(runtime);
+
+    let text_kir_bytes = std::fs::metadata(&text_kir_path)?.len();
+    let binary_kir_bytes = std::fs::metadata(&binary_kir_path)?.len();
+    let graph_cache_bytes = std::fs::metadata(&graph_cache_path)?.len();
+    let runtime_artifact_bytes = std::fs::metadata(&runtime_artifact_path)?.len();
+
+    if !keep_files {
+        let _ = std::fs::remove_dir_all(&scenario_dir);
+    }
+
+    Ok(CachePerformanceScenarioReport {
+        model_size,
+        text_kir_bytes,
+        binary_kir_bytes,
+        graph_cache_bytes,
+        runtime_artifact_bytes,
+        timings: CachePerformanceTimings {
+            cold_document_to_runtime,
+            text_kir_to_runtime,
+            binary_kir_to_runtime,
+            graph_cache_to_runtime,
+            runtime_artifact_to_runtime,
+        },
     })
 }
 
@@ -492,6 +639,39 @@ fn mutate_document(mut document: KirDocument, edit_count: usize) -> KirDocument 
     document
 }
 
+fn write_perf_graph_cache(path: &Path, graph: &GraphArtifact) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let payload = serde_json::to_vec(graph)?;
+    let mut bytes = Vec::with_capacity(10 + payload.len());
+    bytes.extend_from_slice(b"MGRF");
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&u32::try_from(payload.len())?.to_le_bytes());
+    bytes.extend_from_slice(&payload);
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
+
+fn read_perf_graph_cache(path: &Path) -> Result<GraphArtifact, Box<dyn Error>> {
+    let bytes = std::fs::read(path)?;
+    if bytes.len() < 10 || &bytes[0..4] != b"MGRF" {
+        return Err("invalid graph cache header".into());
+    }
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version != 1 {
+        return Err(format!("unsupported graph cache version {version}").into());
+    }
+    let payload_len = u32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]) as usize;
+    let payload = bytes
+        .get(10..10 + payload_len)
+        .ok_or("truncated graph cache payload")?;
+    if bytes.len() != 10 + payload_len {
+        return Err("trailing graph cache bytes".into());
+    }
+    Ok(serde_json::from_slice(payload)?)
+}
+
 fn run_emf_comparison(command: Option<&str>, output_dir: &Path) -> EmfComparisonReport {
     let Some(command) = command else {
         return EmfComparisonReport::NotConfigured;
@@ -616,7 +796,9 @@ fn current_memory() -> MemoryMetric {
 
 #[cfg(test)]
 mod tests {
-    use super::{KirPerformanceConfig, run_kir_performance};
+    use super::{
+        CachePerformanceConfig, KirPerformanceConfig, run_cache_performance, run_kir_performance,
+    };
 
     #[test]
     fn kir_performance_runs_small_scenario() {
@@ -643,6 +825,29 @@ mod tests {
         assert_eq!(report.scenarios[0].model_size, 10);
         assert_eq!(report.scenarios[0].edit_count, 3);
         assert_eq!(report.scenarios[0].diff_summary.changed_attributes, 3);
+        let _ = std::fs::remove_dir_all(output_dir);
+    }
+
+    #[test]
+    fn cache_performance_runs_small_scenario() {
+        let output_dir = std::env::temp_dir().join(format!(
+            "mercurio_cache_performance_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let report = run_cache_performance(CachePerformanceConfig {
+            model_sizes: vec![10],
+            output_dir: output_dir.clone(),
+            keep_files: false,
+        })
+        .unwrap();
+
+        assert_eq!(report.scenarios.len(), 1);
+        assert_eq!(report.scenarios[0].model_size, 10);
+        assert!(report.scenarios[0].binary_kir_bytes < report.scenarios[0].text_kir_bytes);
         let _ = std::fs::remove_dir_all(output_dir);
     }
 }

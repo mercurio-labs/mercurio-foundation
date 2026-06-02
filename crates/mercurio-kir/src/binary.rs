@@ -5,7 +5,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 
-use crate::{KIR_SCHEMA_VERSION, KIR_SCHEMA_VERSION_METADATA_KEY, KirDocument, KirElement, KirError};
+use crate::{
+    KIR_SCHEMA_VERSION, KIR_SCHEMA_VERSION_METADATA_KEY, KirDocument, KirElement, KirError,
+};
 
 const MAGIC: &[u8; 4] = b"MKIR";
 pub const BINARY_KIR_FORMAT_VERSION: u16 = 1;
@@ -160,7 +162,9 @@ impl KirDocument {
         }
 
         if cursor.position() != bytes.len() as u64 {
-            return Err(KirError::Binary("trailing bytes after document".to_string()));
+            return Err(KirError::Binary(
+                "trailing bytes after document".to_string(),
+            ));
         }
 
         let document = KirDocument { metadata, elements };

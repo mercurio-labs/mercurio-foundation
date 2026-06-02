@@ -156,11 +156,12 @@ pub use paths::{
     default_workspace_root, repo_path, repo_root,
 };
 pub use performance::{
-    CoreScalabilityCreationStrategy, CoreScalabilityMetricConfig, CoreScalabilityReport,
-    CoreScalabilityScenarioReport, CoreScalabilityTimings, EmfComparisonReport,
-    KirPerformanceConfig, KirPerformanceMemory, KirPerformanceReport, KirPerformanceScenarioReport,
-    KirPerformanceTimings, MemoryMetric, SemanticDiffSummary, TimingMetric,
-    run_core_scalability_metric, run_kir_performance,
+    CachePerformanceConfig, CachePerformanceReport, CachePerformanceScenarioReport,
+    CachePerformanceTimings, CoreScalabilityCreationStrategy, CoreScalabilityMetricConfig,
+    CoreScalabilityReport, CoreScalabilityScenarioReport, CoreScalabilityTimings,
+    EmfComparisonReport, KirPerformanceConfig, KirPerformanceMemory, KirPerformanceReport,
+    KirPerformanceScenarioReport, KirPerformanceTimings, MemoryMetric, SemanticDiffSummary,
+    TimingMetric, run_cache_performance, run_core_scalability_metric, run_kir_performance,
 };
 pub use plugin_registry::{
     InstalledMpack, MpackActivationIndex, MpackAssetRef,
