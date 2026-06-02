@@ -14,8 +14,8 @@ properties, and Pilot evidence citations. It is audited today and can become an
 executable lowering table incrementally.
 
 `semantic_defaults.seed.json` contains declarative semantic defaults that are
-applied after syntax collection and before final KIR emission. It is the current
-EMF-lite/MMP-style profile data for behavior that used to live directly in Rust:
+applied after syntax collection and before final KIR emission. It is profile
+data for behavior that used to live directly in Rust:
 
 - `reference_usage_semantics` defines modifier-triggered reference semantics,
   typed reference subset defaults, and synthetic declared-name handling.
@@ -56,9 +56,9 @@ The lowering audit checks this bridge in both directions: construct mappings,
 lowering rules, emission rules, and semantic-default construct references must
 line up before profile changes are considered repeatable.
 
-This is the current declarative lowering syntax. Future MMP input can generate
-these seed files, and compiled profile packages can include them with KIR
-libraries and generated wrappers.
+This is the current declarative lowering support. KIR remains the durable model
+input for runtime and library distribution; these seed files explain how source
+syntax is collected, elaborated, and emitted into that KIR.
 
 They are compiler/profile inputs, not runtime workspace files. Stdlib release
 builds include their digests in provenance and package them with the profile.
