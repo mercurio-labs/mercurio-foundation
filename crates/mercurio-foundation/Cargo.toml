@@ -9,10 +9,7 @@ name = "mercurio_core"
 
 [dependencies]
 mercurio-kir = { path = "../mercurio-kir" }
-mercurio-kerml = { path = "../../../mercurio-sysml/crates/mercurio-kerml" }
-mercurio-language-frontend = { path = "../../../mercurio-sysml/crates/mercurio-language-frontend" }
 mercurio-language-contracts = { path = "../mercurio-language-contracts" }
-mercurio-sysml = { path = "../../../mercurio-sysml/crates/mercurio-sysml" }
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true

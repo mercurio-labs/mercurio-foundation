@@ -334,16 +334,14 @@ impl RulePack {
 pub fn load_default_rulepacks() -> Result<Vec<RulePack>, DatalogError> {
     #[cfg(target_arch = "wasm32")]
     {
-        return Ok(vec![RulePack::from_str(include_str!(
-            "../../../resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.rulepack.json"
-        ))?]);
+        return Ok(vec![RulePack::core()]);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = default_stdlib_rulepack_path();
         if !path.exists() {
-            return Ok(Vec::new());
+            return Ok(vec![RulePack::core()]);
         }
 
         Ok(vec![RulePack::from_path(&path)?])
@@ -1034,7 +1032,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [("features".to_string(), json!(["feature.engine"]))]
                         .into_iter()
@@ -1042,7 +1040,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.engine".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: Default::default(),
                 },
@@ -1070,7 +1068,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Parent".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [("features".to_string(), json!(["feature.engine"]))]
                         .into_iter()
@@ -1078,7 +1076,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Child".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [("specializes".to_string(), json!(["type.Parent"]))]
                         .into_iter()
@@ -1086,19 +1084,19 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.engine".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: Default::default(),
                 },
                 KirElement {
                     id: "req.Braking".to_string(),
-                    kind: "SysML::Requirements::RequirementUsage".to_string(),
+                    kind: "Model::Requirements::RequirementUsage".to_string(),
                     layer: 2,
                     properties: Default::default(),
                 },
                 KirElement {
                     id: "case.BrakeTest".to_string(),
-                    kind: "SysML::Verification::VerificationCaseUsage".to_string(),
+                    kind: "Model::Verification::VerificationCaseUsage".to_string(),
                     layer: 2,
                     properties: [("verify".to_string(), json!("req.Braking"))]
                         .into_iter()
@@ -1133,7 +1131,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "req.Braking".to_string(),
-                kind: "SysML::Requirements::RequirementUsage".to_string(),
+                kind: "Model::Requirements::RequirementUsage".to_string(),
                 layer: 2,
                 properties: Default::default(),
             }],
@@ -1146,7 +1144,7 @@ mod tests {
             rulepack.facts,
             vec![Fact::new(
                 "requirement_kind",
-                ["SysML::Requirements::RequirementUsage".to_string()]
+                ["Model::Requirements::RequirementUsage".to_string()]
             )]
         );
     }
@@ -1156,12 +1154,7 @@ mod tests {
         let rulepacks = load_default_rulepacks().unwrap();
 
         assert_eq!(rulepacks.len(), 1);
-        assert_eq!(rulepacks[0].id, "mercurio.metamodel.adapter");
-        assert!(
-            rulepacks[0]
-                .facts
-                .iter()
-                .any(|fact| fact.predicate == "requirement_kind")
-        );
+        assert_eq!(rulepacks[0].id, "mercurio.core");
+        assert!(rulepacks[0].facts.is_empty());
     }
 }

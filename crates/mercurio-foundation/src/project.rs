@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::ir::{KirDocument, KirError};
-use crate::language::{SourceLanguage, language_module};
 use crate::library::{
     BaselineLibraryConfig, LibraryCacheMetadata, LibraryProviderConfig, LibrarySourceFingerprint,
     ResolvedLibraryArtifact,
@@ -12,10 +11,7 @@ use crate::library::{
 pub const PROJECT_DESCRIPTOR_FILE_NAME: &str = ".mercurio-project.json";
 
 fn is_model_source_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|value| value.to_str()),
-        Some("sysml" | "kerml")
-    )
+    path.extension().and_then(|value| value.to_str()).is_some()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -152,12 +148,12 @@ impl ProjectDescriptor {
 pub fn resolve_project_context(
     open_path: &Path,
 ) -> Result<ResolvedProjectContext, ProjectDescriptorError> {
-    resolve_project_context_for_language(open_path, Some(SourceLanguage::Sysml))
+    resolve_project_context_for_language(open_path, None)
 }
 
 pub fn resolve_project_context_for_language(
     open_path: &Path,
-    default_language: Option<SourceLanguage>,
+    _default_language: Option<&str>,
 ) -> Result<ResolvedProjectContext, ProjectDescriptorError> {
     let descriptor_path = discover_project_descriptor_path(open_path);
     let descriptor_root = descriptor_path
@@ -178,7 +174,6 @@ pub fn resolve_project_context_for_language(
         descriptor.as_ref(),
         descriptor_root.as_deref(),
         cache_root.as_deref(),
-        default_language,
     )?;
 
     Ok(ResolvedProjectContext {
@@ -211,7 +206,6 @@ fn resolve_library_context_document(
     descriptor: Option<&ProjectDescriptor>,
     descriptor_root: Option<&Path>,
     cache_root: Option<&Path>,
-    default_language: Option<SourceLanguage>,
 ) -> Result<(KirDocument, Vec<ResolvedProjectLibrary>), ProjectDescriptorError> {
     let project_libraries = descriptor
         .map(|descriptor| descriptor.libraries.as_slice())
@@ -228,46 +222,7 @@ fn resolve_library_context_document(
         .filter(|library| library.role == ProjectLibraryRole::Dependency)
         .map(ProjectLibraryConfig::to_baseline_library_config)
         .collect::<Result<Vec<_>, _>>()?;
-    let baseline_configs = if baseline_configs.is_empty() {
-        match default_language {
-            Some(SourceLanguage::Kerml) => {
-                let document = language_module(SourceLanguage::Kerml)
-                    .default_baseline()
-                    .load()?;
-                let resolved_library = ResolvedProjectLibrary {
-                    id: "kernel".to_string(),
-                    role: ProjectLibraryRole::Baseline,
-                    source_kind: "language_default".to_string(),
-                    source_path: Some(crate::paths::default_kernel_library_path()),
-                    cache_metadata: None,
-                    cache_path: None,
-                    cached_element_count: Some(document.elements.len()),
-                    document,
-                };
-                resolved_libraries.push(resolved_library);
-                Vec::new()
-            }
-            _ => {
-                let document = language_module(SourceLanguage::Sysml)
-                    .default_baseline()
-                    .load()?;
-                let resolved_library = ResolvedProjectLibrary {
-                    id: "stdlib".to_string(),
-                    role: ProjectLibraryRole::Baseline,
-                    source_kind: "language_default".to_string(),
-                    source_path: Some(crate::paths::default_sysml_delta_library_path()),
-                    cache_metadata: None,
-                    cache_path: None,
-                    cached_element_count: Some(document.elements.len()),
-                    document,
-                };
-                resolved_libraries.push(resolved_library);
-                Vec::new()
-            }
-        }
-    } else {
-        baseline_configs
-    };
+    let baseline_configs = baseline_configs;
     for library in &baseline_configs {
         resolved_libraries.push(resolve_or_load_project_library(
             library,
@@ -571,8 +526,6 @@ mod tests {
         resolve_project_context_for_language,
     };
     use crate::ir::{KirDocument, KirElement};
-    use crate::language::SourceLanguage;
-
     #[test]
     fn discovers_descriptor_from_ancestor_directory() {
         let root = temp_dir("discover_descriptor");
@@ -587,38 +540,24 @@ mod tests {
     }
 
     #[test]
-    fn resolves_descriptorless_kerml_context_from_kernel_baseline() {
-        let root = temp_dir("project_context_kerml_default");
-        let nested_file = root.join("models").join("demo.kerml");
+    fn resolves_descriptorless_core_context_from_kernel_baseline() {
+        let root = temp_dir("project_context_core_default");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {}\n").unwrap();
 
-        let resolved =
-            resolve_project_context_for_language(&nested_file, Some(SourceLanguage::Kerml))
-                .unwrap();
+        let resolved = resolve_project_context_for_language(&nested_file, Some("core")).unwrap();
 
         assert!(resolved.descriptor_path.is_none());
-        assert_eq!(resolved.resolved_libraries.len(), 1);
-        assert_eq!(resolved.resolved_libraries[0].id, "kernel");
-        assert!(resolved.library_context_document.elements.len() > 1000);
-        assert_eq!(
-            resolved
-                .library_context_document
-                .metadata
-                .get("merged_sources")
-                .and_then(Value::as_array)
-                .and_then(|sources| sources.first())
-                .and_then(|source| source.get("library_id"))
-                .and_then(Value::as_str),
-            Some("org.omg/kerml-kernel")
-        );
+        assert!(resolved.resolved_libraries.is_empty());
+        assert!(resolved.library_context_document.elements.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn resolves_project_context_with_local_baseline_library_override() {
         let root = temp_dir("project_context");
-        let nested_file = root.join("models").join("demo.sysml");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {\n}\n").unwrap();
 
@@ -742,7 +681,7 @@ mod tests {
     #[test]
     fn resolves_project_context_with_additional_library_dependencies() {
         let root = temp_dir("project_dependency_context");
-        let nested_file = root.join("models").join("demo.sysml");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {\n}\n").unwrap();
 
@@ -785,7 +724,7 @@ mod tests {
                 .iter()
                 .any(|element| element.id == "Demo::DependencyThing")
         );
-        assert!(resolved.library_context_document.elements.len() > 1);
+        assert!(!resolved.library_context_document.elements.is_empty());
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -793,7 +732,7 @@ mod tests {
     #[test]
     fn resolves_project_context_reuses_valid_cached_library_document() {
         let root = temp_dir("project_reuses_cached_library");
-        let model_path = root.join("demo.sysml");
+        let model_path = root.join("demo.model");
         std::fs::write(&model_path, "package Demo {\n}\n").unwrap();
 
         let library_path = root.join("baseline.kir.json");
@@ -865,14 +804,14 @@ mod tests {
     #[test]
     fn resolves_project_context_with_source_backed_library_dependency() {
         let root = temp_dir("project_source_dependency_context");
-        let nested_file = root.join("models").join("demo.sysml");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {\n}\n").unwrap();
 
         let library_dir = root.join("libraries").join("domain-lib");
         std::fs::create_dir_all(&library_dir).unwrap();
         std::fs::write(
-            library_dir.join("domain.sysml"),
+            library_dir.join("domain.model"),
             "package Domain {\n  part def Thing;\n}\n",
         )
         .unwrap();
@@ -883,7 +822,7 @@ mod tests {
                 {
                     "id": "domain-lib",
                     "provider": {
-                        "kind": "sysml_directory",
+                        "kind": "model_directory",
                         "path": "libraries/domain-lib"
                     }
                 }
@@ -909,16 +848,16 @@ mod tests {
     }
 
     #[test]
-    fn resolves_project_context_with_kerml_library_dependency() {
-        let root = temp_dir("project_kerml_dependency_context");
-        let nested_file = root.join("models").join("demo.sysml");
+    fn resolves_project_context_with_core_library_dependency() {
+        let root = temp_dir("project_core_dependency_context");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {\n}\n").unwrap();
 
         let library_dir = root.join("libraries").join("kernel-lib");
         std::fs::create_dir_all(&library_dir).unwrap();
         std::fs::write(
-            library_dir.join("kernel.kerml"),
+            library_dir.join("kernel.model"),
             "package Kernel {\n  feature def SemanticThing;\n}\n",
         )
         .unwrap();
@@ -929,7 +868,7 @@ mod tests {
                 {
                     "id": "kernel-lib",
                     "provider": {
-                        "kind": "sysml_directory",
+                        "kind": "model_directory",
                         "path": "libraries/kernel-lib"
                     }
                 }
@@ -950,7 +889,7 @@ mod tests {
                 .iter()
                 .any(|element| element.id == "type.Kernel.SemanticThing")
         );
-        assert!(resolved.resolved_libraries[1].cache_path.is_some());
+        assert!(resolved.resolved_libraries[0].cache_path.is_some());
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -958,7 +897,7 @@ mod tests {
     #[test]
     fn resolves_project_context_with_kpar_library_dependency() {
         let root = temp_dir("project_kpar_dependency_context");
-        let nested_file = root.join("models").join("demo.sysml");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {\n}\n").unwrap();
 
@@ -968,7 +907,7 @@ mod tests {
             &library_path,
             "Domain Library",
             "1.0.0",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
 
         let descriptor = serde_json::json!({
@@ -1005,11 +944,11 @@ mod tests {
     #[test]
     fn resolves_project_context_with_package_set_library_dependency() {
         let root = temp_dir("project_package_set_dependency_context");
-        let nested_file = root.join("models").join("demo.sysml");
+        let nested_file = root.join("models").join("demo.model");
         std::fs::create_dir_all(nested_file.parent().unwrap()).unwrap();
         std::fs::write(&nested_file, "package Demo {\n}\n").unwrap();
 
-        let package_set_dir = root.join("libraries").join("sysml.library.kpar");
+        let package_set_dir = root.join("libraries").join("model.library.kpar");
         std::fs::create_dir_all(&package_set_dir).unwrap();
         write_test_kpar_with_usage(
             &package_set_dir.join("Kernel_Semantic_Library-1.0.0.kpar"),
@@ -1017,20 +956,20 @@ mod tests {
             "1.0.0",
             &[],
             &[(
-                "semantic.sysml",
+                "semantic.model",
                 "package Kernel {\n  part def SemanticThing;\n}\n",
             )],
         );
         write_test_kpar_with_usage(
-            &package_set_dir.join("SysML_Systems_Library-2.0.0.kpar"),
-            "SysML Systems Library",
+            &package_set_dir.join("Model_Systems_Library-2.0.0.kpar"),
+            "Model Systems Library",
             "2.0.0",
             &[(
-                "https://www.omg.org/spec/KerML/20250201/Semantic-Library.kpar",
+                "https://www.omg.org/spec/Core/20250201/Semantic-Library.kpar",
                 "1.0.0",
             )],
             &[(
-                "systems.sysml",
+                "systems.model",
                 "package Systems {\n  part def SystemThing;\n}\n",
             )],
         );
@@ -1042,8 +981,8 @@ mod tests {
                     "id": "systems-lib",
                     "provider": {
                         "kind": "package_set_directory",
-                        "path": "libraries/sysml.library.kpar",
-                        "entry": "https://www.omg.org/spec/SysML/20250201/Systems-Library.kpar"
+                        "path": "libraries/model.library.kpar",
+                        "entry": "https://www.omg.org/spec/Model/20250201/Systems-Library.kpar"
                     }
                 }
             ]
@@ -1070,13 +1009,9 @@ mod tests {
                 .iter()
                 .any(|element| element.id == "type.Systems.SystemThing")
         );
-        assert!(
-            resolved
-                .resolved_libraries
-                .iter()
-                .any(|library| library.role == ProjectLibraryRole::Baseline
-                    && library.id == "stdlib")
-        );
+        assert!(resolved.resolved_libraries.iter().any(|library| {
+            library.role == ProjectLibraryRole::Dependency && library.id == "systems-lib"
+        }));
         assert!(
             resolved
                 .resolved_libraries

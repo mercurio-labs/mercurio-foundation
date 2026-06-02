@@ -940,7 +940,7 @@ mod tests {
     #[test]
     fn parses_basic_query() {
         let query = parse_query(
-            r#"from elements where kind = "SysML::Package" select id, qualified_name limit 2"#,
+            r#"from elements where kind = "Model::Package" select id, qualified_name limit 2"#,
         )
         .unwrap();
 
@@ -970,7 +970,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "pkg.Demo".to_string(),
-                kind: "SysML::Package".to_string(),
+                kind: "Model::Package".to_string(),
                 layer: 2,
                 properties: [(
                     "qualified_name".to_string(),
@@ -998,7 +998,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [(
                         "features".to_string(),
@@ -1009,14 +1009,14 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.Vehicle.mass".to_string(),
-                    kind: "SysML::AttributeUsage".to_string(),
+                    kind: "Model::AttributeUsage".to_string(),
                     layer: 2,
                     properties: Default::default(),
                 },
             ],
         };
         let query = parse_query(
-            r#"match ?type kind "SysML::Systems::PartDefinition" match ?type features ?feature select ?type, ?feature"#,
+            r#"match ?type kind "Model::Systems::PartDefinition" match ?type features ?feature select ?type, ?feature"#,
         )
         .unwrap();
 
@@ -1095,22 +1095,22 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.VehicleNeed".to_string(),
-                    kind: "SysML::Systems::RequirementDefinition".to_string(),
+                    kind: "Model::Systems::RequirementDefinition".to_string(),
                     layer: 2,
                     properties: [(
                         "metatype".to_string(),
-                        Value::String("SysML::Systems::RequirementDefinition".to_string()),
+                        Value::String("Model::Systems::RequirementDefinition".to_string()),
                     )]
                     .into_iter()
                     .collect(),
                 },
                 KirElement {
                     id: "requirement.Demo.vehicleNeed".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "metatype".to_string(),
-                        Value::String("SysML::RequirementUsage".to_string()),
+                        Value::String("Model::RequirementUsage".to_string()),
                     )]
                     .into_iter()
                     .collect(),
@@ -1121,7 +1121,7 @@ mod tests {
             parse_query(r#"from elements where metatype contains "Requirement" select id"#)
                 .unwrap();
         let in_query =
-            parse_query(r#"from elements where metatype in ["SysML::RequirementUsage"] select id"#)
+            parse_query(r#"from elements where metatype in ["Model::RequirementUsage"] select id"#)
                 .unwrap();
 
         let contains = QueryEngine::new(&document)
@@ -1141,7 +1141,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [
                         (
@@ -1158,7 +1158,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.Vehicle.mass".to_string(),
-                    kind: "SysML::AttributeUsage".to_string(),
+                    kind: "Model::AttributeUsage".to_string(),
                     layer: 2,
                     properties: [(
                         "qualified_name".to_string(),
@@ -1195,7 +1195,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [
                         (
@@ -1215,7 +1215,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.Vehicle.mass".to_string(),
-                    kind: "SysML::AttributeUsage".to_string(),
+                    kind: "Model::AttributeUsage".to_string(),
                     layer: 2,
                     properties: [
                         (
@@ -1229,7 +1229,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.Vehicle.cost".to_string(),
-                    kind: "SysML::AttributeUsage".to_string(),
+                    kind: "Model::AttributeUsage".to_string(),
                     layer: 2,
                     properties: [
                         (

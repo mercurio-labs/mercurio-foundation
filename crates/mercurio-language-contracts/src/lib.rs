@@ -23,30 +23,30 @@ pub use service::{CompileContext, LanguageRegistry, LanguageService};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceLanguage {
-    Kerml,
-    Sysml,
+    Core,
+    Model,
 }
 
 impl SourceLanguage {
     pub fn from_path(path: &Path) -> Option<Self> {
         match path.extension().and_then(|extension| extension.to_str()) {
-            Some(extension) if extension.eq_ignore_ascii_case("sysml") => Some(Self::Sysml),
-            Some(extension) if extension.eq_ignore_ascii_case("kerml") => Some(Self::Kerml),
+            Some(extension) if extension.eq_ignore_ascii_case("model") => Some(Self::Model),
+            Some(extension) if extension.eq_ignore_ascii_case("core") => Some(Self::Core),
             _ => None,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Sysml => "sysml",
-            Self::Kerml => "kerml",
+            Self::Model => "model",
+            Self::Core => "core",
         }
     }
 
     pub fn extensions(self) -> &'static [&'static str] {
         match self {
-            Self::Sysml => &["sysml"],
-            Self::Kerml => &["kerml"],
+            Self::Model => &["model"],
+            Self::Core => &["core"],
         }
     }
 }

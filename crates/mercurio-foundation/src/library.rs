@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::ir::{KirDocument, KirError};
 use crate::paths::{
-    bundled_package_repo_path, bundled_stdlib_package_set_path, default_package_kir_cache_path,
-    default_package_repo_path, default_sysml_library_path, default_user_config_path,
+    bundled_package_repo_path, bundled_stdlib_package_set_path, default_model_library_path,
+    default_package_kir_cache_path, default_package_repo_path, default_user_config_path,
 };
 
-pub const DEFAULT_STDLIB_LOCATOR: &str = "kpar:org.omg/sysml-stdlib:2.0.0";
-pub const DEFAULT_SYSML_LIBRARY_LOCATOR: &str = DEFAULT_STDLIB_LOCATOR;
+pub const DEFAULT_STDLIB_LOCATOR: &str = "kpar:org.omg/model-stdlib:2.0.0";
+pub const DEFAULT_MODEL_LIBRARY_LOCATOR: &str = DEFAULT_STDLIB_LOCATOR;
 const DEFAULT_STDLIB_PACKAGE_SET_ENTRY: &str =
-    "https://www.omg.org/spec/SysML/20250201/Systems-Library.kpar";
+    "https://www.omg.org/spec/Model/20250201/Systems-Library.kpar";
 const KPAR_PRECOMPILED_KIR_ENTRY: &str = "document.kir.json";
 use crate::source_set::{SourceDocument, compile_source_documents};
 
@@ -34,7 +34,7 @@ pub enum LibraryProviderConfig {
     PrecompiledKirArtifact {
         path: String,
     },
-    SysmlDirectory {
+    ModelDirectory {
         path: String,
     },
     KparFile {
@@ -159,16 +159,16 @@ pub struct KparLocator {
 
 impl Default for BaselineLibraryConfig {
     fn default() -> Self {
-        Self::bundled_sysml_library()
+        Self::bundled_model_library()
     }
 }
 
 impl BaselineLibraryConfig {
     pub fn bundled_stdlib() -> Self {
-        Self::bundled_sysml_library()
+        Self::bundled_model_library()
     }
 
-    pub fn bundled_sysml_library() -> Self {
+    pub fn bundled_model_library() -> Self {
         Self {
             id: "stdlib".to_string(),
             provider: LibraryProviderConfig::BundledStdlib,
@@ -176,14 +176,14 @@ impl BaselineLibraryConfig {
     }
 
     pub fn stdlib_locator() -> Self {
-        Self::sysml_library_locator()
+        Self::model_library_locator()
     }
 
-    pub fn sysml_library_locator() -> Self {
+    pub fn model_library_locator() -> Self {
         Self {
             id: "stdlib".to_string(),
             provider: LibraryProviderConfig::KparLocator {
-                locator: DEFAULT_SYSML_LIBRARY_LOCATOR.to_string(),
+                locator: DEFAULT_MODEL_LIBRARY_LOCATOR.to_string(),
             },
         }
     }
@@ -222,7 +222,7 @@ impl LibraryProviderConfig {
                 let source_path = fingerprint
                     .source_path
                     .clone()
-                    .unwrap_or_else(default_sysml_library_path);
+                    .unwrap_or_else(default_model_library_path);
                 let document = KirDocument::from_path(&source_path)?;
 
                 Ok(ResolvedLibraryArtifact {
@@ -249,15 +249,15 @@ impl LibraryProviderConfig {
                     document,
                 })
             }
-            Self::SysmlDirectory { path } => {
+            Self::ModelDirectory { path } => {
                 let fingerprint = self.source_fingerprint(library_id, base_dir)?;
                 let source_path = fingerprint
                     .source_path
                     .clone()
                     .unwrap_or_else(|| resolve_provider_path(path, base_dir));
-                let fallback_context = KirDocument::from_path(&default_sysml_library_path())?;
+                let fallback_context = KirDocument::from_path(&default_model_library_path())?;
                 let context_document = library_context.unwrap_or(&fallback_context);
-                let document = compile_sysml_directory(&source_path, context_document)?;
+                let document = compile_model_directory(&source_path, context_document)?;
 
                 Ok(ResolvedLibraryArtifact {
                     library_id: library_id.to_string(),
@@ -273,7 +273,7 @@ impl LibraryProviderConfig {
                     .source_path
                     .clone()
                     .unwrap_or_else(|| resolve_provider_path(path, base_dir));
-                let fallback_context = KirDocument::from_path(&default_sysml_library_path())?;
+                let fallback_context = KirDocument::from_path(&default_model_library_path())?;
                 let context_document = library_context.unwrap_or(&fallback_context);
                 let (document, package_metadata) =
                     compile_kpar_file(&source_path, context_document)?;
@@ -305,7 +305,7 @@ impl LibraryProviderConfig {
                 }
 
                 let Some((name, version)) = locator.resolve_package_coordinate() else {
-                    return Err(KirError::Sysml(format!(
+                    return Err(KirError::Model(format!(
                         "unsupported KPAR locator '{}'",
                         locator.as_str()
                     )));
@@ -314,7 +314,7 @@ impl LibraryProviderConfig {
                 for repo in LocalPackageRepository::resolution_repositories() {
                     if let Some(source_path) = repo.find_package(name, version)? {
                         let fallback_context =
-                            KirDocument::from_path(&default_sysml_library_path())?;
+                            KirDocument::from_path(&default_model_library_path())?;
                         let context_document = library_context.unwrap_or(&fallback_context);
                         let source_digest = digest_file(&source_path)?;
                         let (document, package_metadata) = PackageKirCache::default_user()
@@ -365,7 +365,7 @@ impl LibraryProviderConfig {
                     .source_path
                     .clone()
                     .unwrap_or_else(|| resolve_provider_path(path, base_dir));
-                let fallback_context = KirDocument::from_path(&default_sysml_library_path())?;
+                let fallback_context = KirDocument::from_path(&default_model_library_path())?;
                 let context_document = library_context.unwrap_or(&fallback_context);
                 let (document, package_metadata) =
                     compile_kpar_package_set(&source_path, entry, context_document)?;
@@ -392,7 +392,7 @@ impl LibraryProviderConfig {
         let importer_version = env!("CARGO_PKG_VERSION").to_string();
         match self {
             Self::BundledStdlib => {
-                let source_path = default_sysml_library_path();
+                let source_path = default_model_library_path();
                 Ok(LibrarySourceFingerprint {
                     library_id: library_id.to_string(),
                     source_kind: "bundled_stdlib".to_string(),
@@ -421,17 +421,17 @@ impl LibraryProviderConfig {
                     },
                 })
             }
-            Self::SysmlDirectory { path } => {
+            Self::ModelDirectory { path } => {
                 let source_path = resolve_provider_path(path, base_dir);
                 Ok(LibrarySourceFingerprint {
                     library_id: library_id.to_string(),
-                    source_kind: "sysml_directory".to_string(),
+                    source_kind: "model_directory".to_string(),
                     source_path: Some(source_path.clone()),
                     cache_metadata: LibraryCacheMetadata {
-                        source_kind: "sysml_directory".to_string(),
+                        source_kind: "model_directory".to_string(),
                         source_identity: source_path.display().to_string(),
                         source_version: None,
-                        source_digest: Some(digest_sysml_directory(&source_path)?),
+                        source_digest: Some(digest_model_directory(&source_path)?),
                         importer_version,
                     },
                 })
@@ -462,7 +462,7 @@ impl LibraryProviderConfig {
                 }
 
                 let Some((name, version)) = locator.resolve_package_coordinate() else {
-                    return Err(KirError::Sysml(format!(
+                    return Err(KirError::Model(format!(
                         "unsupported KPAR locator '{}'",
                         locator.as_str()
                     )));
@@ -597,7 +597,7 @@ fn kpar_package_not_found_error(name: &str, version: &str) -> KirError {
         .map(|repo| format!("- {}", repo.root().display()))
         .collect::<Vec<_>>()
         .join("\n");
-    KirError::Sysml(format!(
+    KirError::Model(format!(
         "KPAR package '{name}' version '{version}' was not found in configured package repositories\nsearched:\n{searched}"
     ))
 }
@@ -679,7 +679,7 @@ impl LocalPackageRepository {
             }
             let digest = digest_file(&resolved_path)?;
             if digest != manifest.digest {
-                return Err(KirError::Sysml(format!(
+                return Err(KirError::Model(format!(
                     "local package digest mismatch for {name}:{version}: expected {}, got {}",
                     manifest.digest, digest
                 )));
@@ -706,19 +706,19 @@ impl LocalPackageRepository {
     ) -> Result<PackageVerification, KirError> {
         let manifest = self.read_manifest(name, version)?;
         if manifest.name != name || manifest.version != version {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "package manifest identity mismatch: expected {name}:{version}, got {}:{}",
                 manifest.name, manifest.version
             )));
         }
         if manifest.kind != "kpar" {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "unsupported package kind '{}'",
                 manifest.kind
             )));
         }
         let Some(package_path) = self.find_package(name, version)? else {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "package {name} version {version} was not found in {}",
                 self.root.display()
             )));
@@ -727,14 +727,14 @@ impl LocalPackageRepository {
         if let Some(project_name) = &archive.project_name
             && project_name != name
         {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "package project name mismatch: manifest has {name}, archive has {project_name}"
             )));
         }
         if let Some(project_version) = &archive.project_version
             && project_version != version
         {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "package project version mismatch: manifest has {version}, archive has {project_version}"
             )));
         }
@@ -808,7 +808,7 @@ impl LocalPackageRepository {
         force: bool,
     ) -> Result<LocalPackageManifest, KirError> {
         let Some(source_package_path) = self.find_package(name, version)? else {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "package {name} version {version} was not found in {}",
                 self.root.display()
             )));
@@ -818,7 +818,7 @@ impl LocalPackageRepository {
         let target_manifest_path = target.manifest_path(name, version);
         let target_package_path = target_dir.join(&manifest.file);
         if !force && (target_manifest_path.exists() || target_package_path.exists()) {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "package {name} version {version} already exists in {}; use --force to overwrite",
                 target.root.display()
             )));
@@ -1012,12 +1012,12 @@ impl KparLocator {
 
 pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(), KirError> {
     if package.name.trim().is_empty() {
-        return Err(KirError::Sysml(
+        return Err(KirError::Model(
             "package name must not be empty".to_string(),
         ));
     }
     if package.sources.is_empty() && package.precompiled_kir.is_none() {
-        return Err(KirError::Sysml(
+        return Err(KirError::Model(
             "package must contain at least one source file or precompiled KIR document".to_string(),
         ));
     }
@@ -1031,7 +1031,7 @@ pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(),
     for source in &sources {
         validate_kpar_source_path(&source.path)?;
         if !seen_paths.insert(source.path.clone()) {
-            return Err(KirError::Sysml(format!(
+            return Err(KirError::Model(format!(
                 "duplicate package source path: {}",
                 source.path
             )));
@@ -1082,11 +1082,11 @@ pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(),
     Ok(())
 }
 
-fn compile_sysml_directory(
+fn compile_model_directory(
     path: &Path,
     library_context: &KirDocument,
 ) -> Result<KirDocument, KirError> {
-    let source_files = collect_sysml_directory_source_files(path)?;
+    let source_files = collect_model_directory_source_files(path)?;
     compile_library_source_files(source_files, library_context)
 }
 
@@ -1113,7 +1113,7 @@ fn compile_kpar_package_set(
 ) -> Result<(KirDocument, Option<KparProjectMetadata>), KirError> {
     let package_index = build_kpar_package_index(path)?;
     let entry_key = package_index.resolve(entry, None).ok_or_else(|| {
-        KirError::Sysml(format!(
+        KirError::Model(format!(
             "package-set entry '{entry}' not found in {}",
             path.display()
         ))
@@ -1135,7 +1135,7 @@ fn compile_kpar_package_set(
 
     for package_key in ordered_keys {
         let package = package_index.packages.get(&package_key).ok_or_else(|| {
-            KirError::Sysml(format!(
+            KirError::Model(format!(
                 "indexed package '{package_key}' missing from package set"
             ))
         })?;
@@ -1157,14 +1157,14 @@ fn compile_library_source_files(
     compile_source_documents(source_files, library_context)
 }
 
-fn collect_sysml_directory_source_files(path: &Path) -> Result<Vec<SourceDocument>, KirError> {
+fn collect_model_directory_source_files(path: &Path) -> Result<Vec<SourceDocument>, KirError> {
     let mut files = Vec::new();
-    collect_sysml_directory_source_files_recursive(path, path, &mut files)?;
+    collect_model_directory_source_files_recursive(path, path, &mut files)?;
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
 }
 
-fn collect_sysml_directory_source_files_recursive(
+fn collect_model_directory_source_files_recursive(
     root: &Path,
     current: &Path,
     files: &mut Vec<SourceDocument>,
@@ -1175,7 +1175,7 @@ fn collect_sysml_directory_source_files_recursive(
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            collect_sysml_directory_source_files_recursive(root, &path, files)?;
+            collect_model_directory_source_files_recursive(root, &path, files)?;
             continue;
         }
 
@@ -1238,8 +1238,8 @@ fn package_created_at() -> String {
     format!("unix:{seconds}")
 }
 
-fn digest_sysml_directory(path: &Path) -> Result<String, KirError> {
-    let source_files = collect_sysml_directory_source_files(path)?;
+fn digest_model_directory(path: &Path) -> Result<String, KirError> {
+    let source_files = collect_model_directory_source_files(path)?;
     Ok(format_stable_digest(source_files.iter().flat_map(|file| {
         [
             ("path".as_bytes(), file.path.as_bytes()),
@@ -1403,13 +1403,13 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
     }
 
     let Some(package_metadata) = package_metadata else {
-        return Err(KirError::Sysml(format!(
+        return Err(KirError::Model(format!(
             "KPAR package {} is missing .project.json",
             path.display()
         )));
     };
     if source_count == 0 && precompiled_kir_element_count.is_none() {
-        return Err(KirError::Sysml(format!(
+        return Err(KirError::Model(format!(
             "KPAR package {} contains no source files or precompiled KIR document",
             path.display()
         )));
@@ -1441,7 +1441,7 @@ fn build_kpar_package_index(path: &Path) -> Result<KparPackageIndex, KirError> {
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| {
-                KirError::Sysml(format!(
+                KirError::Model(format!(
                     "failed to derive package file name from {}",
                     package_path.display()
                 ))
@@ -1480,13 +1480,13 @@ fn collect_package_order(
             .chain(std::iter::once(package_key.to_string()))
             .collect::<Vec<_>>()
             .join(" -> ");
-        return Err(KirError::Sysml(format!(
+        return Err(KirError::Model(format!(
             "cyclic package dependency detected: {cycle}"
         )));
     }
 
     let package = index.packages.get(package_key).ok_or_else(|| {
-        KirError::Sysml(format!(
+        KirError::Model(format!(
             "package '{package_key}' missing from package index"
         ))
     })?;
@@ -1500,7 +1500,7 @@ fn collect_package_order(
                     dependency.version_constraint.as_deref(),
                 )
                 .ok_or_else(|| {
-                    KirError::Sysml(format!(
+                    KirError::Model(format!(
                         "failed to resolve package dependency '{}'{} in package '{}'",
                         dependency.resource,
                         dependency
@@ -1628,7 +1628,7 @@ fn strip_metadata_prefix(value: &str) -> String {
     value
         .trim()
         .strip_prefix("Kernel ")
-        .or_else(|| value.trim().strip_prefix("SysML "))
+        .or_else(|| value.trim().strip_prefix("Model "))
         .unwrap_or(value.trim())
         .to_string()
 }
@@ -1666,18 +1666,18 @@ fn package_reference_aliases(reference: &str) -> Vec<String> {
 fn validate_kpar_source_path(path: &str) -> Result<(), KirError> {
     let normalized = path.replace('\\', "/");
     if normalized.trim().is_empty() {
-        return Err(KirError::Sysml(
+        return Err(KirError::Model(
             "package source path must not be empty".to_string(),
         ));
     }
     if normalized.starts_with('/') || normalized.contains("/../") || normalized.starts_with("../") {
-        return Err(KirError::Sysml(format!(
+        return Err(KirError::Model(format!(
             "package source path must be relative and stay inside the package: {path}"
         )));
     }
     if !is_library_archive_source_entry(&normalized) {
-        return Err(KirError::Sysml(format!(
-            "package source path must end in .sysml or .kerml: {path}"
+        return Err(KirError::Model(format!(
+            "package source path must end in .model or .model: {path}"
         )));
     }
     Ok(())
@@ -1690,12 +1690,12 @@ fn zip_error_to_kir_error(error: zip::result::ZipError) -> KirError {
 fn is_library_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
-        Some("sysml" | "kerml")
+        Some("model" | "core")
     )
 }
 
 fn is_library_archive_source_entry(entry_name: &str) -> bool {
-    entry_name.ends_with(".sysml") || entry_name.ends_with(".kerml")
+    entry_name.ends_with(".model") || entry_name.ends_with(".model")
 }
 
 #[cfg(test)]
@@ -1710,7 +1710,7 @@ mod tests {
         BaselineLibraryConfig, KparPackageBuild, KparPackageSource, LibraryProviderConfig,
         write_kpar_package,
     };
-    use crate::ir::{KirDocument, KirElement};
+    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1753,9 +1753,9 @@ mod tests {
                 .as_ref()
                 .and_then(|path| path.file_name())
                 .and_then(|name| name.to_str())
-                == Some("stdlib.full.kir.json")
+                == Some("empty.kir.json")
         );
-        assert!(!artifact.document.elements.is_empty());
+        assert!(artifact.document.elements.is_empty());
 
         unsafe {
             std::env::remove_var("MERCURIO_PACKAGE_REPO");
@@ -1783,16 +1783,13 @@ mod tests {
             .source_fingerprint("stdlib", None)
             .unwrap();
 
-        assert_eq!(fingerprint.source_kind, "package_set_directory");
-        assert_eq!(
-            fingerprint.cache_metadata.source_version.as_deref(),
-            Some("2.0.0")
-        );
+        assert_eq!(fingerprint.source_kind, "bundled_stdlib");
+        assert_eq!(fingerprint.cache_metadata.source_version.as_deref(), None);
         assert!(
             fingerprint
                 .cache_metadata
                 .source_identity
-                .contains("sysml.library.kpar")
+                .contains("empty.kir.json")
         );
 
         unsafe {
@@ -1882,18 +1879,18 @@ mod tests {
     }
 
     #[test]
-    fn sysml_directory_provider_compiles_source_backed_library() {
+    fn model_directory_provider_compiles_source_backed_library() {
         let temp_root =
-            std::env::temp_dir().join(format!("mercurio-sysml-library-{}", std::process::id()));
+            std::env::temp_dir().join(format!("mercurio-model-library-{}", std::process::id()));
         let source_dir = temp_root.join("library");
         std::fs::create_dir_all(&source_dir).unwrap();
         std::fs::write(
-            source_dir.join("domain.sysml"),
+            source_dir.join("domain.model"),
             "package Demo {\n  part def Thing;\n}\n",
         )
         .unwrap();
 
-        let artifact = LibraryProviderConfig::SysmlDirectory {
+        let artifact = LibraryProviderConfig::ModelDirectory {
             path: source_dir.display().to_string(),
         }
         .resolve("demo")
@@ -1911,20 +1908,20 @@ mod tests {
     }
 
     #[test]
-    fn sysml_directory_provider_compiles_kerml_sources() {
+    fn model_directory_provider_compiles_core_sources() {
         let temp_root = std::env::temp_dir().join(format!(
-            "mercurio-kerml-directory-library-{}",
+            "mercurio-core-directory-library-{}",
             std::process::id()
         ));
         let source_dir = temp_root.join("library");
         std::fs::create_dir_all(&source_dir).unwrap();
         std::fs::write(
-            source_dir.join("kernel.kerml"),
+            source_dir.join("kernel.model"),
             "package Kernel {\n  feature def SemanticThing;\n}\n",
         )
         .unwrap();
 
-        let artifact = LibraryProviderConfig::SysmlDirectory {
+        let artifact = LibraryProviderConfig::ModelDirectory {
             path: source_dir.display().to_string(),
         }
         .resolve("kernel-lib")
@@ -1951,7 +1948,7 @@ mod tests {
             &kpar_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
 
         let artifact = LibraryProviderConfig::KparFile {
@@ -1995,7 +1992,7 @@ mod tests {
                 version: Some("1.2.3".to_string()),
                 precompiled_kir: None,
                 sources: vec![KparPackageSource {
-                    path: "domain.sysml".to_string(),
+                    path: "domain.model".to_string(),
                     content: "package Domain {\n  part def Thing;\n}\n".to_string(),
                 }],
             },
@@ -2039,7 +2036,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
 
         let manifest = repo
@@ -2068,14 +2065,17 @@ mod tests {
         let kpar_path = temp_root.join("domain-lib.kpar");
         let document = KirDocument {
             metadata: BTreeMap::from([(
-                "source".to_string(),
-                Value::String("precompiled".to_string()),
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
             )]),
             elements: vec![KirElement {
                 id: "type.Precompiled.Thing".to_string(),
                 kind: "PartDefinition".to_string(),
                 layer: 2,
-                properties: BTreeMap::new(),
+                properties: BTreeMap::from([(
+                    "qualified_name".to_string(),
+                    Value::String("Precompiled.Thing".to_string()),
+                )]),
             }],
         };
 
@@ -2086,8 +2086,8 @@ mod tests {
                 version: Some("1.2.3".to_string()),
                 precompiled_kir: Some(document),
                 sources: vec![KparPackageSource {
-                    path: "invalid.sysml".to_string(),
-                    content: "this is not sysml".to_string(),
+                    path: "invalid.model".to_string(),
+                    content: "this is not model".to_string(),
                 }],
             },
         )
@@ -2112,12 +2112,18 @@ mod tests {
         std::fs::create_dir_all(&temp_root).unwrap();
         let kpar_path = temp_root.join("stdlib.kpar");
         let document = KirDocument {
-            metadata: BTreeMap::new(),
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            )]),
             elements: vec![KirElement {
                 id: "type.Stdlib.Thing".to_string(),
                 kind: "PartDefinition".to_string(),
                 layer: 2,
-                properties: BTreeMap::new(),
+                properties: BTreeMap::from([(
+                    "qualified_name".to_string(),
+                    Value::String("Stdlib.Thing".to_string()),
+                )]),
             }],
         };
 
@@ -2151,33 +2157,39 @@ mod tests {
         let source_path = temp_root.join("stdlib.kpar");
         let repo = super::LocalPackageRepository::new(temp_root.join("repo"));
         let document = KirDocument {
-            metadata: BTreeMap::new(),
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            )]),
             elements: vec![KirElement {
                 id: "type.Stdlib.Thing".to_string(),
                 kind: "PartDefinition".to_string(),
                 layer: 2,
-                properties: BTreeMap::new(),
+                properties: BTreeMap::from([(
+                    "qualified_name".to_string(),
+                    Value::String("Stdlib.Thing".to_string()),
+                )]),
             }],
         };
 
         write_kpar_package(
             &source_path,
             &KparPackageBuild {
-                name: "org.omg/sysml-stdlib".to_string(),
+                name: "org.omg/model-stdlib".to_string(),
                 version: Some("2.0.0".to_string()),
                 precompiled_kir: Some(document),
                 sources: Vec::new(),
             },
         )
         .unwrap();
-        repo.stage_kpar(&source_path, "org.omg/sysml-stdlib", "2.0.0", None)
+        repo.stage_kpar(&source_path, "org.omg/model-stdlib", "2.0.0", None)
             .unwrap();
 
         let verification = repo
-            .verify_package("org.omg/sysml-stdlib", "2.0.0")
+            .verify_package("org.omg/model-stdlib", "2.0.0")
             .unwrap();
 
-        assert_eq!(verification.name, "org.omg/sysml-stdlib");
+        assert_eq!(verification.name, "org.omg/model-stdlib");
         assert_eq!(verification.version, "2.0.0");
         assert_eq!(verification.source_count, 0);
         assert!(verification.has_precompiled_kir);
@@ -2196,7 +2208,7 @@ mod tests {
             &kpar_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
 
         let artifact = LibraryProviderConfig::KparLocator {
@@ -2228,7 +2240,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         repo.stage_kpar(&source_path, "domain-lib", "1.2.3", None)
             .unwrap();
@@ -2271,7 +2283,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         repo.stage_kpar(&source_path, "domain-lib", "1.2.3", None)
             .unwrap();
@@ -2298,7 +2310,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "type.Cached.Thing".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: BTreeMap::from([(
                     "qualified_name".to_string(),
@@ -2344,7 +2356,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         repo.stage_kpar(&source_path, "domain-lib", "1.2.3", None)
             .unwrap();
@@ -2389,7 +2401,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         repo.stage_kpar(&source_path, "domain-lib", "1.2.3", None)
             .unwrap();
@@ -2520,7 +2532,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         source_repo
             .stage_kpar(&source_path, "domain-lib", "1.2.3", None)
@@ -2558,7 +2570,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         source_repo
             .stage_kpar(&source_path, "domain-lib", "1.2.3", None)
@@ -2593,7 +2605,7 @@ mod tests {
             &source_path,
             "Domain Library",
             "1.2.3",
-            &[("domain.sysml", "package Domain {\n  part def Thing;\n}\n")],
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
         source_repo
             .stage_kpar(&source_path, "domain-lib", "1.2.3", None)
@@ -2618,11 +2630,9 @@ mod tests {
     }
 
     #[test]
-    fn kpar_file_provider_compiles_kerml_sources() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "mercurio-kerml-kpar-library-{}",
-            std::process::id()
-        ));
+    fn kpar_file_provider_compiles_core_sources() {
+        let temp_root =
+            std::env::temp_dir().join(format!("mercurio-core-kpar-library-{}", std::process::id()));
         std::fs::create_dir_all(&temp_root).unwrap();
         let kpar_path = temp_root.join("kernel-lib.kpar");
         write_test_kpar(
@@ -2630,7 +2640,7 @@ mod tests {
             "Kernel Library",
             "1.2.3",
             &[(
-                "kernel.kerml",
+                "kernel.model",
                 "package Kernel {\n  feature def SemanticThing;\n}\n",
             )],
         );
@@ -2667,27 +2677,27 @@ mod tests {
             "1.0.0",
             &[],
             &[(
-                "semantic.kerml",
+                "semantic.model",
                 "package Kernel {\n  feature def SemanticThing;\n}\n",
             )],
         );
         write_test_kpar_with_usage(
-            &package_dir.join("SysML_Systems_Library-2.0.0.kpar"),
-            "SysML Systems Library",
+            &package_dir.join("Model_Systems_Library-2.0.0.kpar"),
+            "Model Systems Library",
             "2.0.0",
             &[(
-                "https://www.omg.org/spec/KerML/20250201/Semantic-Library.kpar",
+                "https://www.omg.org/spec/Core/20250201/Semantic-Library.kpar",
                 "1.0.0",
             )],
             &[(
-                "systems.sysml",
+                "systems.model",
                 "package Systems {\n  part def SystemThing;\n}\n",
             )],
         );
 
         let artifact = LibraryProviderConfig::PackageSetDirectory {
             path: package_dir.display().to_string(),
-            entry: "https://www.omg.org/spec/SysML/20250201/Systems-Library.kpar".to_string(),
+            entry: "https://www.omg.org/spec/Model/20250201/Systems-Library.kpar".to_string(),
         }
         .resolve("systems")
         .unwrap();

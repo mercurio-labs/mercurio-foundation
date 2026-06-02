@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::frontend::ast::{
     AliasDecl, Declaration, Expr, GenericDefinitionDecl, GenericUsageDecl, ImportDecl, PackageDecl,
-    PartDefinitionDecl, PartUsageDecl, QualifiedName, SourceSpan, SysmlModule,
+    ParsedModule, PartDefinitionDecl, PartUsageDecl, QualifiedName, SourceSpan,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,14 +51,14 @@ pub struct SyntaxNodeMismatch {
     pub differences: Vec<String>,
 }
 
-pub fn build_rust_syntax_snapshot(module: &SysmlModule) -> SyntaxSnapshot {
+pub fn build_rust_syntax_snapshot(module: &ParsedModule) -> SyntaxSnapshot {
     let mut nodes = Vec::new();
     for (index, declaration) in module.members.iter().enumerate() {
         let path = format!("{index}");
         push_declaration_node(declaration, &path, &mut nodes);
     }
     SyntaxSnapshot {
-        root_kind: "SysmlModule".to_string(),
+        root_kind: "ParsedModule".to_string(),
         nodes,
     }
 }

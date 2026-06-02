@@ -607,20 +607,136 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{ExecutionContext, Runtime};
-    use crate::ir::{KirDocument, KirElement, load_model_stack};
+    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 
     fn sample_runtime() -> Runtime {
-        let document = load_model_stack(&crate::paths::repo_path(
-            "test_files/examples/vehicle_model.json",
-        ))
-        .unwrap();
-        Runtime::from_document(document).unwrap()
+        Runtime::from_document(KirDocument {
+            metadata: [("kir_schema_version".to_string(), json!(KIR_SCHEMA_VERSION))]
+                .into_iter()
+                .collect(),
+            elements: vec![
+                KirElement {
+                    id: "Core::Core::Type".to_string(),
+                    kind: "model.Type".to_string(),
+                    layer: 1,
+                    properties: [("qualified_name".to_string(), json!("Core.Type"))]
+                        .into_iter()
+                        .collect(),
+                },
+                KirElement {
+                    id: "Model::Systems::PartDefinition".to_string(),
+                    kind: "model.PartDefinition".to_string(),
+                    layer: 1,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("Model.Systems.PartDefinition"),
+                        ),
+                        ("specializes".to_string(), json!(["Core::Core::Type"])),
+                        ("features".to_string(), json!(["df.partCount"])),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "type.Vehicle".to_string(),
+                    kind: "model.PartDefinition".to_string(),
+                    layer: 2,
+                    properties: [
+                        ("qualified_name".to_string(), json!("Vehicle")),
+                        (
+                            "specializes".to_string(),
+                            json!(["Model::Systems::PartDefinition"]),
+                        ),
+                        ("features".to_string(), json!(["feature.engine"])),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "type.Car".to_string(),
+                    kind: "model.PartDefinition".to_string(),
+                    layer: 2,
+                    properties: [
+                        ("qualified_name".to_string(), json!("Car")),
+                        ("specializes".to_string(), json!(["type.Vehicle"])),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "feature.engine".to_string(),
+                    kind: "model.PartUsage".to_string(),
+                    layer: 2,
+                    properties: [("qualified_name".to_string(), json!("Vehicle.engine"))]
+                        .into_iter()
+                        .collect(),
+                },
+                KirElement {
+                    id: "df.partCount".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
+                    layer: 1,
+                    properties: [(
+                        "qualified_name".to_string(),
+                        json!("PartDefinition.partCount"),
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "Base::Anything".to_string(),
+                    kind: "model.Type".to_string(),
+                    layer: 1,
+                    properties: [
+                        ("qualified_name".to_string(), json!("Base.Anything")),
+                        ("doc".to_string(), json!({ "source": "foundation" })),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "assembly.VehicleInstance".to_string(),
+                    kind: "type.Vehicle".to_string(),
+                    layer: 2,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("assembly.VehicleInstance"),
+                        ),
+                        (
+                            "parts".to_string(),
+                            json!(["part.engine_left", "part.engine_right"]),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "part.engine_left".to_string(),
+                    kind: "type.Engine".to_string(),
+                    layer: 2,
+                    properties: [("qualified_name".to_string(), json!("assembly.leftEngine"))]
+                        .into_iter()
+                        .collect(),
+                },
+                KirElement {
+                    id: "part.engine_right".to_string(),
+                    kind: "type.Engine".to_string(),
+                    layer: 2,
+                    properties: [("qualified_name".to_string(), json!("assembly.rightEngine"))]
+                        .into_iter()
+                        .collect(),
+                },
+                aggregate_feature("df.totalMass", "sum"),
+            ],
+        })
+        .unwrap()
     }
 
     fn aggregate_feature(id: &str, function: &str) -> KirElement {
         KirElement {
             id: id.to_string(),
-            kind: "KerML::Core::Feature".to_string(),
+            kind: "Core::Core::Feature".to_string(),
             layer: 2,
             properties: [(
                 "expression_ir".to_string(),
@@ -643,11 +759,11 @@ mod tests {
     fn finds_transitive_subtypes() {
         let runtime = sample_runtime();
 
-        let result = runtime.get_subtypes("KerML::Core::Type").unwrap();
+        let result = runtime.get_subtypes("Core::Core::Type").unwrap();
         assert!(
             result
                 .value
-                .contains(&"SysML::Systems::PartDefinition".to_string())
+                .contains(&"Model::Systems::PartDefinition".to_string())
         );
         assert!(result.value.contains(&"type.Vehicle".to_string()));
     }
@@ -668,13 +784,13 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: Default::default(),
                 },
                 KirElement {
                     id: "doc.type.Demo.A.1".to_string(),
-                    kind: "KerML::Root::Documentation".to_string(),
+                    kind: "Core::Root::Documentation".to_string(),
                     layer: 2,
                     properties: [
                         ("owner".to_string(), json!("type.Demo.A")),
@@ -731,7 +847,7 @@ mod tests {
             .collect(),
             elements: vec![KirElement {
                 id: "type.Demo.A".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: [("declared_name".to_string(), json!("A"))]
                     .into_iter()
@@ -780,7 +896,7 @@ mod tests {
             .element_by_element_id("Base::Anything")
             .unwrap();
 
-        assert_eq!(anything.properties["doc"]["source"], "pilot");
+        assert_eq!(anything.properties["doc"]["source"], "foundation");
         assert!(anything.properties.get("specializes").is_none());
     }
 
@@ -814,7 +930,7 @@ mod tests {
                 },
                 KirElement {
                     id: "df.totalMass".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),
@@ -948,7 +1064,7 @@ mod tests {
                 },
                 KirElement {
                     id: "df.tupleValue".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),
@@ -991,7 +1107,7 @@ mod tests {
                 },
                 KirElement {
                     id: "df.unsupported".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),
@@ -1031,7 +1147,7 @@ mod tests {
                 },
                 KirElement {
                     id: "df.unsupported".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),
@@ -1083,7 +1199,7 @@ mod tests {
                 },
                 KirElement {
                     id: "df.totalMass".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),
@@ -1122,7 +1238,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.EvalDemo.Engine".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [(
                         "features".to_string(),
@@ -1133,7 +1249,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.EvalDemo.Engine.mass".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [
                         ("declared_name".to_string(), json!("mass")),
@@ -1147,7 +1263,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.EvalDemo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: [(
                         "features".to_string(),
@@ -1161,7 +1277,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.EvalDemo.Vehicle.leftEngine".to_string(),
-                    kind: "SysML::Parts::PartUsage".to_string(),
+                    kind: "Model::Parts::PartUsage".to_string(),
                     layer: 2,
                     properties: [
                         ("declared_name".to_string(), json!("leftEngine")),
@@ -1172,7 +1288,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.EvalDemo.Vehicle.rightEngine".to_string(),
-                    kind: "SysML::Parts::PartUsage".to_string(),
+                    kind: "Model::Parts::PartUsage".to_string(),
                     layer: 2,
                     properties: [
                         ("declared_name".to_string(), json!("rightEngine")),
@@ -1183,7 +1299,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.EvalDemo.Vehicle.totalMass".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),

@@ -1,29 +1,22 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const DEFAULT_STDLIB_RELATIVE_PATH: &str =
-    "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.full.kir.json";
-const DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH: &str =
-    "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.rulepack.json";
+const DEFAULT_STDLIB_RELATIVE_PATH: &str = "resources/foundation/empty.kir.json";
+const DEFAULT_STDLIB_RULEPACK_RELATIVE_PATH: &str = "resources/foundation/core.rulepack.json";
 const DEFAULT_LANGUAGE_PROFILE_ROOT_RELATIVE_PATH: &str = "resources/language-profiles";
 const DEFAULT_BUNDLED_LIBRARY_REPO_RELATIVE_PATH: &str = "packages/libraries";
 const DEFAULT_BUNDLED_EXTENSION_REPO_RELATIVE_PATH: &str = "packages/extensions";
-const DEFAULT_BUNDLED_STDLIB_PACKAGE_SET_RELATIVE_PATH: &str =
-    "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/sysml.library.kpar";
-const DEFAULT_KERNEL_LIBRARY_RELATIVE_PATH: &str = "resources/kernel/kerml-kernel.kir.json";
-const DEFAULT_SYSML_DELTA_LIBRARY_RELATIVE_PATH: &str = "resources/sysml/sysml-library.kir.json";
-const REPO_SENTINELS: [&str; 3] = [
-    "resources/stdlib-sources/sysml-2.0-pilot-0.57.0/stdlib.full.kir.json",
-    "packages/extensions/org.mercurio.sysml-stdlib-support/2.0.0/plugin.mpack",
-    "Cargo.toml",
-];
+const DEFAULT_BUNDLED_STDLIB_PACKAGE_SET_RELATIVE_PATH: &str = "packages/libraries";
+const DEFAULT_KERNEL_LIBRARY_RELATIVE_PATH: &str = "resources/foundation/empty.kir.json";
+const DEFAULT_MODEL_DELTA_LIBRARY_RELATIVE_PATH: &str = "resources/foundation/empty.kir.json";
+const REPO_SENTINELS: [&str; 2] = ["Cargo.toml", "resources/foundation/empty.kir.json"];
 
 pub fn default_stdlib_path() -> PathBuf {
-    default_sysml_library_path()
+    default_model_library_path()
 }
 
-pub fn default_sysml_library_path() -> PathBuf {
-    if let Ok(path) = std::env::var("MERCURIO_SYSML_LIBRARY_PATH") {
+pub fn default_model_library_path() -> PathBuf {
+    if let Ok(path) = std::env::var("MERCURIO_MODEL_LIBRARY_PATH") {
         return PathBuf::from(path);
     }
 
@@ -35,11 +28,11 @@ pub fn default_sysml_library_path() -> PathBuf {
 }
 
 pub fn default_stdlib_rulepack_path() -> PathBuf {
-    default_sysml_rulepack_path()
+    default_model_rulepack_path()
 }
 
-pub fn default_sysml_rulepack_path() -> PathBuf {
-    if let Ok(path) = std::env::var("MERCURIO_SYSML_RULEPACK_PATH") {
+pub fn default_model_rulepack_path() -> PathBuf {
+    if let Ok(path) = std::env::var("MERCURIO_MODEL_RULEPACK_PATH") {
         return PathBuf::from(path);
     }
 
@@ -58,12 +51,12 @@ pub fn default_kernel_library_path() -> PathBuf {
     repo_path(DEFAULT_KERNEL_LIBRARY_RELATIVE_PATH)
 }
 
-pub fn default_sysml_delta_library_path() -> PathBuf {
-    if let Ok(path) = std::env::var("MERCURIO_SYSML_DELTA_LIBRARY_PATH") {
+pub fn default_model_delta_library_path() -> PathBuf {
+    if let Ok(path) = std::env::var("MERCURIO_MODEL_DELTA_LIBRARY_PATH") {
         return PathBuf::from(path);
     }
 
-    repo_path(DEFAULT_SYSML_DELTA_LIBRARY_RELATIVE_PATH)
+    repo_path(DEFAULT_MODEL_DELTA_LIBRARY_RELATIVE_PATH)
 }
 
 pub fn default_language_profile_path(profile_id: &str) -> PathBuf {
@@ -197,7 +190,7 @@ mod tests {
 
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("stdlib.rulepack.json")
+            Some("core.rulepack.json")
         );
         assert!(path.exists());
     }
@@ -208,18 +201,18 @@ mod tests {
 
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("kerml-kernel.kir.json")
+            Some("empty.kir.json")
         );
         assert!(path.exists());
     }
 
     #[test]
-    fn default_sysml_delta_library_path_points_to_committed_kir() {
-        let path = super::default_sysml_delta_library_path();
+    fn default_model_delta_library_path_points_to_committed_kir() {
+        let path = super::default_model_delta_library_path();
 
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("sysml-library.kir.json")
+            Some("empty.kir.json")
         );
         assert!(path.exists());
     }

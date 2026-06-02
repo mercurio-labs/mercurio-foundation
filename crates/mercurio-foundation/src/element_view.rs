@@ -151,7 +151,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "pkg.Demo".to_string(),
-                    kind: "SysML::Package".to_string(),
+                    kind: "Model::Package".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "features".to_string(),
@@ -160,7 +160,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "qualified_name".to_string(),

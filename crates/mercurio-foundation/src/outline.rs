@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::frontend::ast::{
     AliasDecl, Declaration, GenericDefinitionDecl, GenericUsageDecl, ImportDecl, PackageDecl,
-    PartDefinitionDecl, PartUsageDecl, SourceSpan, SysmlModule,
+    ParsedModule, PartDefinitionDecl, PartUsageDecl, SourceSpan,
 };
 use crate::graph::Graph;
 use crate::ir::{KirDocument, KirElement};
@@ -65,7 +65,7 @@ impl EditorOutlineKey {
 
 pub fn build_editor_outline(
     relative_path: &str,
-    module: &SysmlModule,
+    module: &ParsedModule,
     element_index: &HashMap<EditorOutlineKey, String>,
 ) -> Vec<EditorOutlineNodeDto> {
     if let Some(package) = &module.package {
@@ -810,8 +810,8 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![element(
                 "type.Demo.Vehicle",
-                "SysML::Systems::PartDefinition",
-                "test_files/l2/minimal_vehicle.sysml",
+                "Model::Systems::PartDefinition",
+                "test_files/l2/minimal_vehicle.model",
                 (11, 3, 13, 3),
                 BTreeMap::new(),
             )],
@@ -822,7 +822,7 @@ mod tests {
 
         assert_eq!(
             index.get(&EditorOutlineKey::from_parts(
-                "minimal_vehicle.sysml",
+                "minimal_vehicle.model",
                 11,
                 3,
                 13,
@@ -839,8 +839,8 @@ mod tests {
             elements: vec![
                 element(
                     "pkg.Demo",
-                    "SysML::Systems::Package",
-                    "test_files/l2/minimal_vehicle.sysml",
+                    "Model::Systems::Package",
+                    "test_files/l2/minimal_vehicle.model",
                     (1, 1, 20, 2),
                     BTreeMap::from([(
                         "declared_name".to_string(),
@@ -849,8 +849,8 @@ mod tests {
                 ),
                 element(
                     "type.Demo.Vehicle",
-                    "SysML::Systems::PartDefinition",
-                    "test_files/l2/minimal_vehicle.sysml",
+                    "Model::Systems::PartDefinition",
+                    "test_files/l2/minimal_vehicle.model",
                     (3, 3, 10, 4),
                     BTreeMap::from([
                         (
@@ -862,8 +862,8 @@ mod tests {
                 ),
                 element(
                     "feature.Demo.Vehicle.engine",
-                    "SysML::Systems::PartUsage",
-                    "test_files/l2/minimal_vehicle.sysml",
+                    "Model::Systems::PartUsage",
+                    "test_files/l2/minimal_vehicle.model",
                     (5, 5, 5, 22),
                     BTreeMap::from([
                         (
@@ -880,7 +880,7 @@ mod tests {
         };
 
         let outline =
-            build_semantic_editor_outline_from_document("minimal_vehicle.sysml", &document);
+            build_semantic_editor_outline_from_document("minimal_vehicle.model", &document);
 
         assert_eq!(outline.len(), 1);
         assert_eq!(outline[0].id, "pkg.Demo");

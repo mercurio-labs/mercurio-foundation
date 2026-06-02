@@ -198,7 +198,7 @@ pub fn semantic_reasoning_context_from_authoring_project(
     }
 
     SemanticReasoningContext {
-        metamodel_version: "sysml-v2-authoring-context-v1".to_string(),
+        metamodel_version: "model-v2-authoring-context-v1".to_string(),
         workspace_revision,
         focus,
         elements,
@@ -255,7 +255,7 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances(
                     child_kind: keyword.clone(),
                     status: "candidate".to_string(),
                     reason: Some(
-                        "candidate from core SysML v2 writable definition vocabulary; feasibility remains authoritative"
+                        "candidate from core Model v2 writable definition vocabulary; feasibility remains authoritative"
                             .to_string(),
                     ),
                 },
@@ -271,7 +271,7 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances(
                     child_kind: keyword.clone(),
                     status: "candidate".to_string(),
                     reason: Some(
-                        "candidate from core SysML v2 writable usage vocabulary; feasibility remains authoritative"
+                        "candidate from core Model v2 writable usage vocabulary; feasibility remains authoritative"
                             .to_string(),
                     ),
                 },
@@ -702,7 +702,7 @@ fn semantic_trace_relationship_uses_owner_source(keyword: &str) -> bool {
 
 pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabilityContext {
     SemanticMutationCapabilityContext {
-        metamodel_version: "sysml-v2-writable-mutation-v1".to_string(),
+        metamodel_version: "model-v2-writable-mutation-v1".to_string(),
         supported_operations: vec![
             "AddPackage".to_string(),
             "AddDefinition".to_string(),
@@ -753,7 +753,7 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
             "refine".to_string(),
         ],
         guidance: vec![
-            "Use SysML v2 textual concepts, not SysML v1 block terminology.".to_string(),
+            "Use Model v2 textual concepts, not Model v1 block terminology.".to_string(),
             "Never use keyword `block`; use `part` for part definitions and part usages."
                 .to_string(),
             "Requirement definitions should carry explicit `id` and `text` semantic attributes; use SetAttribute on existing requirement elements when those fields are missing."
@@ -1071,10 +1071,10 @@ mod tests {
     use crate::ir::{KirDocument, KirElement};
 
     #[test]
-    fn default_capability_context_exposes_writable_sysml_v2_vocabulary() {
+    fn default_capability_context_exposes_writable_model_v2_vocabulary() {
         let context = default_semantic_mutation_capability_context();
 
-        assert_eq!(context.metamodel_version, "sysml-v2-writable-mutation-v1");
+        assert_eq!(context.metamodel_version, "model-v2-writable-mutation-v1");
         assert!(
             context
                 .supported_operations
@@ -1162,7 +1162,7 @@ mod tests {
     #[test]
     fn semantic_reasoning_context_summarizes_authoring_project() {
         let files = BTreeMap::from([(
-            "hybrid.sysml".to_string(),
+            "hybrid.model".to_string(),
             r#"
 package HybridVehicle {
     part HybridVehicle {
@@ -1175,7 +1175,7 @@ package HybridVehicle {
 "#
             .to_string(),
         )]);
-        let project = AuthoringProject::from_sysml_files(files).expect("project parses");
+        let project = AuthoringProject::from_model_files(files).expect("project parses");
 
         let context = semantic_reasoning_context_from_authoring_project(
             &project,
@@ -1184,8 +1184,8 @@ package HybridVehicle {
             64,
         );
 
-        assert_eq!(context.metamodel_version, "sysml-v2-authoring-context-v1");
-        assert_eq!(context.source_files, vec!["hybrid.sysml".to_string()]);
+        assert_eq!(context.metamodel_version, "model-v2-authoring-context-v1");
+        assert_eq!(context.source_files, vec!["hybrid.model".to_string()]);
         assert!(!context.truncated);
         assert!(
             context
@@ -1208,7 +1208,7 @@ package HybridVehicle {
     #[test]
     fn semantic_reasoning_context_normalizes_trace_relationship_source_to_owner() {
         let files = BTreeMap::from([(
-            "hybrid.sysml".to_string(),
+            "hybrid.model".to_string(),
             r#"
 package HybridVehicle {
     part def Vehicle {
@@ -1222,7 +1222,7 @@ package HybridVehicle {
 "#
             .to_string(),
         )]);
-        let project = AuthoringProject::from_sysml_files(files).expect("project parses");
+        let project = AuthoringProject::from_model_files(files).expect("project parses");
 
         let context = semantic_reasoning_context_from_authoring_project(
             &project,
@@ -1244,7 +1244,7 @@ package HybridVehicle {
     #[test]
     fn semantic_reasoning_context_exposes_focus_child_affordances() {
         let files = BTreeMap::from([(
-            "hybrid.sysml".to_string(),
+            "hybrid.model".to_string(),
             r#"
 package HybridVehicle {
     part HybridVehicle;
@@ -1252,7 +1252,7 @@ package HybridVehicle {
 "#
             .to_string(),
         )]);
-        let project = AuthoringProject::from_sysml_files(files).expect("project parses");
+        let project = AuthoringProject::from_model_files(files).expect("project parses");
         let mut context = semantic_reasoning_context_from_authoring_project(
             &project,
             WorkspaceRevision::unchecked(),

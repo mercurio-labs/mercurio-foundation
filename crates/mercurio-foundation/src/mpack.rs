@@ -207,27 +207,27 @@ mod tests {
     #[test]
     fn validates_stdlib_support_manifest_shape() {
         let manifest = MpackManifest {
-            id: "org.mercurio.sysml-stdlib-support".to_string(),
+            id: "org.mercurio.model-stdlib-support".to_string(),
             version: "2.0.0".to_string(),
-            name: "SysML Stdlib Support".to_string(),
+            name: "Model Stdlib Support".to_string(),
             kind: Some("stdlib_support".to_string()),
             description: None,
             requires: None,
             libraries: vec![MpackLibrary {
-                id: Some("org.omg/sysml-stdlib".to_string()),
-                path: Some("libraries/sysml-stdlib.kpar".to_string()),
+                id: Some("org.omg/model-stdlib".to_string()),
+                path: Some("libraries/model-stdlib.kpar".to_string()),
                 locator: None,
                 sha256: None,
                 role: Some("baseline".to_string()),
             }],
             language_profiles: vec![MpackLanguageProfile {
-                id: "sysml-2.0-pilot-0.57.0".to_string(),
-                path: "profiles/sysml-2.0-pilot-0.57.0/profile.json".to_string(),
-                stdlib: Some("libraries/sysml-stdlib.kpar".to_string()),
+                id: "model-2.0-pilot-0.57.0".to_string(),
+                path: "profiles/model-2.0-pilot-0.57.0/profile.json".to_string(),
+                stdlib: Some("libraries/model-stdlib.kpar".to_string()),
                 python_wrappers: Some(MpackPythonWrapperBinding {
-                    module: "mercurio_sysml_2_0".to_string(),
+                    module: "mercurio_model_2_0".to_string(),
                     path: "python".to_string(),
-                    entrypoint: Some("mercurio_sysml_2_0:register".to_string()),
+                    entrypoint: Some("mercurio_model_2_0:register".to_string()),
                 }),
             }],
             rulepacks: vec![MpackRulepack {

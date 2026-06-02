@@ -513,8 +513,8 @@ fn pilot_library_group(element: &KirElement) -> Option<&str> {
 
 fn metamodel_language_for_group(group: &str) -> &'static str {
     match group {
-        "Kernel Libraries" => "kerml",
-        "Systems Library" | "Domain Libraries" => "sysml",
+        "Kernel Libraries" => "core",
+        "Systems Library" | "Domain Libraries" => "model",
         _ => "unknown",
     }
 }
@@ -646,7 +646,7 @@ mod tests {
                 kind: "Type".to_string(),
                 library_group: "Kernel Libraries".to_string(),
                 source: Some(PilotSource {
-                    file: "sysml.library/Kernel Libraries/Root.kerml".to_string(),
+                    file: "model.library/Kernel Libraries/Root.model".to_string(),
                     start_line: Some(1),
                     end_line: Some(3),
                 }),
@@ -760,7 +760,7 @@ mod tests {
             feature.properties["pilot_library_group"],
             "Kernel Libraries"
         );
-        assert_eq!(feature.properties["metamodel_language"], "kerml");
+        assert_eq!(feature.properties["metamodel_language"], "core");
         assert_eq!(feature.properties["metamodel_layer"], "kernel");
         assert_eq!(feature.properties["type"], "Kernel::String");
         assert_eq!(feature.properties["type_label"], "String");
@@ -777,7 +777,7 @@ mod tests {
                 kind: "PartDefinition".to_string(),
                 library_group: "Input Model".to_string(),
                 source: Some(PilotSource {
-                    file: "sysml/src/training/02. Part Definitions/Part Definition Example.sysml"
+                    file: "model/src/training/02. Part Definitions/Part Definition Example.model"
                         .to_string(),
                     start_line: Some(2),
                     end_line: Some(4),
@@ -808,7 +808,7 @@ mod tests {
         );
         assert_eq!(
             element.properties["metadata"]["source_file"],
-            "sysml/src/training/02. Part Definitions/Part Definition Example.sysml"
+            "model/src/training/02. Part Definitions/Part Definition Example.model"
         );
         assert_eq!(element.properties["doc"]["source"], "pilot");
     }
@@ -823,7 +823,7 @@ mod tests {
                     kind: "PartUsage".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(4),
                         end_line: Some(4),
                     }),
@@ -835,7 +835,7 @@ mod tests {
                     kind: "FeatureTyping".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(4),
                         end_line: Some(4),
                     }),
@@ -847,7 +847,7 @@ mod tests {
                     kind: "Redefinition".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(4),
                         end_line: Some(4),
                     }),
@@ -859,7 +859,7 @@ mod tests {
                     kind: "Subsetting".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(4),
                         end_line: Some(4),
                     }),
@@ -871,7 +871,7 @@ mod tests {
                     kind: "PartDefinition".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(1),
                         end_line: Some(1),
                     }),
@@ -883,7 +883,7 @@ mod tests {
                     kind: "PartUsage".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(2),
                         end_line: Some(2),
                     }),
@@ -895,7 +895,7 @@ mod tests {
                     kind: "PartUsage".to_string(),
                     library_group: "Input Model".to_string(),
                     source: Some(PilotSource {
-                        file: "demo.sysml".to_string(),
+                        file: "demo.model".to_string(),
                         start_line: Some(3),
                         end_line: Some(3),
                     }),

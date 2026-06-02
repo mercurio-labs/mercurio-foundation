@@ -61,23 +61,11 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 name = "mercurio-foundation"
 version = "0.1.0"
 dependencies = [
- "mercurio-kerml",
  "mercurio-kir",
  "mercurio-language-contracts",
- "mercurio-language-frontend",
- "mercurio-sysml",
  "serde",
  "serde_json",
  "zip",
-]
-
-[[package]]
-name = "mercurio-kerml"
-version = "0.1.0"
-dependencies = [
- "mercurio-kir",
- "mercurio-language-contracts",
- "mercurio-language-frontend",
 ]
 
 [[package]]
@@ -93,28 +81,6 @@ name = "mercurio-language-contracts"
 version = "0.1.0"
 dependencies = [
  "mercurio-kir",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mercurio-language-frontend"
-version = "0.1.0"
-dependencies = [
- "mercurio-kir",
- "mercurio-language-contracts",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mercurio-sysml"
-version = "0.1.0"
-dependencies = [
- "mercurio-kerml",
- "mercurio-kir",
- "mercurio-language-contracts",
- "mercurio-language-frontend",
  "serde",
  "serde_json",
 ]

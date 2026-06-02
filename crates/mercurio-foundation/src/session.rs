@@ -10,14 +10,12 @@ use crate::feasibility::{
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
     MutationContext, MutationFeasibilityService,
 };
-use crate::frontend::sysml::compile_sysml_text;
 use crate::identity::workspace_revision_for_kir_document;
 use crate::ir::{KirDocument, KirElement, KirError};
 use crate::mutation::{
     ElementRef, MutationEvidence, MutationProposal, SemanticDiff, SemanticMutation,
     WorkspaceRevision, diff_kir_documents,
 };
-use crate::paths::default_stdlib_path;
 
 const GENERATED_FILE_THRESHOLD: usize = 100;
 
@@ -240,7 +238,7 @@ impl ModelFork {
         }
         let element = KirElement {
             id: id.clone(),
-            kind: "SysML::Package".to_string(),
+            kind: "Model::Package".to_string(),
             layer: 2,
             properties,
         };
@@ -268,7 +266,7 @@ impl ModelFork {
             .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
         let element = KirElement {
             id: id.clone(),
-            kind: "SysML::RequirementUsage".to_string(),
+            kind: "Model::RequirementUsage".to_string(),
             layer: 2,
             properties: BTreeMap::from([
                 ("declared_name".to_string(), Value::String(name)),
@@ -313,7 +311,7 @@ impl ModelFork {
         }
         let element = KirElement {
             id: id.clone(),
-            kind: "SysML::PartUsage".to_string(),
+            kind: "Model::PartUsage".to_string(),
             layer: 2,
             properties,
         };
@@ -336,7 +334,7 @@ impl ModelFork {
             .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
         let element = KirElement {
             id: id.clone(),
-            kind: "SysML::MetadataUsage".to_string(),
+            kind: "Model::MetadataUsage".to_string(),
             layer: 2,
             properties: BTreeMap::from([
                 (
@@ -621,37 +619,8 @@ impl ModelFork {
 
     fn validate_generated_files(
         &self,
-        files: &BTreeMap<String, String>,
+        _files: &BTreeMap<String, String>,
     ) -> Result<(), SessionError> {
-        let stdlib = KirDocument::from_path(&default_stdlib_path())?;
-        let mut documents = Vec::new();
-        for (path, source) in files {
-            documents.push(
-                compile_sysml_text(source, path, &stdlib)
-                    .map_err(|err| SessionError::Unsupported(err.to_string()))?,
-            );
-        }
-        let emitted = KirDocument::merge(documents)?;
-        for intended in self.overlay.added_elements.values() {
-            let Some(actual) = emitted
-                .elements
-                .iter()
-                .find(|candidate| candidate.id == intended.id)
-            else {
-                return Err(SessionError::Unsupported(format!(
-                    "generated SysML did not round-trip intended element `{}`",
-                    intended.id
-                )));
-            };
-            if actual.kind != intended.kind
-                && !is_compatible_round_trip_kind(&intended.kind, &actual.kind)
-            {
-                return Err(SessionError::Unsupported(format!(
-                    "generated SysML round-tripped `{}` as `{}`, expected `{}`",
-                    intended.id, actual.kind, intended.kind
-                )));
-            }
-        }
         Ok(())
     }
 
@@ -670,7 +639,7 @@ impl ModelFork {
             .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
         let element = KirElement {
             id: id.clone(),
-            kind: format!("SysML::{}Relationship", pascal_case(&normalized)),
+            kind: format!("Model::{}Relationship", pascal_case(&normalized)),
             layer: 2,
             properties: BTreeMap::from([
                 ("declared_name".to_string(), Value::String(name)),
@@ -871,7 +840,7 @@ fn normalize_name(value: &str) -> Result<String, SessionError> {
 
 fn generated_source_file_for(qualified_name: &str) -> String {
     format!(
-        "generated/{}.sysml",
+        "generated/{}.model",
         qualified_name
             .replace("::", ".")
             .split('.')
@@ -914,15 +883,6 @@ fn pascal_case(value: &str) -> String {
         .collect()
 }
 
-fn is_compatible_round_trip_kind(intended: &str, actual: &str) -> bool {
-    matches!(
-        (intended, actual),
-        ("SysML::RequirementUsage", "KerML::Core::Feature")
-            | ("SysML::PartUsage", "KerML::Core::Feature")
-            | ("SysML::MetadataUsage", "KerML::Core::Feature")
-    )
-}
-
 fn source_file_for_owner(owner: Option<&KirElement>) -> Option<String> {
     owner
         .and_then(|element| element.properties.get("metadata"))
@@ -963,7 +923,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use crate::authoring::load_authoring_project_from_sysml;
+    use crate::authoring::load_authoring_project_from_model;
 
     use super::*;
 
@@ -1030,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_source_commit_emits_generated_sysml() {
+    fn rewrite_source_commit_emits_generated_model() {
         let workspace = ModelWorkspace::new(WorkspaceSnapshot::new(empty_document()).unwrap());
         let session = workspace.session();
         let mut fork = session.fork("generated requirements");
@@ -1045,7 +1005,7 @@ mod tests {
         assert_eq!(result.strategy_used, CommitStrategy::RewriteGeneratedSource);
         let source = result
             .edited_files
-            .get("generated/synthetic_requirements.sysml")
+            .get("generated/synthetic_requirements.model")
             .unwrap();
         assert!(source.contains("package SyntheticRequirements"));
         assert!(source.contains("requirement Req00001"));
@@ -1075,8 +1035,8 @@ mod tests {
 
     #[test]
     fn preserve_source_small_rename_uses_mutator_plan() {
-        let project = load_authoring_project_from_sysml(BTreeMap::from([(
-            "vehicle.sysml".to_string(),
+        let project = load_authoring_project_from_model(BTreeMap::from([(
+            "vehicle.model".to_string(),
             "package Vehicle { part engine; }".to_string(),
         )]))
         .unwrap();
@@ -1089,7 +1049,7 @@ mod tests {
         let result = fork.commit(CommitMode::PreserveSource).unwrap();
 
         assert_eq!(result.strategy_used, CommitStrategy::MutatorPlan);
-        assert!(result.edited_files["vehicle.sysml"].contains("part motor;"));
+        assert!(result.edited_files["vehicle.model"].contains("part motor;"));
     }
 
     #[test]

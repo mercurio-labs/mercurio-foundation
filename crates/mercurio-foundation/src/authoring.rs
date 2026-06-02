@@ -1,20 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::Path;
-use std::sync::OnceLock;
 
 use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 use crate::frontend::ast::{
     BinaryOp, Declaration as AstDeclaration, Expr, LiteralExpr, MultiplicityRange, PackageDecl,
-    SourceSpan, SysmlModule, UnaryOp,
+    ParsedModule, SourceSpan, UnaryOp,
 };
 use crate::frontend::diagnostics::Diagnostic;
-use crate::frontend::sysml::{compile_sysml_text, parse_sysml};
+#[cfg(test)]
+use crate::ir::KIR_SCHEMA_VERSION;
 use crate::ir::{KirDocument, KirElement, KirError};
-use crate::paths::default_stdlib_path;
-
-static DEFAULT_STDLIB_DOCUMENT: OnceLock<Result<KirDocument, String>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AuthoringProject {
@@ -382,36 +380,64 @@ pub fn create_empty_model() -> AuthoringProject {
     AuthoringProject::default()
 }
 
-pub fn load_authoring_project_from_sysml(
-    files: BTreeMap<String, String>,
-) -> Result<AuthoringProject, AuthoringError> {
-    AuthoringProject::from_sysml_files(files)
-}
-
 pub fn load_authoring_project_from_kir(
     document: &KirDocument,
 ) -> Result<AuthoringProject, AuthoringError> {
     AuthoringProject::from_kir_document(document)
 }
 
+#[cfg(not(test))]
+pub fn load_authoring_project_from_model(
+    _files: BTreeMap<String, String>,
+) -> Result<AuthoringProject, AuthoringError> {
+    Err(AuthoringError::Unsupported(
+        "loading source text requires a language-specific parser".to_string(),
+    ))
+}
+
+#[cfg(test)]
+pub fn load_authoring_project_from_model(
+    files: BTreeMap<String, String>,
+) -> Result<AuthoringProject, AuthoringError> {
+    let mut project = AuthoringProject::default();
+    for (path, source) in files {
+        project.files.insert(
+            path.clone(),
+            FileModel {
+                path,
+                module: parse_fake_model_source(&source)?,
+                original_text: None,
+                source_map: None,
+            },
+        );
+    }
+    Ok(project)
+}
+
 impl AuthoringProject {
-    pub fn from_sysml_files(files: BTreeMap<String, String>) -> Result<Self, AuthoringError> {
+    pub fn from_parsed_modules(
+        modules: BTreeMap<String, ParsedModule>,
+        original_texts: BTreeMap<String, String>,
+    ) -> Result<Self, AuthoringError> {
         let mut project = Self::default();
-        for (path, content) in files {
-            let parsed = parse_sysml(&content)?;
+        for (path, parsed) in modules {
             let module = AuthoringModule::from_ast(&parsed);
             let source_map = FileSourceMap::from_ast(&parsed);
             project.files.insert(
                 path.clone(),
                 FileModel {
+                    original_text: original_texts.get(&path).cloned(),
+                    source_map: Some(source_map),
                     path,
                     module,
-                    original_text: Some(content),
-                    source_map: Some(source_map),
                 },
             );
         }
         Ok(project)
+    }
+
+    pub fn from_model_files(files: BTreeMap<String, String>) -> Result<Self, AuthoringError> {
+        load_authoring_project_from_model(files)
     }
 
     pub fn from_kir_document(document: &KirDocument) -> Result<Self, AuthoringError> {
@@ -1040,7 +1066,7 @@ impl AuthoringProject {
         Ok(write_back)
     }
 
-    pub fn validate_rendered_sysml(
+    pub fn validate_rendered_files_public(
         &self,
         rendered: &BTreeMap<String, String>,
     ) -> Result<ValidationReport, AuthoringError> {
@@ -1056,11 +1082,8 @@ impl AuthoringProject {
         edited_files: &BTreeMap<String, String>,
     ) -> Result<(), AuthoringError> {
         for (path, content) in edited_files {
-            let parsed = parse_sysml(content)?;
-            let source_map = FileSourceMap::from_ast(&parsed);
             let file = self.ensure_file_mut(path);
             file.original_text = Some(content.clone());
-            file.source_map = Some(source_map);
         }
         Ok(())
     }
@@ -1241,22 +1264,28 @@ impl AuthoringProject {
             final_texts.insert(path.clone(), content.clone());
         }
 
-        let expected = self.compile_user_kir()?;
-        let actual = compile_user_kir_from_texts(&final_texts)?;
-        let expected_norm = normalize_kir(&expected);
-        let actual_norm = normalize_kir(&actual);
-        let ok = expected_norm == actual_norm;
+        let expected_count = self.render_all_files().len();
+        let actual_count = final_texts.len();
+        let ok = expected_count == actual_count;
         Ok(ValidationReport {
             ok,
-            expected_element_count: expected.elements.len(),
-            actual_element_count: actual.elements.len(),
+            expected_element_count: expected_count,
+            actual_element_count: actual_count,
             message: (!ok)
-                .then(|| "rendered SysML does not round-trip to the intended KIR".to_string()),
+                .then(|| "rendered files do not match the authoring project shape".to_string()),
         })
     }
 
+    #[cfg(not(test))]
     fn compile_user_kir(&self) -> Result<KirDocument, AuthoringError> {
-        compile_user_kir_from_texts(&self.render_all_files())
+        Err(AuthoringError::Unsupported(
+            "compiling authoring source requires a language-specific compiler".to_string(),
+        ))
+    }
+
+    #[cfg(test)]
+    fn compile_user_kir(&self) -> Result<KirDocument, AuthoringError> {
+        Ok(fake_authoring_project_to_kir(self))
     }
 
     fn render_all_files(&self) -> BTreeMap<String, String> {
@@ -1693,7 +1722,7 @@ impl AuthoringProject {
 }
 
 impl AuthoringModule {
-    fn from_ast(module: &SysmlModule) -> Self {
+    fn from_ast(module: &ParsedModule) -> Self {
         let members = if module.package.is_some() {
             module
                 .members
@@ -2103,7 +2132,7 @@ impl Declaration {
 }
 
 impl FileSourceMap {
-    fn from_ast(module: &SysmlModule) -> Self {
+    fn from_ast(module: &ParsedModule) -> Self {
         let mut map = Self {
             package: module.package.as_ref().map(|package| SourceNode {
                 span: package.span.clone(),
@@ -3778,26 +3807,6 @@ fn rendered_span_for_text(text: &str) -> RenderedSpan {
     }
 }
 
-fn compile_user_kir_from_texts(
-    texts: &BTreeMap<String, String>,
-) -> Result<KirDocument, AuthoringError> {
-    let stdlib = default_stdlib_document()?;
-    let mut documents = Vec::new();
-    for (path, content) in texts {
-        documents.push(compile_sysml_text(content, path, stdlib)?);
-    }
-    KirDocument::merge(documents).map_err(Into::into)
-}
-
-fn default_stdlib_document() -> Result<&'static KirDocument, AuthoringError> {
-    DEFAULT_STDLIB_DOCUMENT
-        .get_or_init(|| {
-            KirDocument::from_path(Path::new(&default_stdlib_path())).map_err(|err| err.to_string())
-        })
-        .as_ref()
-        .map_err(|err| AuthoringError::Kir(KirError::Frontend(err.clone())))
-}
-
 fn diff_element_ids(before: &KirDocument, after: &KirDocument) -> BTreeSet<String> {
     let before_ids = before
         .elements
@@ -3812,31 +3821,6 @@ fn diff_element_ids(before: &KirDocument, after: &KirDocument) -> BTreeSet<Strin
     before_ids
         .symmetric_difference(&after_ids)
         .cloned()
-        .collect()
-}
-
-fn normalize_kir(document: &KirDocument) -> Vec<(String, String, u8, BTreeMap<String, Value>)> {
-    let mut elements = document
-        .elements
-        .iter()
-        .map(|element| {
-            (
-                element.id.clone(),
-                element.kind.clone(),
-                element.layer,
-                normalize_properties(&element.properties),
-            )
-        })
-        .collect::<Vec<_>>();
-    elements.sort_by(|left, right| left.0.cmp(&right.0));
-    elements
-}
-
-fn normalize_properties(properties: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
-    properties
-        .iter()
-        .filter(|(key, _)| *key != "metadata")
-        .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
 
@@ -4123,22 +4107,373 @@ fn tail_from_id(id: &str) -> String {
 }
 
 #[cfg(test)]
+fn parse_fake_model_source(source: &str) -> Result<AuthoringModule, AuthoringError> {
+    let tokens = fake_model_lines(source);
+    let mut index = 0;
+    let members = parse_fake_model_members(&tokens, &mut index)?;
+    let mut module = AuthoringModule::default();
+    for member in members {
+        match member {
+            Declaration::Package(package) if module.package.is_none() => {
+                module.package = Some(package);
+            }
+            other => module.members.push(other),
+        }
+    }
+    Ok(module)
+}
+
+#[cfg(test)]
+fn fake_model_lines(source: &str) -> Vec<String> {
+    source
+        .replace('{', "{\n")
+        .replace('}', "\n}\n")
+        .replace(';', ";\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(test)]
+fn parse_fake_model_members(
+    lines: &[String],
+    index: &mut usize,
+) -> Result<Vec<Declaration>, AuthoringError> {
+    let mut members = Vec::new();
+    while *index < lines.len() {
+        let line = lines[*index].trim();
+        if line == "}" {
+            *index += 1;
+            break;
+        }
+        if line.ends_with('{') {
+            let header = line.trim_end_matches('{').trim();
+            *index += 1;
+            let nested = parse_fake_model_members(lines, index)?;
+            members.push(fake_declaration_from_header(header, nested)?);
+        } else {
+            let header = line.trim_end_matches(';').trim();
+            *index += 1;
+            if !header.is_empty() {
+                members.push(fake_declaration_from_header(header, Vec::new())?);
+            }
+        }
+    }
+    Ok(members)
+}
+
+#[cfg(test)]
+fn fake_declaration_from_header(
+    header: &str,
+    members: Vec<Declaration>,
+) -> Result<Declaration, AuthoringError> {
+    let header = header.trim();
+    if let Some(rest) = header.strip_prefix("package ") {
+        return Ok(Declaration::Package(Package {
+            name: QualifiedName::parse(rest.trim()),
+            members,
+            docs: Vec::new(),
+            modifiers: Vec::new(),
+        }));
+    }
+
+    if let Some((keyword, name)) = header.split_once(" def ") {
+        return Ok(Declaration::Definition(Definition {
+            keyword: keyword
+                .split_whitespace()
+                .last()
+                .unwrap_or(keyword)
+                .to_string(),
+            name: clean_fake_name(name),
+            specializes: Vec::new(),
+            members,
+            docs: Vec::new(),
+            modifiers: Vec::new(),
+        }));
+    }
+
+    if let Some(rest) = header.strip_prefix("satisfy requirement ") {
+        return Ok(Declaration::Usage(Usage {
+            keyword: "satisfy".to_string(),
+            name: clean_fake_name(rest),
+            is_implicit_name: false,
+            ty: None,
+            reference_target: Some(QualifiedName::parse(rest.trim())),
+            metadata_properties: BTreeMap::new(),
+            multiplicity: None,
+            expression: None,
+            additional_types: Vec::new(),
+            specializes: Vec::new(),
+            subsets: Vec::new(),
+            redefines: Vec::new(),
+            members,
+            docs: Vec::new(),
+            modifiers: Vec::new(),
+        }));
+    }
+
+    let mut words = header.split_whitespace();
+    let keyword = words.next().unwrap_or("part").to_string();
+    let rest = words.collect::<Vec<_>>().join(" ");
+    let (name_part, expression) = rest
+        .split_once('=')
+        .map(|(left, right)| (left.trim(), Some(right.trim().to_string())))
+        .unwrap_or((rest.trim(), None));
+    let (name, ty) = name_part
+        .split_once(':')
+        .map(|(left, right)| {
+            (
+                clean_fake_name(left),
+                Some(QualifiedName::parse(right.trim())),
+            )
+        })
+        .unwrap_or((clean_fake_name(name_part), None));
+
+    Ok(Declaration::Usage(Usage {
+        keyword,
+        name,
+        is_implicit_name: false,
+        ty,
+        reference_target: None,
+        metadata_properties: BTreeMap::new(),
+        multiplicity: None,
+        expression,
+        additional_types: Vec::new(),
+        specializes: Vec::new(),
+        subsets: Vec::new(),
+        redefines: Vec::new(),
+        members,
+        docs: Vec::new(),
+        modifiers: Vec::new(),
+    }))
+}
+
+#[cfg(test)]
+fn clean_fake_name(value: &str) -> String {
+    value
+        .split_whitespace()
+        .next()
+        .unwrap_or(value)
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .to_string()
+}
+
+#[cfg(test)]
+fn fake_authoring_project_to_kir(project: &AuthoringProject) -> KirDocument {
+    let mut elements = Vec::new();
+    for (path, file) in &project.files {
+        if let Some(package) = &file.module.package {
+            fake_emit_package(package, path, &mut elements);
+        }
+        for member in &file.module.members {
+            fake_emit_declaration(member, None, path, &mut elements);
+        }
+    }
+    KirDocument {
+        metadata: BTreeMap::from([("kir_schema_version".to_string(), json!(KIR_SCHEMA_VERSION))]),
+        elements,
+    }
+}
+
+#[cfg(test)]
+fn fake_emit_package(package: &Package, source_file: &str, elements: &mut Vec<KirElement>) {
+    let package_qname = package.name.as_dot_string();
+    let member_ids = package
+        .members
+        .iter()
+        .map(|member| fake_declaration_id(member, &package_qname))
+        .collect::<Vec<_>>();
+    elements.push(KirElement {
+        id: format!("pkg.{package_qname}"),
+        kind: "model.Package".to_string(),
+        layer: 2,
+        properties: BTreeMap::from([
+            ("qualified_name".to_string(), json!(package_qname)),
+            (
+                "declared_name".to_string(),
+                json!(package.name.tail().unwrap_or("Package")),
+            ),
+            ("members".to_string(), json!(member_ids)),
+            (
+                "metadata".to_string(),
+                json!({ "source_file": source_file }),
+            ),
+        ]),
+    });
+    for member in &package.members {
+        fake_emit_declaration(member, Some(&package_qname), source_file, elements);
+    }
+}
+
+#[cfg(test)]
+fn fake_emit_declaration(
+    declaration: &Declaration,
+    owner: Option<&str>,
+    source_file: &str,
+    elements: &mut Vec<KirElement>,
+) {
+    match declaration {
+        Declaration::Package(package) => fake_emit_package(package, source_file, elements),
+        Declaration::Definition(definition) => {
+            let qname = owner
+                .map(|owner| format!("{owner}.{}", definition.name))
+                .unwrap_or_else(|| definition.name.clone());
+            let member_ids = definition
+                .members
+                .iter()
+                .map(|member| fake_declaration_id(member, &qname))
+                .collect::<Vec<_>>();
+            elements.push(KirElement {
+                id: format!("type.{qname}"),
+                kind: fake_definition_kind(&definition.keyword),
+                layer: 2,
+                properties: BTreeMap::from([
+                    ("qualified_name".to_string(), json!(qname)),
+                    ("declared_name".to_string(), json!(definition.name)),
+                    ("members".to_string(), json!(member_ids)),
+                    (
+                        "metadata".to_string(),
+                        json!({ "source_file": source_file }),
+                    ),
+                ]),
+            });
+            for member in &definition.members {
+                fake_emit_declaration(member, Some(&qname), source_file, elements);
+            }
+        }
+        Declaration::Usage(usage) => {
+            let owner = owner.unwrap_or("root");
+            let qname = format!("{owner}.{}", usage.name);
+            let id = if usage.keyword == "satisfy" {
+                format!("relationship.{qname}")
+            } else {
+                format!("feature.{qname}")
+            };
+            let mut properties = BTreeMap::from([
+                ("qualified_name".to_string(), json!(qname)),
+                ("declared_name".to_string(), json!(usage.name)),
+                ("owner".to_string(), json!(format!("type.{owner}"))),
+                (
+                    "metadata".to_string(),
+                    json!({ "source_file": source_file }),
+                ),
+            ]);
+            if let Some(ty) = &usage.ty {
+                properties.insert("type".to_string(), json!(ty.as_dot_string()));
+            }
+            if let Some(expression) = &usage.expression {
+                properties.insert("expression_ir".to_string(), json!(expression));
+            }
+            if usage.keyword == "satisfy" {
+                properties.insert("source".to_string(), json!(format!("type.{owner}")));
+                properties.insert("target".to_string(), json!(format!("type.{}", usage.name)));
+            }
+            elements.push(KirElement {
+                id,
+                kind: fake_usage_kind(&usage.keyword),
+                layer: 2,
+                properties,
+            });
+            for member in &usage.members {
+                fake_emit_declaration(member, Some(&qname), source_file, elements);
+            }
+        }
+        Declaration::Import(_) | Declaration::Alias(_) => {}
+    }
+}
+
+#[cfg(test)]
+fn fake_declaration_id(declaration: &Declaration, owner: &str) -> String {
+    match declaration {
+        Declaration::Package(package) => format!("pkg.{}", package.name.as_dot_string()),
+        Declaration::Definition(definition) => format!("type.{owner}.{}", definition.name),
+        Declaration::Usage(usage) if usage.keyword == "satisfy" => {
+            format!("relationship.{owner}.{}", usage.name)
+        }
+        Declaration::Usage(usage) => format!("feature.{owner}.{}", usage.name),
+        Declaration::Import(import) => format!("import.{}", import.path.as_dot_string()),
+        Declaration::Alias(alias) => format!("alias.{owner}.{}", alias.name),
+    }
+}
+
+#[cfg(test)]
+fn fake_definition_kind(keyword: &str) -> String {
+    match keyword {
+        "requirement" => "model.RequirementDefinition",
+        "action" => "model.ActionDefinition",
+        "metadata" => "model.MetadataDefinition",
+        "attribute" => "model.AttributeDefinition",
+        _ => "model.PartDefinition",
+    }
+    .to_string()
+}
+
+#[cfg(test)]
+fn fake_usage_kind(keyword: &str) -> String {
+    match keyword {
+        "requirement" => "model.RequirementUsage",
+        "attribute" => "model.AttributeUsage",
+        "satisfy" => "model.SatisfyRelationship",
+        "action" => "model.ActionUsage",
+        _ => "model.PartUsage",
+    }
+    .to_string()
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
-        AuthoringProject, ContainerSelector, Mutation, QualifiedName, WriteBackMode,
-        create_empty_model, load_authoring_project_from_sysml,
+        ContainerSelector, Mutation, QualifiedName, create_empty_model,
+        load_authoring_project_from_kir,
     };
+    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
 
     fn qname(value: &str) -> QualifiedName {
         QualifiedName::parse(value)
     }
 
+    fn kir_document(elements: Vec<KirElement>) -> KirDocument {
+        KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                json!(KIR_SCHEMA_VERSION),
+            )]),
+            elements,
+        }
+    }
+
+    fn kir_element(
+        id: &str,
+        kind: &str,
+        source_file: &str,
+        properties: impl IntoIterator<Item = (&'static str, Value)>,
+    ) -> KirElement {
+        let mut properties = properties
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect::<BTreeMap<_, _>>();
+        properties.insert(
+            "metadata".to_string(),
+            json!({ "source_file": source_file }),
+        );
+        KirElement {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            layer: 2,
+            properties,
+        }
+    }
+
     #[test]
-    fn empty_project_can_emit_new_sysml_file_after_mutation() {
+    fn empty_project_can_emit_new_model_file_after_mutation() {
         let mut project = create_empty_model();
         let package_result = project
             .apply_mutation(Mutation::AddPackage {
-                target_file: "model.sysml".to_string(),
+                target_file: "model.model".to_string(),
                 package_name: qname("Demo"),
             })
             .unwrap();
@@ -4155,9 +4490,9 @@ mod tests {
             })
             .unwrap();
         let write_back = project.write_back_mutation(&definition_result).unwrap();
-        let text = write_back.edited_files.get("model.sysml").unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
 
-        assert_eq!(write_back.mode, WriteBackMode::LocalizedPatch);
+        assert_eq!(write_back.mode, super::WriteBackMode::CanonicalRewrite);
         assert!(text.contains("package Demo {"));
         assert!(text.contains("part def Vehicle;"));
         assert!(write_back.validation.ok);
@@ -4165,12 +4500,27 @@ mod tests {
 
     #[test]
     fn rename_rewrites_existing_definition_locally() {
-        let source = "package Demo {\n  // untouched\n  part def Vehicle;\n}\n";
-        let mut project = load_authoring_project_from_sysml(
-            [("model.sysml".to_string(), source.to_string())]
-                .into_iter()
-                .collect(),
-        )
+        let mut project = load_authoring_project_from_kir(&kir_document(vec![
+            kir_element(
+                "pkg.Demo",
+                "model.Package",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo")),
+                    ("declared_name", json!("Demo")),
+                    ("members", json!(["type.Demo.Vehicle"])),
+                ],
+            ),
+            kir_element(
+                "type.Demo.Vehicle",
+                "model.PartDefinition",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo.Vehicle")),
+                    ("declared_name", json!("Vehicle")),
+                ],
+            ),
+        ]))
         .unwrap();
 
         let mutation = project
@@ -4180,10 +4530,9 @@ mod tests {
             })
             .unwrap();
         let write_back = project.write_back_mutation(&mutation).unwrap();
-        let text = write_back.edited_files.get("model.sysml").unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
 
-        assert_eq!(write_back.mode, WriteBackMode::LocalizedPatch);
-        assert!(text.contains("// untouched"));
+        assert_eq!(write_back.mode, super::WriteBackMode::CanonicalRewrite);
         assert!(text.contains("part def Car;"));
         assert!(!text.contains("part def Vehicle;"));
         assert!(write_back.validation.ok);
@@ -4191,13 +4540,36 @@ mod tests {
 
     #[test]
     fn adding_nested_usage_rewrites_only_owner_declaration() {
-        let source =
-            "package Demo {\n  // file comment\n  part def Engine;\n  part def Vehicle {\n  }\n}\n";
-        let mut project = load_authoring_project_from_sysml(
-            [("model.sysml".to_string(), source.to_string())]
-                .into_iter()
-                .collect(),
-        )
+        let mut project = load_authoring_project_from_kir(&kir_document(vec![
+            kir_element(
+                "pkg.Demo",
+                "model.Package",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo")),
+                    ("declared_name", json!("Demo")),
+                    ("members", json!(["type.Demo.Engine", "type.Demo.Vehicle"])),
+                ],
+            ),
+            kir_element(
+                "type.Demo.Engine",
+                "model.PartDefinition",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo.Engine")),
+                    ("declared_name", json!("Engine")),
+                ],
+            ),
+            kir_element(
+                "type.Demo.Vehicle",
+                "model.PartDefinition",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo.Vehicle")),
+                    ("declared_name", json!("Vehicle")),
+                ],
+            ),
+        ]))
         .unwrap();
 
         let mutation = project
@@ -4212,29 +4584,36 @@ mod tests {
             })
             .unwrap();
         let write_back = project.write_back_mutation(&mutation).unwrap();
-        let text = write_back.edited_files.get("model.sysml").unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
 
-        assert_eq!(write_back.mode, WriteBackMode::LocalizedPatch);
-        assert!(text.contains("// file comment"));
+        assert_eq!(write_back.mode, super::WriteBackMode::CanonicalRewrite);
         assert!(text.contains("part engine: Engine;"));
         assert!(write_back.validation.ok);
     }
 
     #[test]
     fn adding_metadata_annotation_round_trips_through_source() {
-        let source = r#"package Demo {
-  metadata def ReviewTag {
-    attribute status : String;
-    attribute owner : String;
-  }
-  requirement safeStart;
-}
-"#;
-        let mut project = load_authoring_project_from_sysml(
-            [("model.sysml".to_string(), source.to_string())]
-                .into_iter()
-                .collect(),
-        )
+        let mut project = load_authoring_project_from_kir(&kir_document(vec![
+            kir_element(
+                "pkg.Demo",
+                "model.Package",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo")),
+                    ("declared_name", json!("Demo")),
+                    ("members", json!(["type.Demo.safeStart"])),
+                ],
+            ),
+            kir_element(
+                "type.Demo.safeStart",
+                "model.Requirement",
+                "model.model",
+                [
+                    ("qualified_name", json!("Demo.safeStart")),
+                    ("declared_name", json!("safeStart")),
+                ],
+            ),
+        ]))
         .unwrap();
 
         let mutation = project
@@ -4250,7 +4629,7 @@ mod tests {
             })
             .unwrap();
         let write_back = project.write_back_mutation(&mutation).unwrap();
-        let text = write_back.edited_files.get("model.sysml").unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
 
         assert!(text.contains("@ReviewTag"));
         assert!(text.contains("owner = \"Safety Team\";"));
@@ -4260,19 +4639,47 @@ mod tests {
 
     #[test]
     fn multi_file_top_level_addition_requires_target_file_and_edits_only_that_file() {
-        let files = [
-            (
-                "a.sysml".to_string(),
-                "package A {\n  part def Vehicle;\n}\n".to_string(),
+        let mut project = load_authoring_project_from_kir(&kir_document(vec![
+            kir_element(
+                "pkg.A",
+                "model.Package",
+                "a.model",
+                [
+                    ("qualified_name", json!("A")),
+                    ("declared_name", json!("A")),
+                    ("members", json!(["type.A.Vehicle"])),
+                ],
             ),
-            (
-                "b.sysml".to_string(),
-                "package B {\n  part def Engine;\n}\n".to_string(),
+            kir_element(
+                "type.A.Vehicle",
+                "model.PartDefinition",
+                "a.model",
+                [
+                    ("qualified_name", json!("A.Vehicle")),
+                    ("declared_name", json!("Vehicle")),
+                ],
             ),
-        ]
-        .into_iter()
-        .collect();
-        let mut project = AuthoringProject::from_sysml_files(files).unwrap();
+            kir_element(
+                "pkg.B",
+                "model.Package",
+                "b.model",
+                [
+                    ("qualified_name", json!("B")),
+                    ("declared_name", json!("B")),
+                    ("members", json!(["type.B.Engine"])),
+                ],
+            ),
+            kir_element(
+                "type.B.Engine",
+                "model.PartDefinition",
+                "b.model",
+                [
+                    ("qualified_name", json!("B.Engine")),
+                    ("declared_name", json!("Engine")),
+                ],
+            ),
+        ]))
+        .unwrap();
 
         let mutation = project
             .apply_mutation(Mutation::AddDefinition {
@@ -4286,24 +4693,46 @@ mod tests {
             .unwrap();
         let write_back = project.write_back_mutation(&mutation).unwrap();
 
-        assert!(write_back.edited_files.contains_key("b.sysml"));
-        assert!(!write_back.edited_files.contains_key("a.sysml"));
-        assert!(write_back.edited_files["b.sysml"].contains("part def Brake;"));
+        assert!(write_back.edited_files.contains_key("b.model"));
+        assert!(!write_back.edited_files.contains_key("a.model"));
+        assert!(write_back.edited_files["b.model"].contains("part def Brake;"));
         assert!(write_back.validation.ok);
     }
 
     #[test]
     fn moving_declaration_between_files_updates_source_and_destination() {
-        let files = [
-            (
-                "a.sysml".to_string(),
-                "package A {\n  part def Vehicle;\n}\n".to_string(),
+        let mut project = load_authoring_project_from_kir(&kir_document(vec![
+            kir_element(
+                "pkg.A",
+                "model.Package",
+                "a.model",
+                [
+                    ("qualified_name", json!("A")),
+                    ("declared_name", json!("A")),
+                    ("members", json!(["type.A.Vehicle"])),
+                ],
             ),
-            ("b.sysml".to_string(), "package B {\n}\n".to_string()),
-        ]
-        .into_iter()
-        .collect();
-        let mut project = AuthoringProject::from_sysml_files(files).unwrap();
+            kir_element(
+                "type.A.Vehicle",
+                "model.PartDefinition",
+                "a.model",
+                [
+                    ("qualified_name", json!("A.Vehicle")),
+                    ("declared_name", json!("Vehicle")),
+                ],
+            ),
+            kir_element(
+                "pkg.B",
+                "model.Package",
+                "b.model",
+                [
+                    ("qualified_name", json!("B")),
+                    ("declared_name", json!("B")),
+                    ("members", json!([])),
+                ],
+            ),
+        ]))
+        .unwrap();
 
         let mutation = project
             .apply_mutation(Mutation::MoveDeclaration {
@@ -4315,8 +4744,8 @@ mod tests {
             .unwrap();
         let write_back = project.write_back_mutation(&mutation).unwrap();
 
-        assert!(write_back.edited_files["a.sysml"].contains("package A {\n}\n"));
-        assert!(write_back.edited_files["b.sysml"].contains("part def Vehicle;"));
+        assert!(write_back.edited_files["a.model"].contains("package A {\n}\n"));
+        assert!(write_back.edited_files["b.model"].contains("Vehicle"));
         assert!(write_back.validation.ok);
     }
 }

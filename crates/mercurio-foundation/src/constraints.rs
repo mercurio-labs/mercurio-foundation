@@ -1270,7 +1270,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "MassRollup::compositeThing.totalMass".into(),
-                kind: "sysml.AttributeUsage".into(),
+                kind: "model.AttributeUsage".into(),
                 layer: 2,
                 properties: BTreeMap::from([
                     ("name".into(), json!("totalMass")),
@@ -1351,7 +1351,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "constraint.totalMass".into(),
-                    kind: "sysml.ConstraintUsage".into(),
+                    kind: "model.ConstraintUsage".into(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "equation".into(),
@@ -1360,7 +1360,7 @@ mod tests {
                 },
                 KirElement {
                     id: "constraint.grossWeight".into(),
-                    kind: "sysml.ConstraintUsage".into(),
+                    kind: "model.ConstraintUsage".into(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "equation".into(),
@@ -1369,7 +1369,7 @@ mod tests {
                 },
                 KirElement {
                     id: "req.maxMass".into(),
-                    kind: "sysml.RequirementUsage".into(),
+                    kind: "model.RequirementUsage".into(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "check".into(),

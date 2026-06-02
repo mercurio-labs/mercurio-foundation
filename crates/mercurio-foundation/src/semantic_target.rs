@@ -149,7 +149,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Package".to_string(),
+                    id: "Model::Package".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
@@ -160,12 +160,12 @@ mod tests {
                     layer: 1,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
-                        Value::Array(vec![Value::String("SysML::Package".to_string())]),
+                        Value::Array(vec![Value::String("Model::Package".to_string())]),
                     )]),
                 },
                 KirElement {
                     id: "pkg.Demo".to_string(),
-                    kind: "SysML::Package".to_string(),
+                    kind: "Model::Package".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "metatype".to_string(),
@@ -177,7 +177,7 @@ mod tests {
         let graph = Graph::from_document(document).unwrap();
         let profile = LanguageProfile {
             id: "test".to_string(),
-            language: SourceLanguage::Sysml,
+            language: SourceLanguage::Model,
             language_version: "2.0".to_string(),
             metamodel_version: "2.0".to_string(),
             stdlib_version: "test".to_string(),
@@ -185,7 +185,7 @@ mod tests {
             kir_schema_version: "0.2".to_string(),
             canonical_kinds: BTreeMap::from([(
                 SemanticConcept::Package,
-                "SysML::Package".to_string(),
+                "Model::Package".to_string(),
             )]),
             aliases: BTreeMap::new(),
         };
@@ -200,7 +200,7 @@ mod tests {
 
         assert_eq!(
             resolved.matching_metatypes,
-            BTreeSet::from(["Custom::Package".to_string(), "SysML::Package".to_string()])
+            BTreeSet::from(["Custom::Package".to_string(), "Model::Package".to_string()])
         );
         assert_eq!(resolved.matching_elements, vec!["pkg.Demo"]);
     }

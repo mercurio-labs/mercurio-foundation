@@ -205,5 +205,3 @@ pub struct ParsedModule {
     pub imports: Vec<ImportDecl>,
     pub definitions: Vec<PartDefinitionDecl>,
 }
-
-pub type SysmlModule = ParsedModule;

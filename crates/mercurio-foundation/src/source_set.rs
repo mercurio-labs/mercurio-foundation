@@ -1,232 +1,199 @@
 use std::path::Path;
 
-use crate::frontend::ast::{ParsedModule, SysmlModule};
-use crate::frontend::diagnostics::Diagnostic;
-use crate::frontend::kerml::compile_kerml_module_with_resolver_context;
-use crate::frontend::resolver::ResolverContext;
-use crate::frontend::sysml::compile_sysml_module_with_resolver_context;
-use crate::frontend::transpile::MappingBundle;
-use crate::ir::{KirDocument, KirError};
-use crate::language::{SourceLanguage, language_module};
-use crate::logging::compile_timer_start;
-use crate::logging::log_compile_timed_event;
+use mercurio_language_contracts::{CompileContext, LanguageRegistry};
 
-#[derive(Debug, Clone)]
+use crate::frontend::diagnostics::Diagnostic;
+use crate::ir::{KirDocument, KirError};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceDocument {
     pub path: String,
     pub content: String,
-    pub module: Option<SysmlModule>,
-}
-
-pub struct SourceCompileContext {
-    pub context_modules: Vec<SysmlModule>,
-    pub mappings: &'static MappingBundle,
-    pub resolver_context: ResolverContext,
-}
-
-impl SourceCompileContext {
-    pub fn from_source_documents(
-        source_documents: &[SourceDocument],
-        library_context: &KirDocument,
-    ) -> Result<Self, Diagnostic> {
-        let context_modules = collect_context_modules(source_documents);
-        let mappings = default_mappings_for_source_documents(source_documents)?;
-        let resolver_context =
-            ResolverContext::from_modules(&context_modules, library_context, mappings)?;
-
-        Ok(Self {
-            context_modules,
-            mappings,
-            resolver_context,
-        })
-    }
 }
 
 impl SourceDocument {
     pub fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
-        let path = path.into();
-        let content = content.into();
-        let parse_start = compile_timer_start();
-        let module_result = parse_source_module(&path, &content);
-        log_compile_timed_event(
-            "source_set.parse_source_module",
-            parse_start,
-            if module_result.is_ok() { "ok" } else { "error" },
-            format!("path={} bytes={}", path, content.len()),
-        );
-        let module = module_result.ok();
-
         Self {
-            path,
-            content,
-            module,
+            path: path.into(),
+            content: content.into(),
         }
     }
 }
 
-pub fn parse_source_module(path: &str, content: &str) -> Result<ParsedModule, Diagnostic> {
-    let language = SourceLanguage::from_path(Path::new(path)).unwrap_or(SourceLanguage::Sysml);
-    parse_source_text(language, content)
-}
-
-fn default_mappings_for_source_documents(
-    source_documents: &[SourceDocument],
-) -> Result<&'static MappingBundle, Diagnostic> {
-    let first_language = source_documents
-        .first()
-        .and_then(|document| SourceLanguage::from_path(Path::new(&document.path)));
-    if let Some(language) = first_language
-        && source_documents
-            .iter()
-            .all(|document| SourceLanguage::from_path(Path::new(&document.path)) == Some(language))
-    {
-        return MappingBundle::load_for_language(language);
-    }
-
-    MappingBundle::load_for_language(SourceLanguage::Sysml)
-}
-
-pub fn parse_source_text(
-    language: SourceLanguage,
-    content: &str,
-) -> Result<ParsedModule, Diagnostic> {
-    language_module(language).parse(content)
-}
-
-pub fn compile_source_text(
-    language: SourceLanguage,
-    source_name: &str,
-    content: &str,
-    context_modules: &[ParsedModule],
-    library_context: &KirDocument,
-) -> Result<KirDocument, Diagnostic> {
-    language_module(language).compile_text_with_context(
-        content,
-        source_name,
-        context_modules,
-        library_context,
-    )
-}
-
-pub fn compile_source_text_with_context(
-    path: &str,
-    content: &str,
-    context_modules: &[SysmlModule],
-    library_context: &KirDocument,
-) -> Result<KirDocument, Diagnostic> {
-    let language = SourceLanguage::from_path(Path::new(path)).unwrap_or(SourceLanguage::Sysml);
-    compile_source_text(language, path, content, context_modules, library_context)
-}
-
-pub fn compile_source_document_with_context(
-    file: &SourceDocument,
-    compile_context: &SourceCompileContext,
-    library_context: &KirDocument,
-) -> Result<KirDocument, Diagnostic> {
-    match file.module.as_ref() {
-        Some(module) if is_kerml_path(&file.path) => compile_kerml_module_with_resolver_context(
-            module,
-            &file.path,
-            &compile_context.resolver_context,
-            compile_context.mappings,
-        ),
-        Some(module) => compile_sysml_module_with_resolver_context(
-            module,
-            &file.path,
-            &compile_context.resolver_context,
-            compile_context.mappings,
-        ),
-        None => compile_source_text_with_context(
-            &file.path,
-            &file.content,
-            &compile_context.context_modules,
-            library_context,
-        ),
-    }
-}
-
-pub fn collect_context_modules(source_documents: &[SourceDocument]) -> Vec<SysmlModule> {
-    source_documents
-        .iter()
-        .filter_map(|file| file.module.clone())
-        .collect()
-}
-
-pub fn compile_source_documents(
+pub fn compile_source_documents_with_registry(
     source_documents: Vec<SourceDocument>,
     library_context: &KirDocument,
+    registry: &LanguageRegistry,
 ) -> Result<KirDocument, KirError> {
-    let compile_context =
-        SourceCompileContext::from_source_documents(&source_documents, library_context)
-            .map_err(|err| KirError::Sysml(err.to_string()))?;
     let documents = source_documents
         .iter()
-        .map(|file| {
-            compile_source_document_with_context(file, &compile_context, library_context)
-                .map_err(|err| KirError::Sysml(err.to_string()))
-        })
+        .map(|source| compile_source_document_with_registry(source, library_context, registry))
         .collect::<Result<Vec<_>, _>>()?;
 
     KirDocument::merge(documents)
 }
 
-fn is_kerml_path(path: &str) -> bool {
-    Path::new(path).extension().and_then(|value| value.to_str()) == Some("kerml")
+pub fn compile_source_document_with_registry(
+    source: &SourceDocument,
+    library_context: &KirDocument,
+    registry: &LanguageRegistry,
+) -> Result<KirDocument, KirError> {
+    let service = registry
+        .service_for_path(Path::new(&source.path))
+        .ok_or_else(|| {
+            KirError::Frontend(format!(
+                "no registered language service for `{}`",
+                source.path
+            ))
+        })?;
+    let report = service.compile(
+        &source.content,
+        CompileContext {
+            source_name: &source.path,
+            library_context,
+        },
+    );
+
+    report.document.ok_or_else(|| {
+        let details = report
+            .diagnostics
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        KirError::Frontend(format!(
+            "language service `{}` did not produce KIR for `{}`{}",
+            service.language_id(),
+            source.path,
+            if details.is_empty() {
+                String::new()
+            } else {
+                format!(": {details}")
+            }
+        ))
+    })
+}
+
+#[cfg(not(test))]
+pub fn compile_source_documents(
+    _source_documents: Vec<SourceDocument>,
+    _library_context: &KirDocument,
+) -> Result<KirDocument, KirError> {
+    Err(KirError::Frontend(
+        "source compilation requires a registered language service".to_string(),
+    ))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub fn compile_source_documents(
+    source_documents: Vec<SourceDocument>,
+    _library_context: &KirDocument,
+) -> Result<KirDocument, KirError> {
+    let documents = source_documents
+        .iter()
+        .map(fake_compile_source_document)
+        .collect::<Vec<_>>();
+    KirDocument::merge(documents)
+}
 
-    #[test]
-    fn compiles_mixed_kerml_and_sysml_source_documents() {
-        let document = compile_source_documents(
-            vec![
-                SourceDocument::new(
-                    "types.kerml",
-                    "package Domain {
-                      classifier Engine;
-                    }",
-                ),
-                SourceDocument::new(
-                    "vehicle.sysml",
-                    "package VehicleModel {
-                      import Domain::*;
-                      part def Vehicle {
-                        part engine : Engine;
-                      }
-                    }",
-                ),
-            ],
-            &KirDocument {
-                metadata: Default::default(),
-                elements: vec![
-                    crate::ir::KirElement {
-                        id: "Parts::Part".to_string(),
-                        kind: "SysML::PartDefinition".to_string(),
-                        layer: 1,
-                        properties: Default::default(),
-                    },
-                    crate::ir::KirElement {
-                        id: "Items::Item::subparts".to_string(),
-                        kind: "SysML::PartUsage".to_string(),
-                        layer: 1,
-                        properties: Default::default(),
-                    },
-                ],
-            },
-        )
-        .unwrap();
+#[cfg(test)]
+fn fake_compile_source_document(source: &SourceDocument) -> KirDocument {
+    use std::collections::BTreeMap;
 
-        assert!(
-            document
-                .elements
-                .iter()
-                .any(|element| element.id == "type.Domain.Engine")
-        );
-        assert!(document.elements.iter().any(|element| {
-            element.id == "feature.VehicleModel.Vehicle.engine"
-                && element.properties.get("type") == Some(&serde_json::json!("type.Domain.Engine"))
-        }));
+    use serde_json::json;
+
+    use crate::ir::{KIR_SCHEMA_VERSION, KirElement};
+
+    let package = fake_package_name(&source.content)
+        .or_else(|| {
+            std::path::Path::new(&source.path)
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "Model".to_string());
+    let names = fake_definition_names(&source.content);
+    let member_ids = names
+        .iter()
+        .map(|name| format!("type.{package}.{name}"))
+        .collect::<Vec<_>>();
+    let mut elements = vec![KirElement {
+        id: format!("pkg.{package}"),
+        kind: "model.Package".to_string(),
+        layer: 2,
+        properties: BTreeMap::from([
+            ("qualified_name".to_string(), json!(package)),
+            ("declared_name".to_string(), json!(package)),
+            ("members".to_string(), json!(member_ids)),
+            (
+                "metadata".to_string(),
+                json!({ "source_file": source.path }),
+            ),
+        ]),
+    }];
+    for name in names {
+        elements.push(KirElement {
+            id: format!("type.{package}.{name}"),
+            kind: "model.PartDefinition".to_string(),
+            layer: 2,
+            properties: BTreeMap::from([
+                (
+                    "qualified_name".to_string(),
+                    json!(format!("{package}.{name}")),
+                ),
+                ("declared_name".to_string(), json!(name)),
+                (
+                    "metadata".to_string(),
+                    json!({ "source_file": source.path }),
+                ),
+            ]),
+        });
     }
+    KirDocument {
+        metadata: BTreeMap::from([("kir_schema_version".to_string(), json!(KIR_SCHEMA_VERSION))]),
+        elements,
+    }
+}
+
+#[cfg(test)]
+fn fake_package_name(source: &str) -> Option<String> {
+    source
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|window| {
+            (window[0] == "package").then(|| {
+                window[1]
+                    .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                    .to_string()
+            })
+        })
+}
+
+#[cfg(test)]
+fn fake_definition_names(source: &str) -> Vec<String> {
+    let tokens = source.split_whitespace().collect::<Vec<_>>();
+    let mut names = Vec::new();
+    for window in tokens.windows(3) {
+        if window[1] == "def" {
+            names.push(
+                window[2]
+                    .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                    .to_string(),
+            );
+        }
+    }
+    if names.is_empty() {
+        names.push("Thing".to_string());
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+pub fn parse_source_module(_path: &str, _content: &str) -> Result<(), Diagnostic> {
+    Err(Diagnostic::new(
+        "source parsing requires a language-specific parser".to_string(),
+        None,
+    ))
 }

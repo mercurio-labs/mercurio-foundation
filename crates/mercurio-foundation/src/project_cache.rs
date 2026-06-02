@@ -4,9 +4,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use mercurio_language_contracts::LanguageRegistry;
+
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::runtime::{Runtime, RuntimeArtifact};
-use crate::source_set::{SourceDocument, compile_source_documents};
+use crate::source_set::{
+    SourceDocument, compile_source_documents, compile_source_documents_with_registry,
+};
 
 const CACHE_SCHEMA_VERSION: u32 = 2;
 const ARTIFACT_FAMILY_COMPILE: &str = "compile";
@@ -106,6 +110,40 @@ impl PersistentProjectCache {
         library_context: &KirDocument,
         project_descriptor_path: Option<&Path>,
     ) -> Result<PersistentCompileResult, KirError> {
+        self.compile_source_documents_with(
+            source_documents,
+            library_context,
+            project_descriptor_path,
+            |source_documents, library_context| {
+                compile_source_documents(source_documents, library_context)
+            },
+        )
+    }
+
+    pub fn compile_source_documents_with_registry(
+        &self,
+        source_documents: Vec<SourceDocument>,
+        library_context: &KirDocument,
+        project_descriptor_path: Option<&Path>,
+        registry: &LanguageRegistry,
+    ) -> Result<PersistentCompileResult, KirError> {
+        self.compile_source_documents_with(
+            source_documents,
+            library_context,
+            project_descriptor_path,
+            |source_documents, library_context| {
+                compile_source_documents_with_registry(source_documents, library_context, registry)
+            },
+        )
+    }
+
+    fn compile_source_documents_with(
+        &self,
+        source_documents: Vec<SourceDocument>,
+        library_context: &KirDocument,
+        project_descriptor_path: Option<&Path>,
+        compile: impl Fn(Vec<SourceDocument>, &KirDocument) -> Result<KirDocument, KirError>,
+    ) -> Result<PersistentCompileResult, KirError> {
         let (key, files) = project_compile_artifact_key(
             &source_documents,
             library_context,
@@ -127,7 +165,7 @@ impl PersistentProjectCache {
                 });
             }
             CacheLookup::Miss => {
-                let document = compile_source_documents(source_documents, library_context)?;
+                let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
                 let cache_write_error = self
                     .write_compile_artifact(
@@ -148,7 +186,7 @@ impl PersistentProjectCache {
                 });
             }
             CacheLookup::Rejected(reason) => {
-                let document = compile_source_documents(source_documents, library_context)?;
+                let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
                 let cache_write_error = self
                     .write_compile_artifact(
@@ -315,7 +353,7 @@ impl PersistentProjectCache {
         let roundtrip_manifest: ProjectCompileCacheManifest =
             serde_json::from_str(&std::fs::read_to_string(dir.join(MANIFEST_FILE_NAME))?)?;
         if roundtrip_manifest != manifest {
-            return Err(KirError::Sysml(
+            return Err(KirError::Model(
                 "persistent cache manifest failed roundtrip validation".to_string(),
             ));
         }
@@ -410,7 +448,7 @@ fn runtime_artifact_for_document(
     let merged_document = KirDocument::merge([library_context.clone(), document.clone()])?;
     Runtime::from_document(merged_document)
         .map(Runtime::into_artifact)
-        .map_err(|err| KirError::Sysml(format!("failed to build runtime artifact: {err}")))
+        .map_err(|err| KirError::Model(format!("failed to build runtime artifact: {err}")))
 }
 
 fn artifact_key_digest(key: &ProjectCompileArtifactKey) -> Result<String, KirError> {
@@ -442,22 +480,10 @@ fn digest_source_file_fingerprints(files: &[ProjectSourceFileFingerprint]) -> St
 }
 
 fn mapping_rules_digest() -> Result<String, KirError> {
-    Ok(digest_labeled_chunks([
-        (
-            "mapping".as_bytes(),
-            include_bytes!(
-                "../../../resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/pilot_constructs.seed.json"
-            )
-            .as_slice(),
-        ),
-        (
-            "mapping".as_bytes(),
-            include_bytes!(
-                "../../../resources/language-profiles/sysml-2.0-pilot-0.57.0/mappings/kir_emission.seed.json"
-            )
-            .as_slice(),
-        ),
-    ]))
+    Ok(digest_labeled_chunks([(
+        "mapping".as_bytes(),
+        "language-service-provided".as_bytes(),
+    )]))
 }
 
 fn compiler_digest() -> String {
@@ -533,14 +559,19 @@ fn unique_cache_nonce() -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::Path;
 
-    use serde_json::Value;
+    use mercurio_language_contracts::{
+        CompileContext, LanguageRegistry, LanguageService, SemanticCompileReport,
+        SemanticCompileStatus,
+    };
+    use serde_json::{Value, json};
 
     use super::{
         PersistentCacheStatus, PersistentProjectCache, ProjectCompileCacheManifest,
         source_file_fingerprints,
     };
-    use crate::ir::{KirDocument, KirElement};
+    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
     use crate::runtime::Runtime;
     use crate::source_set::SourceDocument;
 
@@ -550,15 +581,25 @@ mod tests {
         let cache = PersistentProjectCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![SourceDocument::new(
-            "demo.sysml",
+            "demo.model",
             "package Demo { part def Thing; }",
         )];
 
         let first = cache
-            .compile_source_documents(sources.clone(), &library_context, None)
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
         let second = cache
-            .compile_source_documents(sources, &library_context, None)
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
 
         assert_eq!(first.cache_status, PersistentCacheStatus::PersistentMiss);
@@ -575,9 +616,9 @@ mod tests {
         let cache = PersistentProjectCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![
-            SourceDocument::new("domain.sysml", "package Domain { part def Camera; }"),
+            SourceDocument::new("domain.model", "package Domain { part def Camera; }"),
             SourceDocument::new(
-                "usage.sysml",
+                "usage.model",
                 "package Usage {
                   import Domain::*;
                   part camera : Camera;
@@ -586,10 +627,20 @@ mod tests {
         ];
 
         let miss = cache
-            .compile_source_documents(sources.clone(), &library_context, None)
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
         let hit = cache
-            .compile_source_documents(sources, &library_context, None)
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
 
         assert_eq!(miss.cache_status, PersistentCacheStatus::PersistentMiss);
@@ -616,19 +667,29 @@ mod tests {
         let library_context = test_library_context();
 
         let first_sources = vec![SourceDocument::new(
-            "demo.sysml",
+            "demo.model",
             "package Demo { part def Thing; }",
         )];
         let second_sources = vec![SourceDocument::new(
-            "demo.sysml",
+            "demo.model",
             "package Demo { part def OtherThing; }",
         )];
 
         let first = cache
-            .compile_source_documents(first_sources, &library_context, None)
+            .compile_source_documents_with_registry(
+                first_sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
         let second = cache
-            .compile_source_documents(second_sources, &library_context, None)
+            .compile_source_documents_with_registry(
+                second_sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
 
         assert_eq!(first.cache_status, PersistentCacheStatus::PersistentMiss);
@@ -645,17 +706,27 @@ mod tests {
         let library_context = test_library_context();
         let descriptor_path = root.join(".mercurio-project.json");
         let sources = vec![SourceDocument::new(
-            "demo.sysml",
+            "demo.model",
             "package Demo { part def Thing; }",
         )];
 
         std::fs::write(&descriptor_path, r#"{"version":1,"name":"A"}"#).unwrap();
         let first = cache
-            .compile_source_documents(sources.clone(), &library_context, Some(&descriptor_path))
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                Some(&descriptor_path),
+                &test_language_registry(),
+            )
             .unwrap();
         std::fs::write(&descriptor_path, r#"{"version":1,"name":"B"}"#).unwrap();
         let second = cache
-            .compile_source_documents(sources, &library_context, Some(&descriptor_path))
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                Some(&descriptor_path),
+                &test_language_registry(),
+            )
             .unwrap();
 
         assert_eq!(first.cache_status, PersistentCacheStatus::PersistentMiss);
@@ -671,12 +742,17 @@ mod tests {
         let cache = PersistentProjectCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![SourceDocument::new(
-            "demo.sysml",
+            "demo.model",
             "package Demo { part def Thing; }",
         )];
 
         let first = cache
-            .compile_source_documents(sources.clone(), &library_context, None)
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
         let manifest_path = cache
             .root()
@@ -686,7 +762,12 @@ mod tests {
         std::fs::write(&manifest_path, "{ not-json").unwrap();
 
         let second = cache
-            .compile_source_documents(sources, &library_context, None)
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
 
         assert!(matches!(
@@ -704,12 +785,17 @@ mod tests {
         let cache = PersistentProjectCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![SourceDocument::new(
-            "demo.sysml",
+            "demo.model",
             "package Demo { part def Thing; }",
         )];
 
         let first = cache
-            .compile_source_documents(sources.clone(), &library_context, None)
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
         let document_path = cache
             .root()
@@ -719,7 +805,12 @@ mod tests {
         std::fs::write(&document_path, "{ not-json").unwrap();
 
         let second = cache
-            .compile_source_documents(sources, &library_context, None)
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
             .unwrap();
 
         assert!(matches!(
@@ -734,12 +825,12 @@ mod tests {
     #[test]
     fn source_file_fingerprints_are_path_order_independent() {
         let left = vec![
-            SourceDocument::new("b.sysml", "package B {}"),
-            SourceDocument::new("a.sysml", "package A {}"),
+            SourceDocument::new("b.model", "package B {}"),
+            SourceDocument::new("a.model", "package A {}"),
         ];
         let right = vec![
-            SourceDocument::new("a.sysml", "package A {}"),
-            SourceDocument::new("b.sysml", "package B {}"),
+            SourceDocument::new("a.model", "package A {}"),
+            SourceDocument::new("b.model", "package B {}"),
         ];
 
         assert_eq!(
@@ -779,23 +870,84 @@ mod tests {
     fn test_library_context() -> KirDocument {
         KirDocument {
             metadata: BTreeMap::from([(
-                "source".to_string(),
-                Value::String("test-stdlib".to_string()),
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
             )]),
             elements: vec![
                 KirElement {
                     id: "Parts::Part".to_string(),
-                    kind: "SysML::PartDefinition".to_string(),
+                    kind: "Model::PartDefinition".to_string(),
                     layer: 1,
-                    properties: BTreeMap::new(),
+                    properties: BTreeMap::from([(
+                        "qualified_name".to_string(),
+                        Value::String("Parts.Part".to_string()),
+                    )]),
                 },
                 KirElement {
                     id: "Items::Item::subparts".to_string(),
-                    kind: "SysML::PartUsage".to_string(),
+                    kind: "Model::PartUsage".to_string(),
                     layer: 1,
-                    properties: BTreeMap::new(),
+                    properties: BTreeMap::from([(
+                        "qualified_name".to_string(),
+                        Value::String("Items.Item.subparts".to_string()),
+                    )]),
                 },
             ],
+        }
+    }
+
+    fn test_language_registry() -> LanguageRegistry {
+        let mut registry = LanguageRegistry::new();
+        registry.register(FakeModelLanguage);
+        registry
+    }
+
+    struct FakeModelLanguage;
+
+    impl LanguageService for FakeModelLanguage {
+        fn language_id(&self) -> &str {
+            "fake-model"
+        }
+
+        fn extensions(&self) -> &[&str] {
+            &["model"]
+        }
+
+        fn compile(
+            &self,
+            source: &str,
+            context: CompileContext<'_>,
+        ) -> SemanticCompileReport<KirDocument> {
+            let name = source
+                .split_whitespace()
+                .rev()
+                .find(|token| token.chars().any(|ch| ch.is_ascii_alphabetic()))
+                .unwrap_or("Thing")
+                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_');
+            let stem = Path::new(context.source_name)
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("model");
+            let qualified_name = format!("{stem}.{name}");
+            SemanticCompileReport {
+                status: SemanticCompileStatus::Ok,
+                diagnostics: Vec::new(),
+                document: Some(KirDocument {
+                    metadata: BTreeMap::from([(
+                        "kir_schema_version".to_string(),
+                        json!(KIR_SCHEMA_VERSION),
+                    )]),
+                    elements: vec![KirElement {
+                        id: format!("type.{qualified_name}"),
+                        kind: "model.Type".to_string(),
+                        layer: 2,
+                        properties: BTreeMap::from([
+                            ("qualified_name".to_string(), json!(qualified_name)),
+                            ("declared_name".to_string(), json!(name)),
+                        ]),
+                    }],
+                }),
+            }
         }
     }
 

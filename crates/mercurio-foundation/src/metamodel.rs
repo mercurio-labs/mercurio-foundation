@@ -676,8 +676,8 @@ fn pilot_library_group(element: &crate::graph::Element) -> Option<&str> {
 
 fn metamodel_language_for_group(group: &str) -> String {
     match group {
-        "Kernel Libraries" => "kerml",
-        "Systems Library" | "Domain Libraries" => "sysml",
+        "Kernel Libraries" => "core",
+        "Systems Library" | "Domain Libraries" => "model",
         _ => "unknown",
     }
     .to_string()
@@ -817,7 +817,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "pkg.generated.1".to_string(),
-                    kind: "SysML::Package".to_string(),
+                    kind: "Model::Package".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "declared_name".to_string(),
@@ -826,7 +826,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.generated.2".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (
@@ -890,7 +890,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "type.generated.1".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: BTreeMap::from([
                     (
@@ -918,38 +918,38 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::PartUsage".to_string(),
+                    id: "Model::Systems::PartUsage".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([(
                         "features".to_string(),
-                        json!(["SysML::Systems::PartUsage::partDefinition"]),
+                        json!(["Model::Systems::PartUsage::partDefinition"]),
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartUsage::partDefinition".to_string(),
+                    id: "Model::Systems::PartUsage::partDefinition".to_string(),
                     kind: "Feature".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([
                         ("declared_name".to_string(), json!("partDefinition")),
-                        ("type".to_string(), json!("SysML::Systems::PartDefinition")),
+                        ("type".to_string(), json!("Model::Systems::PartDefinition")),
                     ]),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
-                    id: "metafeature.SysML::Systems::PartUsage.part_definition".to_string(),
+                    id: "metafeature.Model::Systems::PartUsage.part_definition".to_string(),
                     kind: "MetamodelFeature".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([
-                        ("owner".to_string(), json!("SysML::Systems::PartUsage")),
+                        ("owner".to_string(), json!("Model::Systems::PartUsage")),
                         ("kir_property".to_string(), json!("part_definition")),
                         ("feature_kind".to_string(), json!("reference")),
-                        ("type".to_string(), json!("SysML::Systems::PartDefinition")),
+                        ("type".to_string(), json!("Model::Systems::PartDefinition")),
                         ("type_label".to_string(), json!("PartDefinition")),
                         ("lower".to_string(), json!(0)),
                         ("upper".to_string(), json!(1)),
@@ -960,7 +960,7 @@ mod tests {
         .unwrap();
 
         let registry = MetamodelAttributeRegistry::build(&graph);
-        let declarations = registry.declared_attributes_for("SysML::Systems::PartUsage");
+        let declarations = registry.declared_attributes_for("Model::Systems::PartUsage");
         let part_definition = declarations
             .iter()
             .find(|declaration| declaration.name == "part_definition")
@@ -981,7 +981,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "KerML::Core::Feature".to_string(),
+                    id: "Core::Core::Feature".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 0,
                     properties: BTreeMap::from([(
@@ -990,49 +990,49 @@ mod tests {
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Systems::Usage".to_string(),
+                    id: "Model::Systems::Usage".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([
                         ("pilot_library_group".to_string(), json!("Systems Library")),
-                        ("specializes".to_string(), json!(["KerML::Core::Feature"])),
+                        ("specializes".to_string(), json!(["Core::Core::Feature"])),
                     ]),
                 },
                 KirElement {
-                    id: "metafeature.KerML::Core::Feature.type".to_string(),
+                    id: "metafeature.Core::Core::Feature.type".to_string(),
                     kind: "MetamodelFeature".to_string(),
                     layer: 0,
                     properties: BTreeMap::from([
-                        ("owner".to_string(), json!("KerML::Core::Feature")),
+                        ("owner".to_string(), json!("Core::Core::Feature")),
                         ("declared_name".to_string(), json!("type")),
                         ("kir_property".to_string(), json!("type")),
                         (
                             "source_feature".to_string(),
-                            json!("KerML::Core::Feature::type"),
+                            json!("Core::Core::Feature::type"),
                         ),
                         ("feature_kind".to_string(), json!("reference")),
-                        ("type".to_string(), json!("KerML::Core::Type")),
+                        ("type".to_string(), json!("Core::Core::Type")),
                         ("type_label".to_string(), json!("Type")),
-                        ("metamodel_language".to_string(), json!("kerml")),
+                        ("metamodel_language".to_string(), json!("core")),
                         ("metamodel_layer".to_string(), json!("kernel")),
                     ]),
                 },
                 KirElement {
-                    id: "metafeature.SysML::Systems::Usage.definition".to_string(),
+                    id: "metafeature.Model::Systems::Usage.definition".to_string(),
                     kind: "MetamodelFeature".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([
-                        ("owner".to_string(), json!("SysML::Systems::Usage")),
+                        ("owner".to_string(), json!("Model::Systems::Usage")),
                         ("declared_name".to_string(), json!("definition")),
                         ("kir_property".to_string(), json!("definition")),
                         (
                             "source_feature".to_string(),
-                            json!("SysML::Systems::Usage::definition"),
+                            json!("Model::Systems::Usage::definition"),
                         ),
                         ("feature_kind".to_string(), json!("reference")),
-                        ("type".to_string(), json!("KerML::Core::Classifier")),
+                        ("type".to_string(), json!("Core::Core::Classifier")),
                         ("type_label".to_string(), json!("Classifier")),
-                        ("metamodel_language".to_string(), json!("sysml")),
+                        ("metamodel_language".to_string(), json!("model")),
                         ("metamodel_layer".to_string(), json!("systems")),
                     ]),
                 },
@@ -1042,11 +1042,11 @@ mod tests {
 
         let registry = MetamodelFeatureRegistry::build(&graph);
         let usage = registry.class("Usage").unwrap();
-        assert_eq!(usage.id, "SysML::Systems::Usage");
-        assert_eq!(usage.metamodel_language.as_deref(), Some("sysml"));
+        assert_eq!(usage.id, "Model::Systems::Usage");
+        assert_eq!(usage.metamodel_language.as_deref(), Some("model"));
         assert_eq!(usage.metamodel_layer.as_deref(), Some("systems"));
 
-        let features = registry.all_features_for(&graph, "SysML::Systems::Usage");
+        let features = registry.all_features_for(&graph, "Model::Systems::Usage");
         let definition = features
             .iter()
             .find(|feature| feature.kir_property == "definition")
@@ -1056,10 +1056,10 @@ mod tests {
             .find(|feature| feature.kir_property == "type")
             .unwrap();
 
-        assert_eq!(definition.owner, "SysML::Systems::Usage");
-        assert_eq!(definition.metamodel_language.as_deref(), Some("sysml"));
-        assert_eq!(inherited_type.owner, "KerML::Core::Feature");
-        assert_eq!(inherited_type.metamodel_language.as_deref(), Some("kerml"));
+        assert_eq!(definition.owner, "Model::Systems::Usage");
+        assert_eq!(definition.metamodel_language.as_deref(), Some("model"));
+        assert_eq!(inherited_type.owner, "Core::Core::Feature");
+        assert_eq!(inherited_type.metamodel_language.as_deref(), Some("core"));
         assert_eq!(inherited_type.metamodel_layer.as_deref(), Some("kernel"));
     }
 }

@@ -75,7 +75,7 @@ from .concepts import (
     PartDefinition,
     PartUsage,
     RequirementUsage,
-    SysML,
+    Model,
     VerificationCaseUsage,
 )
 from .generation_info import KIR_SCHEMA_VERSION, PROFILE_ID, STDLIB_VERSION
@@ -96,7 +96,7 @@ __all__ = [
     "PROFILE_ID",
     "RequirementUsage",
     "STDLIB_VERSION",
-    "SysML",
+    "Model",
     "VerificationCaseUsage",
     "class_for",
     "register",
@@ -709,7 +709,7 @@ class StdlibNamespace:
         self.ISQ = ISQNamespace(model)
 
 
-class SysML:
+class Model:
     def __init__(self, model):
         self.model = model
         self.stdlib = StdlibNamespace(model)
@@ -894,8 +894,8 @@ mod tests {
             }],
         };
         let profile = LanguageProfile {
-            id: "sysml-test".to_string(),
-            language: SourceLanguage::Sysml,
+            id: "model-test".to_string(),
+            language: SourceLanguage::Model,
             language_version: "2.0".to_string(),
             metamodel_version: "2.0".to_string(),
             stdlib_version: "test".to_string(),
@@ -903,32 +903,32 @@ mod tests {
             kir_schema_version: "0.2".to_string(),
             canonical_kinds: BTreeMap::from([(
                 SemanticConcept::Package,
-                "SysML::Package".to_string(),
+                "Model::Package".to_string(),
             )]),
             aliases: BTreeMap::new(),
         };
 
-        let generated = generate_python_wrappers(&document, &profile, "mercurio_sysml_test");
-        assert_eq!(generated.profile_id, "sysml-test");
+        let generated = generate_python_wrappers(&document, &profile, "mercurio_model_test");
+        assert_eq!(generated.profile_id, "model-test");
         assert_eq!(generated.stdlib_version, "test");
         assert!(
             generated
                 .files
-                .contains_key("mercurio_sysml_test/__init__.py")
+                .contains_key("mercurio_model_test/__init__.py")
         );
         assert!(
             generated
                 .files
-                .contains_key("mercurio_sysml_test/generation_info.py")
+                .contains_key("mercurio_model_test/generation_info.py")
         );
-        assert!(generated.files["mercurio_sysml_test/stdlib/si.py"].contains("def metre(self)"));
+        assert!(generated.files["mercurio_model_test/stdlib/si.py"].contains("def metre(self)"));
         assert!(
-            generated.files["mercurio_sysml_test/concepts.py"].contains("class PartDefinition")
+            generated.files["mercurio_model_test/concepts.py"].contains("class PartDefinition")
         );
         assert!(
             generated
                 .files
-                .contains_key("mercurio_sysml_test/metamodel.py")
+                .contains_key("mercurio_model_test/metamodel.py")
         );
     }
 
@@ -938,7 +938,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "KerML::Kernel::Package".to_string(),
+                    id: "Core::Kernel::Package".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([(
@@ -947,7 +947,7 @@ mod tests {
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Systems::ItemDefinition".to_string(),
+                    id: "Model::Systems::ItemDefinition".to_string(),
                     kind: "MetadataDefinition".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([(
@@ -956,7 +956,7 @@ mod tests {
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "MetadataDefinition".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([
@@ -966,7 +966,7 @@ mod tests {
                         ),
                         (
                             "specializes".to_string(),
-                            serde_json::json!(["SysML::Systems::ItemDefinition"]),
+                            serde_json::json!(["Model::Systems::ItemDefinition"]),
                         ),
                     ]),
                 },
@@ -979,8 +979,8 @@ mod tests {
             ],
         };
         let profile = LanguageProfile {
-            id: "sysml-test".to_string(),
-            language: SourceLanguage::Sysml,
+            id: "model-test".to_string(),
+            language: SourceLanguage::Model,
             language_version: "2.0".to_string(),
             metamodel_version: "2.0".to_string(),
             stdlib_version: "test".to_string(),
@@ -988,22 +988,22 @@ mod tests {
             kir_schema_version: "0.2".to_string(),
             canonical_kinds: BTreeMap::from([(
                 SemanticConcept::PartDefinition,
-                "SysML::Systems::PartDefinition".to_string(),
+                "Model::Systems::PartDefinition".to_string(),
             )]),
             aliases: BTreeMap::from([(
-                "SysML::PartDefinition".to_string(),
-                "SysML::Systems::PartDefinition".to_string(),
+                "Model::PartDefinition".to_string(),
+                "Model::Systems::PartDefinition".to_string(),
             )]),
         };
 
-        let generated = generate_python_wrappers(&document, &profile, "mercurio_sysml_test");
-        let metamodel = &generated.files["mercurio_sysml_test/metamodel.py"];
-        let concepts = &generated.files["mercurio_sysml_test/concepts.py"];
+        let generated = generate_python_wrappers(&document, &profile, "mercurio_model_test");
+        let metamodel = &generated.files["mercurio_model_test/metamodel.py"];
+        let concepts = &generated.files["mercurio_model_test/concepts.py"];
 
         assert!(metamodel.contains("class Package(ElementView):"));
         assert!(metamodel.contains("class ItemDefinition(ElementView):"));
         assert!(metamodel.contains("class PartDefinition(ItemDefinition):"));
-        assert!(metamodel.contains(r#""SysML::Systems::PartDefinition": PartDefinition"#));
+        assert!(metamodel.contains(r#""Model::Systems::PartDefinition": PartDefinition"#));
         assert!(metamodel.contains(r#""PartDefinition": PartDefinition"#));
         assert!(metamodel.contains("def class_for(element: Any) -> type[ElementView]:"));
         assert!(concepts.contains("class PartDefinition(_metamodel.PartDefinition):"));

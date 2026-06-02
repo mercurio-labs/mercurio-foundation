@@ -271,7 +271,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: BTreeMap::new(),
             }],
@@ -293,7 +293,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: BTreeMap::from([(
                     "element_id".to_string(),
@@ -317,12 +317,12 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Camera".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (
                             "metatype".to_string(),
-                            Value::String("SysML::Systems::PartDefinition".to_string()),
+                            Value::String("Model::Systems::PartDefinition".to_string()),
                         ),
                         (
                             "specializes".to_string(),
@@ -332,12 +332,12 @@ mod tests {
                 },
                 KirElement {
                     id: "type.ImagingDevice".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
@@ -356,7 +356,7 @@ mod tests {
             .filter_map(|edge| graph.element_id(edge.target))
             .collect::<Vec<_>>();
 
-        assert_eq!(metatype_targets, vec!["SysML::Systems::PartDefinition"]);
+        assert_eq!(metatype_targets, vec!["Model::Systems::PartDefinition"]);
         assert_eq!(specialization_targets, vec!["type.ImagingDevice"]);
     }
 
@@ -367,7 +367,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "body".to_string(),
@@ -376,7 +376,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Demo.Engine".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
@@ -394,7 +394,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
@@ -403,7 +403,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Demo.Machine".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },

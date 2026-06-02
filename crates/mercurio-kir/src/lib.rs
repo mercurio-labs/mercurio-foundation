@@ -32,7 +32,7 @@ pub enum KirError {
     DuplicateId(String),
     Validation(Vec<KirValidationDiagnostic>),
     Frontend(String),
-    Sysml(String),
+    Model(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,7 +260,7 @@ impl fmt::Display for KirError {
                 Ok(())
             }
             Self::Frontend(err) => write!(f, "{err}"),
-            Self::Sysml(err) => write!(f, "{err}"),
+            Self::Model(err) => write!(f, "{err}"),
         }
     }
 }
@@ -816,7 +816,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "dup".to_string(),
-                kind: "kerml.Type".to_string(),
+                kind: "core.Type".to_string(),
                 layer: 0,
                 properties: Default::default(),
             }],
@@ -825,7 +825,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "dup".to_string(),
-                kind: "sysml.PartDefinition".to_string(),
+                kind: "model.PartDefinition".to_string(),
                 layer: 1,
                 properties: Default::default(),
             }],
@@ -841,7 +841,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: String::new(),
-                kind: "KerML::Core::Type".to_string(),
+                kind: "Core::Core::Type".to_string(),
                 layer: 0,
                 properties: Default::default(),
             }],
@@ -859,7 +859,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "type.Bad.Layer".to_string(),
-                kind: "KerML::Core::Type".to_string(),
+                kind: "Core::Core::Type".to_string(),
                 layer: 3,
                 properties: Default::default(),
             }],
@@ -877,7 +877,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "feature.Demo.Vehicle.engine".to_string(),
-                kind: "SysML::PartUsage".to_string(),
+                kind: "Model::PartUsage".to_string(),
                 layer: 2,
                 properties: [("owner".to_string(), Value::Bool(true))]
                     .into_iter()
@@ -897,7 +897,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: [(
                     "specializes".to_string(),
@@ -911,7 +911,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: [(
                     "specializes".to_string(),
@@ -932,7 +932,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: [
                     (
@@ -963,7 +963,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: Default::default(),
             }],
@@ -982,7 +982,7 @@ mod tests {
             metadata: Default::default(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: Default::default(),
             }],
@@ -1001,7 +1001,7 @@ mod tests {
   "elements": [
     {{
       "id": "type.Demo.Vehicle",
-      "kind": "SysML::Systems::PartDefinition",
+      "kind": "Model::Systems::PartDefinition",
       "layer": 2,
       "properties": {{ "qualified_name": "Demo.Vehicle", "custom": "value" }}
     }}

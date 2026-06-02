@@ -4,10 +4,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ir::KIR_SCHEMA_VERSION;
 use crate::language::concepts::{SemanticConcept, SourceLanguage};
 use crate::paths::default_language_profile_path;
 
-pub const CURRENT_DEFAULT_PROFILE_ID: &str = "sysml-2.0-pilot-0.57.0";
+pub const CURRENT_DEFAULT_PROFILE_ID: &str = "foundation-core";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageProfile {
@@ -110,7 +111,42 @@ pub fn default_language_profile() -> Result<LanguageProfile, LanguageProfileErro
         return LanguageProfile::from_path(Path::new(&path));
     }
 
-    load_language_profile(CURRENT_DEFAULT_PROFILE_ID)
+    Ok(core_language_profile())
+}
+
+fn core_language_profile() -> LanguageProfile {
+    LanguageProfile {
+        id: CURRENT_DEFAULT_PROFILE_ID.to_string(),
+        language: SourceLanguage::Model,
+        language_version: "core".to_string(),
+        metamodel_version: "foundation".to_string(),
+        stdlib_version: "none".to_string(),
+        stdlib_path: "resources/foundation/empty.kir.json".to_string(),
+        kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+        canonical_kinds: BTreeMap::from([
+            (
+                SemanticConcept::PartDefinition,
+                "model.PartDefinition".to_string(),
+            ),
+            (SemanticConcept::PartUsage, "model.PartUsage".to_string()),
+            (
+                SemanticConcept::RequirementUsage,
+                "model.RequirementUsage".to_string(),
+            ),
+            (SemanticConcept::Package, "model.Package".to_string()),
+            (SemanticConcept::Type, "model.Type".to_string()),
+        ]),
+        aliases: BTreeMap::from([
+            (
+                "Model::Systems::PartDefinition".to_string(),
+                "model.PartDefinition".to_string(),
+            ),
+            (
+                "Model::Systems::PartUsage".to_string(),
+                "model.PartUsage".to_string(),
+            ),
+        ]),
+    }
 }
 
 #[cfg(test)]
@@ -122,11 +158,11 @@ mod tests {
         let profile = default_language_profile().unwrap();
 
         assert_eq!(profile.id, CURRENT_DEFAULT_PROFILE_ID);
-        assert_eq!(profile.language, SourceLanguage::Sysml);
-        assert_eq!(profile.stdlib_version, "0.57.0-SNAPSHOT");
+        assert_eq!(profile.language, SourceLanguage::Model);
+        assert_eq!(profile.stdlib_version, "none");
         assert_eq!(
             profile.canonical_kinds[&SemanticConcept::PartDefinition],
-            "SysML::Systems::PartDefinition"
+            "model.PartDefinition"
         );
     }
 }

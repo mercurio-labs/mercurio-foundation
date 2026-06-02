@@ -1398,19 +1398,19 @@ mod tests {
                 metadata: BTreeMap::new(),
                 elements: vec![
                     KirElement {
-                        id: "SysML::Systems::PartDefinition".to_string(),
+                        id: "Model::Systems::PartDefinition".to_string(),
                         kind: "MetadataDefinition".to_string(),
                         layer: 1,
                         properties: BTreeMap::new(),
                     },
                     KirElement {
-                        id: "SysML::Systems::Definition".to_string(),
+                        id: "Model::Systems::Definition".to_string(),
                         kind: "MetadataDefinition".to_string(),
                         layer: 1,
                         properties: BTreeMap::new(),
                     },
                     KirElement {
-                        id: "KerML::Core::Type".to_string(),
+                        id: "Core::Core::Type".to_string(),
                         kind: "Metaclass".to_string(),
                         layer: 0,
                         properties: BTreeMap::new(),
@@ -1423,28 +1423,28 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
-                        json!(["SysML::Systems::ItemDefinition"]),
+                        json!(["Model::Systems::ItemDefinition"]),
                     )]),
                 },
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("declared_name".to_string(), json!("Vehicle")),
                         (
                             "specializes".to_string(),
-                            json!(["SysML::Systems::PartDefinition"]),
+                            json!(["Model::Systems::PartDefinition"]),
                         ),
                         (
                             "metadata".to_string(),
                             json!({
-                                "source_file": "demo.sysml",
+                                "source_file": "demo.model",
                                 "source_span": { "start_line": 2, "end_line": 4 }
                             }),
                         ),
@@ -1456,7 +1456,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "PartDefinition".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
@@ -1469,7 +1469,7 @@ mod tests {
                         ("declared_name".to_string(), json!("Vehicle")),
                         (
                             "specializes".to_string(),
-                            json!(["SysML::Systems::PartDefinition"]),
+                            json!(["Model::Systems::PartDefinition"]),
                         ),
                         (
                             "metatype_specialization_chain".to_string(),
@@ -1478,7 +1478,7 @@ mod tests {
                         (
                             "metadata".to_string(),
                             json!({
-                                "source_file": "demo.sysml",
+                                "source_file": "demo.model",
                                 "source_span": { "start_line": 2, "end_line": 4 }
                             }),
                         ),
@@ -1489,14 +1489,14 @@ mod tests {
 
         let mercurio_snapshot = build_semantic_snapshot_with_registry(
             mercurio,
-            "demo.sysml",
+            "demo.model",
             SnapshotMode::Mercurio,
             &registry,
         )
         .unwrap();
         let pilot_snapshot = build_semantic_snapshot_with_registry(
             pilot,
-            "demo.sysml",
+            "demo.model",
             SnapshotMode::Pilot,
             &registry,
         )
@@ -1507,7 +1507,7 @@ mod tests {
         assert_eq!(report.pilot_count, 1);
         assert_eq!(report.exact_match_count, 0);
         assert_eq!(report.mismatches.len(), 1);
-        assert_eq!(report.mismatches[0].match_key, "demo.sysml:2:Vehicle");
+        assert_eq!(report.mismatches[0].match_key, "demo.model:2:Vehicle");
     }
 
     #[test]
@@ -1526,7 +1526,7 @@ mod tests {
                         (
                             "metadata".to_string(),
                             json!({
-                                "source_file": "demo.sysml",
+                                "source_file": "demo.model",
                                 "source_span": { "start_line": 15, "end_line": 15 }
                             }),
                         ),
@@ -1542,7 +1542,7 @@ mod tests {
                         (
                             "metadata".to_string(),
                             json!({
-                                "source_file": "demo.sysml",
+                                "source_file": "demo.model",
                                 "source_span": { "start_line": 15, "end_line": 15 }
                             }),
                         ),
@@ -1552,7 +1552,7 @@ mod tests {
         };
 
         let snapshot =
-            build_semantic_snapshot(document, "demo.sysml", SnapshotMode::Pilot).unwrap();
+            build_semantic_snapshot(document, "demo.model", SnapshotMode::Pilot).unwrap();
 
         assert_eq!(snapshot.elements.len(), 1);
         assert_eq!(snapshot.elements[0].kind, "PartUsage");
@@ -1573,7 +1573,7 @@ mod tests {
                         (
                             "metadata".to_string(),
                             json!({
-                                "source_file": "demo.sysml",
+                                "source_file": "demo.model",
                                 "source_span": { "start_line": 25, "end_line": 25 }
                             }),
                         ),
@@ -1588,7 +1588,7 @@ mod tests {
                         (
                             "metadata".to_string(),
                             json!({
-                                "source_file": "demo.sysml",
+                                "source_file": "demo.model",
                                 "source_span": { "start_line": 25, "end_line": 25 }
                             }),
                         ),
@@ -1598,14 +1598,14 @@ mod tests {
         };
 
         let snapshot =
-            build_semantic_snapshot(document, "demo.sysml", SnapshotMode::Pilot).unwrap();
+            build_semantic_snapshot(document, "demo.model", SnapshotMode::Pilot).unwrap();
         let keys = snapshot
             .elements
             .iter()
             .map(|element| element.match_key.clone())
             .collect::<Vec<_>>();
 
-        assert_eq!(keys, vec!["demo.sysml:25:p", "demo.sysml:25:receiver"]);
+        assert_eq!(keys, vec!["demo.model:25:p", "demo.model:25:receiver"]);
     }
 
     #[test]

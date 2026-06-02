@@ -1,11 +1,5 @@
 # Test Files
 
-`test_files/` contains checked-in inputs used by tests, smoke commands, and
-maintainer benchmarks.
+`test_files/` is reserved for language-neutral foundation fixtures.
 
-- `kerml/` and `l2/` contain small focused unit/integration test inputs.
-- `examples/` contains larger example corpora and demo KIR JSON formerly kept
-  under the repository-level `examples/` directory.
-
-These files are not runtime resources. Runtime stdlib artifacts live under
-`resources/stdlib-sources/`.
+Source-language corpora and parser fixtures belong in language-specific repositories.

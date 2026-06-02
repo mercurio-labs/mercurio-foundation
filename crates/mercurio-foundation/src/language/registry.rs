@@ -45,10 +45,10 @@ mod tests {
         let registry = default_metamodel_registry().unwrap();
 
         assert!(registry.is_kind(
-            "SysML::Systems::PartDefinition",
+            "Model::Systems::PartDefinition",
             SemanticConcept::PartDefinition
         ));
-        assert!(registry.is_kind("sysml.PartDefinition", SemanticConcept::PartDefinition));
-        assert!(!registry.is_kind("SysML::Systems::PartUsage", SemanticConcept::PartDefinition));
+        assert!(registry.is_kind("model.PartDefinition", SemanticConcept::PartDefinition));
+        assert!(!registry.is_kind("Model::Systems::PartUsage", SemanticConcept::PartDefinition));
     }
 }

@@ -578,9 +578,9 @@ mod tests {
     use super::{TokenKind, lex};
 
     #[test]
-    fn lexes_minimal_sysml_subset() {
+    fn lexes_minimal_model_subset() {
         let tokens = lex(
-            "package Demo { doc /* hi */ part def Vehicle specializes SysML::Systems::PartDefinition { part engine: Engine; } }",
+            "package Demo { doc /* hi */ part def Vehicle specializes Model::Systems::PartDefinition { part engine: Engine; } }",
         )
         .unwrap();
 

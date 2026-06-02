@@ -1,104 +1,79 @@
-# Mercurio
+# Mercurio Foundation
 
-Mercurio Foundation is the reusable Rust library workspace for Mercurio's KIR JSON model representation, semantic graph/runtime APIs, and host-facing contracts.
+Mercurio Foundation is the language-neutral modeling substrate for Mercurio.
 
-The goal of this repository is to make the modeling substrate useful on its own: load and validate KIR, build semantic graphs, run deterministic runtime/query operations, and expose reusable library APIs that source-language repos, private products, and external tools can build on.
+It stores models as KIR, projects them into graphs, runs deterministic semantic services, and exposes contracts that source-language repositories can implement. It does not own concrete source syntax, source-language metamodel bundles, command-line host behavior, UI adapters, or product workflows.
 
-## Objectives
+## Philosophy
 
-- Provide reusable Rust libraries for KIR, graph/runtime/query behavior, and host contracts.
-- Keep the foundation model semantics independent from any particular source language, server, desktop app, or hosted product.
-- Support host applications that register source-language services such as SysML and KerML.
-- Use KIR as the stable semantic interchange format for graph queries, derived values, package loading, and downstream applications.
-- Optimize for high-performance model loading, compilation, and runtime use.
-- Keep maintainer-only diagnostics, benchmarks, and Pilot comparison workflows separate from the public CLI.
+Foundation is meant to work like a small reflective modeling core:
 
-## What Lives Here
+- models are persisted as structured semantic data,
+- model elements are inspectable without a parser,
+- references become graph edges,
+- runtime services operate over the graph,
+- source languages plug in through explicit services,
+- hosts decide how models are edited, stored, packaged, and presented.
 
-- `mercurio-foundation` loads libraries, builds runtime graphs, and computes deterministic derived values.
-- `mercurio-kir` owns the KIR document model, validation, and artifact IO.
-- `mercurio-language-contracts` owns host-facing language service contracts.
-- `mercurio-kir` and `mercurio-language-contracts` define the portable data and language-service contracts used by sibling repositories.
-- `resources/` contains bundled runtime and standard library artifacts.
-- `examples/` and `fixtures/` provide SysML, KerML, and KIR models for tests and demonstrations.
+See [Foundation Philosophy](docs/philosophy.md) for the longer version, including a short comparison to classic modeling-framework responsibilities.
 
-SysML and KerML language libraries and language maintainer tools live in the sibling `mercurio-sysml` repository. The command-line host lives in `mercurio-sysml-cli`. Python, WASM, and UI-facing adapters live in the sibling `mercurio-adapter` repository. Reasoning APIs, plugin contracts, deterministic reference capabilities, and AI orchestration live in the sibling `mercurio-reasoning` repository. The hosted product, UI, and privileged console API live in the private `mercurio-product` repository.
+## Core Terms
 
-## Core Concepts
+- **KIR**: the kernel interchange representation. KIR is the validated JSON model format consumed by graph, runtime, query, package, and adapter APIs.
+- **Element**: a KIR node with an `id`, `kind`, `layer`, and `properties`.
+- **Graph**: a relationship view derived from KIR reference properties.
+- **Runtime**: deterministic evaluation over a graph, derived indexes, expression IR, and rulepacks.
+- **Language service**: a registered compiler boundary that turns source text into KIR.
 
-- Source languages: host applications register language services. SysML and KerML are provided by the sibling `mercurio-sysml` repository.
-- KIR: Mercurio's validated semantic JSON format, used by graph queries, derived values, projections, package loading, and product hosts.
-- Standard library: semantic compilation and linting use the bundled default standard library unless a command is given `--stdlib PATH`.
-- Project descriptors: `.mercurio-project.json` files describe baseline and dependency libraries in a single `libraries` array.
-- KPAR packages: source-backed zip packages containing SysML/KerML sources plus package metadata.
+See [KIR](docs/kir.md) and [Language Services](docs/language-services.md).
 
-## Requirements
+## Crates
 
-- Rust toolchain with Cargo
-- Java, only for Pilot comparison/export tools under `../mercurio-sysml/tools/pilot-exporter`
+- `mercurio-kir`: KIR schema, validation, merge, and IO.
+- `mercurio-language-contracts`: diagnostics, reports, expression IR, and language-service contracts.
+- `mercurio-foundation`: graph, runtime, query, package, project, session, mutation, and view APIs built on KIR.
 
-Most commands assume you are running them from the repository root.
+See [Crates](docs/crates.md).
 
-## Quick Start
+## Quick Example
 
-Build the workspace:
+```rust
+use std::collections::BTreeMap;
+
+use mercurio_core::{Graph, KIR_SCHEMA_VERSION, KirDocument, KirElement};
+use serde_json::json;
+
+let document = KirDocument {
+    metadata: BTreeMap::from([
+        ("kir_schema_version".to_string(), json!(KIR_SCHEMA_VERSION)),
+    ]),
+    elements: vec![KirElement {
+        id: "pkg.Demo".to_string(),
+        kind: "model.Package".to_string(),
+        layer: 2,
+        properties: BTreeMap::from([
+            ("qualified_name".to_string(), json!("Demo")),
+            ("declared_name".to_string(), json!("Demo")),
+        ]),
+    }],
+};
+
+document.validate()?;
+let graph = Graph::from_document(document)?;
+```
+
+More snippets are in [Examples](docs/examples.md).
+
+## Build
 
 ```powershell
 cargo build
 ```
 
-Run the test suite:
+## Test
 
 ```powershell
-cargo test
+cargo test --no-run
 ```
 
-Show the public CLI:
-
-```powershell
-mercurio --help
-```
-
-Parse an inline SysML model:
-
-```powershell
-mercurio parse --text "package Demo { part def Vehicle; }"
-```
-
-Create a project scaffold:
-
-```powershell
-mercurio project new my-model --name "My Model"
-```
-
-## User Documentation
-
-- [CLI Guide](docs/user/CLI.md): public `mercurio` command examples for project, parse, compile, query, evaluate, lint, package, completions, and common input forms.
-- [Project Descriptors](docs/user/PROJECTS.md): `.mercurio-project.json`, provider kinds, and descriptor discovery.
-- [KIR User Guide](docs/user/KIR.md): compiled semantic JSON, ids, provenance, validation, and low-level workflows.
-- [Querying And Evaluation](docs/user/QUERY_EVALUATE.md): model queries, derived values, runtime context, and explanations.
-- [KPAR Packages](docs/user/KPAR.md): building and consuming `.kpar` model packages.
-- [Troubleshooting](docs/user/TROUBLESHOOTING.md): common command, descriptor, stdlib, KPAR, and Pilot-tool issues.
-
-## Developer Documentation
-
-- [Development Docs](docs/development/README.md): architecture notes, implementation plans, roadmap, runtime design, server plans, and semantic-service references.
-- [Maintainer Tools](docs/development/MAINTAINER_TOOLS.md): diagnostics, benchmarks, demos, and Pilot comparison/export workflows.
-
-## Repository Layout
-
-- `Cargo.toml` - workspace manifest
-- `crates/mercurio-foundation/` - foundation library crate
-- `crates/mercurio-kir/` - KIR document and validation crate
-- `crates/mercurio-language-contracts/` - host-facing language service contracts
-- `examples/` - KIR JSON models and SysML/KerML example corpora
-- `fixtures/` - test fixtures
-- `resources/` - bundled runtime and library resources
-- `docs/` - user docs plus development architecture and implementation notes
-- `../mercurio-sysml/tools/pilot-exporter/` - Java helper used by Pilot comparison workflows
-
-## Performance
-
-Mercurio keeps the default standard library precompiled as KIR, uses bounded semantic caches for warm project workflows, and tracks load speed and memory use in benchmark runs.
-
-The current benchmark snapshot is in [Compile Performance Benchmark](docs/development/COMPILE_PERFORMANCE_BENCHMARK.md).
+The repository is currently being split away from language-specific fixtures. During that cleanup, `cargo check` and test compilation are expected to be the reliable boundary checks; full test replacement is tracked separately.

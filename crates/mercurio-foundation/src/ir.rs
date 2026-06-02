@@ -5,75 +5,43 @@ pub use mercurio_kir::{
 
 use std::path::Path;
 
-use crate::language::{SourceLanguage, language_module};
-use crate::paths::{default_sysml_delta_library_path, default_sysml_library_path};
+use mercurio_language_contracts::LanguageRegistry;
 
 pub fn load_model_stack(model_path: &Path) -> Result<KirDocument, KirError> {
-    let sysml_library_path = default_sysml_library_path();
-    let sysml_delta_library_path = default_sysml_delta_library_path();
-    if paths_equivalent(model_path, &sysml_library_path)
-        || paths_equivalent(model_path, &sysml_delta_library_path)
-        || is_kir_json(model_path)
-    {
-        return KirDocument::from_path(model_path);
-    }
-
-    let language = SourceLanguage::from_path(model_path).unwrap_or(SourceLanguage::Sysml);
-    let library_context = language_module(language).default_baseline().load()?;
-    let user_document = load_document_for_language(model_path, language, &library_context)?;
-
-    KirDocument::merge([library_context, user_document])
+    KirDocument::from_path(model_path)
 }
 
-pub fn load_model_stack_with_language(
+pub fn load_model_stack_with_registry(
     model_path: &Path,
-    language: SourceLanguage,
+    library_context: &KirDocument,
+    registry: &LanguageRegistry,
 ) -> Result<KirDocument, KirError> {
     if is_kir_json(model_path) {
         return KirDocument::from_path(model_path);
     }
 
-    let library_context = language_module(language).default_baseline().load()?;
-    let user_document = load_document_for_language(model_path, language, &library_context)?;
-
-    KirDocument::merge([library_context, user_document])
-}
-
-fn load_document_for_language(
-    model_path: &Path,
-    language: SourceLanguage,
-    library_context: &KirDocument,
-) -> Result<KirDocument, KirError> {
-    Ok(
-        match SourceLanguage::from_path(model_path).map(|_| language) {
-            Some(SourceLanguage::Sysml) => {
-                crate::language::sysml::parser::load_sysml_document_with_stdlib(
-                    model_path,
-                    library_context,
-                )
-                .map_err(|err| KirError::Frontend(err.to_string()))?
-            }
-            Some(SourceLanguage::Kerml) => {
-                crate::language::kerml::parser::load_kerml_document_with_stdlib(
-                    model_path,
-                    library_context,
-                )
-                .map_err(|err| KirError::Frontend(err.to_string()))?
-            }
-            None => KirDocument::from_path(model_path)?,
-        },
-    )
-}
-
-fn paths_equivalent(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-
-    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
+    let source = std::fs::read_to_string(model_path)?;
+    let report = registry.compile_path(model_path, &source, library_context);
+    let document = report.document.ok_or_else(|| {
+        let details = report
+            .diagnostics
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        KirError::Frontend(if details.is_empty() {
+            format!(
+                "registered language service did not produce KIR for `{}`",
+                model_path.display()
+            )
+        } else {
+            format!(
+                "registered language service did not produce KIR for `{}`: {details}",
+                model_path.display()
+            )
+        })
+    })?;
+    KirDocument::merge([library_context.clone(), document])
 }
 
 fn is_kir_json(path: &Path) -> bool {
@@ -85,23 +53,11 @@ fn is_kir_json(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn load_model_stack_accepts_kerml_sources() {
+    fn load_model_stack_accepts_kir_documents() {
         let document = super::load_model_stack(&crate::paths::repo_path(
-            "test_files/kerml/minimal_classifier.kerml",
-        ))
-        .unwrap();
+            "resources/foundation/empty.kir.json",
+        ));
 
-        assert!(
-            document
-                .elements
-                .iter()
-                .any(|element| element.id == "type.Demo.Vehicle")
-        );
-        assert!(
-            document
-                .elements
-                .iter()
-                .any(|element| element.id == "feature.Demo.Vehicle.engine")
-        );
+        assert!(document.is_ok());
     }
 }

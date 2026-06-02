@@ -487,180 +487,180 @@ fn builtin_core_specs() -> Vec<DerivedFeatureSpec> {
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Element".to_string(),
+            owner: "Core::Root::Element".to_string(),
             feature: "documentation".to_string(),
             rule: DerivedFeatureRule::Subset {
                 source: "ownedElement".to_string(),
-                target_kind: Some("KerML::Root::Documentation".to_string()),
+                target_kind: Some("Core::Root::Documentation".to_string()),
                 target_type: None,
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Documentation".to_string(),
+            owner: "Core::Root::Documentation".to_string(),
             feature: "documentedElement".to_string(),
             rule: DerivedFeatureRule::Alias {
                 source: "owner".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Documentation".to_string(),
+            owner: "Core::Root::Documentation".to_string(),
             feature: "annotatedElement".to_string(),
             rule: DerivedFeatureRule::Alias {
                 source: "owner".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Element".to_string(),
+            owner: "Core::Root::Element".to_string(),
             feature: "owningNamespace".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.owning_namespace".to_string(),
+                function: "core.owning_namespace".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Namespace".to_string(),
+            owner: "Core::Root::Namespace".to_string(),
             feature: "member".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.namespace_member".to_string(),
+                function: "core.namespace_member".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Namespace".to_string(),
+            owner: "Core::Root::Namespace".to_string(),
             feature: "membership".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.namespace_membership".to_string(),
+                function: "core.namespace_membership".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Relationship".to_string(),
+            owner: "Core::Root::Relationship".to_string(),
             feature: "relatedElement".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.relationship_related_element".to_string(),
+                function: "core.relationship_related_element".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Import".to_string(),
+            owner: "Core::Root::Import".to_string(),
             feature: "importedElement".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.import_imported_element".to_string(),
+                function: "core.import_imported_element".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::Membership".to_string(),
+            owner: "Core::Root::Membership".to_string(),
             feature: "memberElementId".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.membership_member_element_id".to_string(),
+                function: "core.membership_member_element_id".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Root::AnnotatingElement".to_string(),
+            owner: "Core::Root::AnnotatingElement".to_string(),
             feature: "annotation".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.annotating_element_annotation".to_string(),
+                function: "core.annotating_element_annotation".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Feature".to_string(),
+            owner: "Core::Core::Feature".to_string(),
             feature: "chainingFeature".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.feature_chaining_feature".to_string(),
+                function: "core.feature_chaining_feature".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Feature".to_string(),
+            owner: "Core::Core::Feature".to_string(),
             feature: "crossFeature".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.feature_cross_feature".to_string(),
+                function: "core.feature_cross_feature".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Feature".to_string(),
+            owner: "Core::Core::Feature".to_string(),
             feature: "featureTarget".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.feature_target".to_string(),
+                function: "core.feature_target".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Feature".to_string(),
+            owner: "Core::Core::Feature".to_string(),
             feature: "featuringType".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.feature_featuring_type".to_string(),
+                function: "core.feature_featuring_type".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Type".to_string(),
+            owner: "Core::Core::Type".to_string(),
             feature: "differencingType".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.type_differencing_type".to_string(),
+                function: "core.type_differencing_type".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Type".to_string(),
+            owner: "Core::Core::Type".to_string(),
             feature: "featureMembership".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.type_feature_membership".to_string(),
+                function: "core.type_feature_membership".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Type".to_string(),
+            owner: "Core::Core::Type".to_string(),
             feature: "intersectingType".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.type_intersecting_type".to_string(),
+                function: "core.type_intersecting_type".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Type".to_string(),
+            owner: "Core::Core::Type".to_string(),
             feature: "unioningType".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.type_unioning_type".to_string(),
+                function: "core.type_unioning_type".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Core::Type".to_string(),
+            owner: "Core::Core::Type".to_string(),
             feature: "isConjugated".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.type_is_conjugated".to_string(),
+                function: "core.type_is_conjugated".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Kernel::Flow".to_string(),
+            owner: "Core::Kernel::Flow".to_string(),
             feature: "payloadType".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.flow_payload_type".to_string(),
+                function: "core.flow_payload_type".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Kernel::Flow".to_string(),
+            owner: "Core::Kernel::Flow".to_string(),
             feature: "sourceOutputFeature".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.flow_source_output_feature".to_string(),
+                function: "core.flow_source_output_feature".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "KerML::Kernel::Flow".to_string(),
+            owner: "Core::Kernel::Flow".to_string(),
             feature: "targetInputFeature".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "kerml.flow_target_input_feature".to_string(),
+                function: "core.flow_target_input_feature".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "SysML::Systems::RequirementDefinition".to_string(),
+            owner: "Model::Systems::RequirementDefinition".to_string(),
             feature: "text".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "sysml.requirement_text".to_string(),
+                function: "model.requirement_text".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "SysML::Systems::RequirementUsage".to_string(),
+            owner: "Model::Systems::RequirementUsage".to_string(),
             feature: "text".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "sysml.requirement_text".to_string(),
+                function: "model.requirement_text".to_string(),
             },
         },
         DerivedFeatureSpec {
-            owner: "SysML::Systems::Usage".to_string(),
+            owner: "Model::Systems::Usage".to_string(),
             feature: "isReference".to_string(),
             rule: DerivedFeatureRule::Native {
-                function: "sysml.usage_is_reference".to_string(),
+                function: "model.usage_is_reference".to_string(),
             },
         },
         DerivedFeatureSpec {
@@ -696,7 +696,7 @@ fn spec_matches_element(spec: &DerivedFeatureSpec, element: &Element) -> bool {
         || property_refs(&element.properties, "metatype")
             .into_iter()
             .any(|metatype| metatype == spec.owner)
-        || (spec.owner == "KerML::Root::Element" && element.layer <= 2)
+        || (spec.owner == "Core::Root::Element" && element.layer <= 2)
 }
 
 fn target_matches(
@@ -800,36 +800,36 @@ fn relation_targets(graph: &Graph, element: &Element, relation: &str) -> Vec<Str
 fn is_native_function(function: &str) -> bool {
     matches!(
         function,
-        "kerml.owner"
-            | "kerml.owned_element"
-            | "kerml.documentation"
-            | "kerml.documented_element"
-            | "kerml.annotated_element"
-            | "kerml.owning_namespace"
-            | "kerml.namespace_member"
-            | "kerml.namespace_membership"
-            | "kerml.relationship_related_element"
-            | "kerml.import_imported_element"
-            | "kerml.membership_member_element_id"
-            | "kerml.annotating_element_annotation"
-            | "kerml.feature_chaining_feature"
-            | "kerml.feature_cross_feature"
-            | "kerml.feature_target"
-            | "kerml.feature_featuring_type"
-            | "kerml.type_differencing_type"
-            | "kerml.type_feature_membership"
-            | "kerml.type_intersecting_type"
-            | "kerml.type_unioning_type"
-            | "kerml.type_is_conjugated"
-            | "kerml.flow_payload_type"
-            | "kerml.flow_source_output_feature"
-            | "kerml.flow_target_input_feature"
-            | "sysml.requirement_text"
-            | "sysml.usage_is_reference"
-            | "kerml.name"
-            | "kerml.short_name"
-            | "kerml.qualified_name"
-            | "kerml.is_library_element"
+        "core.owner"
+            | "core.owned_element"
+            | "core.documentation"
+            | "core.documented_element"
+            | "core.annotated_element"
+            | "core.owning_namespace"
+            | "core.namespace_member"
+            | "core.namespace_membership"
+            | "core.relationship_related_element"
+            | "core.import_imported_element"
+            | "core.membership_member_element_id"
+            | "core.annotating_element_annotation"
+            | "core.feature_chaining_feature"
+            | "core.feature_cross_feature"
+            | "core.feature_target"
+            | "core.feature_featuring_type"
+            | "core.type_differencing_type"
+            | "core.type_feature_membership"
+            | "core.type_intersecting_type"
+            | "core.type_unioning_type"
+            | "core.type_is_conjugated"
+            | "core.flow_payload_type"
+            | "core.flow_source_output_feature"
+            | "core.flow_target_input_feature"
+            | "model.requirement_text"
+            | "model.usage_is_reference"
+            | "core.name"
+            | "core.short_name"
+            | "core.qualified_name"
+            | "core.is_library_element"
     )
 }
 
@@ -839,64 +839,60 @@ fn derive_native_function(
     element: &Element,
 ) -> Option<DerivedPropertyValue> {
     match function {
-        "kerml.owner" => derived_owner(graph, element),
-        "kerml.owned_element" => derived_owned_element(graph, element),
-        "kerml.documentation" => derived_documentation(graph, element),
-        "kerml.documented_element" if is_documentation_element(element) => {
+        "core.owner" => derived_owner(graph, element),
+        "core.owned_element" => derived_owned_element(graph, element),
+        "core.documentation" => derived_documentation(graph, element),
+        "core.documented_element" if is_documentation_element(element) => {
             derived_owner(graph, element)
         }
-        "kerml.annotated_element" if is_documentation_element(element) => {
+        "core.annotated_element" if is_documentation_element(element) => {
             derived_owner(graph, element)
         }
-        "kerml.owning_namespace" => derived_owning_namespace(graph, element),
-        "kerml.namespace_member" => derived_namespace_member(graph, element),
-        "kerml.namespace_membership" => derived_namespace_membership(graph, element),
-        "kerml.relationship_related_element" => {
-            derived_relationship_related_element(graph, element)
-        }
-        "kerml.import_imported_element" => derived_import_imported_element(graph, element),
-        "kerml.membership_member_element_id" => {
-            derived_membership_member_element_id(graph, element)
-        }
-        "kerml.annotating_element_annotation" => {
+        "core.owning_namespace" => derived_owning_namespace(graph, element),
+        "core.namespace_member" => derived_namespace_member(graph, element),
+        "core.namespace_membership" => derived_namespace_membership(graph, element),
+        "core.relationship_related_element" => derived_relationship_related_element(graph, element),
+        "core.import_imported_element" => derived_import_imported_element(graph, element),
+        "core.membership_member_element_id" => derived_membership_member_element_id(graph, element),
+        "core.annotating_element_annotation" => {
             derived_annotating_element_annotation(graph, element)
         }
-        "kerml.feature_chaining_feature" => derived_feature_chaining_feature(graph, element),
-        "kerml.feature_cross_feature" => derived_feature_cross_feature(graph, element),
-        "kerml.feature_target" => derived_feature_target(graph, element),
-        "kerml.feature_featuring_type" => derived_feature_featuring_type(graph, element),
-        "kerml.type_differencing_type" => derived_type_role_type(
+        "core.feature_chaining_feature" => derived_feature_chaining_feature(graph, element),
+        "core.feature_cross_feature" => derived_feature_cross_feature(graph, element),
+        "core.feature_target" => derived_feature_target(graph, element),
+        "core.feature_featuring_type" => derived_feature_featuring_type(graph, element),
+        "core.type_differencing_type" => derived_type_role_type(
             graph,
             element,
-            "KerML::Core::Differencing",
+            "Core::Core::Differencing",
             "differencingType",
             "ownedDifferencing",
         ),
-        "kerml.type_feature_membership" => derived_type_feature_membership(graph, element),
-        "kerml.type_intersecting_type" => derived_type_role_type(
+        "core.type_feature_membership" => derived_type_feature_membership(graph, element),
+        "core.type_intersecting_type" => derived_type_role_type(
             graph,
             element,
-            "KerML::Core::Intersecting",
+            "Core::Core::Intersecting",
             "intersectingType",
             "ownedIntersecting",
         ),
-        "kerml.type_unioning_type" => derived_type_role_type(
+        "core.type_unioning_type" => derived_type_role_type(
             graph,
             element,
-            "KerML::Core::Unioning",
+            "Core::Core::Unioning",
             "unioningType",
             "ownedUnioning",
         ),
-        "kerml.type_is_conjugated" => derived_type_is_conjugated(graph, element),
-        "kerml.flow_payload_type" => derived_flow_payload_type(graph, element),
-        "kerml.flow_source_output_feature" => derived_flow_end_owned_feature(graph, element, 0),
-        "kerml.flow_target_input_feature" => derived_flow_end_owned_feature(graph, element, 1),
-        "sysml.requirement_text" => derived_requirement_text(graph, element),
-        "sysml.usage_is_reference" => derived_usage_is_reference(element),
-        "kerml.name" => derived_name(element),
-        "kerml.short_name" => derived_short_name(element),
-        "kerml.qualified_name" => derived_qualified_name(graph, element),
-        "kerml.is_library_element" => Some(DerivedPropertyValue {
+        "core.type_is_conjugated" => derived_type_is_conjugated(graph, element),
+        "core.flow_payload_type" => derived_flow_payload_type(graph, element),
+        "core.flow_source_output_feature" => derived_flow_end_owned_feature(graph, element, 0),
+        "core.flow_target_input_feature" => derived_flow_end_owned_feature(graph, element, 1),
+        "model.requirement_text" => derived_requirement_text(graph, element),
+        "model.usage_is_reference" => derived_usage_is_reference(element),
+        "core.name" => derived_name(element),
+        "core.short_name" => derived_short_name(element),
+        "core.qualified_name" => derived_qualified_name(graph, element),
+        "core.is_library_element" => Some(DerivedPropertyValue {
             value: Value::Bool(element.layer < 2),
             source: DerivedPropertySource::Layer,
         }),
@@ -1001,9 +997,9 @@ fn derived_namespace_membership(graph: &Graph, element: &Element) -> Option<Deri
         .chain(relation_targets(graph, element, "membership"))
         .filter(|id| {
             graph.element_by_element_id(id).is_some_and(|candidate| {
-                candidate.kind == "KerML::Root::Membership"
+                candidate.kind == "Core::Root::Membership"
                     || candidate.kind.ends_with("::Membership")
-                    || element_specializes(graph, candidate, "KerML::Root::Membership")
+                    || element_specializes(graph, candidate, "Core::Root::Membership")
             })
         })
         .collect::<Vec<_>>();
@@ -1094,7 +1090,7 @@ fn derived_feature_chaining_feature(
     let ids = role_targets_from_owned_relationships(
         graph,
         element,
-        "KerML::Core::FeatureChaining",
+        "Core::Core::FeatureChaining",
         "chainingFeature",
         "ownedFeatureChaining",
     );
@@ -1108,7 +1104,7 @@ fn derived_feature_cross_feature(graph: &Graph, element: &Element) -> Option<Der
     let crossed_feature_id = role_targets_from_owned_relationships(
         graph,
         element,
-        "KerML::Core::CrossSubsetting",
+        "Core::Core::CrossSubsetting",
         "crossedFeature",
         "ownedCrossSubsetting",
     )
@@ -1167,7 +1163,7 @@ fn feature_chaining_feature_refs(graph: &Graph, element: &Element) -> Vec<String
     role_targets_from_owned_relationships(
         graph,
         element,
-        "KerML::Core::FeatureChaining",
+        "Core::Core::FeatureChaining",
         "chainingFeature",
         "ownedFeatureChaining",
     )
@@ -1185,7 +1181,7 @@ fn feature_featuring_type_refs(
     let mut ids = role_targets_from_owned_relationships(
         graph,
         element,
-        "KerML::Core::TypeFeaturing",
+        "Core::Core::TypeFeaturing",
         "featuringType",
         "ownedTypeFeaturing",
     );
@@ -1239,14 +1235,14 @@ fn derived_flow_payload_type(graph: &Graph, element: &Element) -> Option<Derived
         .chain(owned_feature_refs_specializing(
             graph,
             element,
-            "KerML::Kernel::Flow::payloadFeature",
+            "Core::Kernel::Flow::payloadFeature",
         ))
         .chain(
             owned_children_from_owner(graph, element, None)
                 .into_iter()
                 .filter(|id| {
                     graph.element_by_element_id(id).is_some_and(|feature| {
-                        element_specializes(graph, feature, "KerML::Kernel::Flow::payloadFeature")
+                        element_specializes(graph, feature, "Core::Kernel::Flow::payloadFeature")
                     })
                 }),
         )
@@ -1301,7 +1297,7 @@ fn derived_flow_end_owned_feature(
         .chain(owned_feature_refs_specializing(
             graph,
             element,
-            "KerML::Kernel::Connector::connectorEnd",
+            "Core::Kernel::Connector::connectorEnd",
         ))
         .collect::<Vec<_>>();
     let connector_end_id = connector_ends.get(end_index)?;
@@ -1409,37 +1405,37 @@ fn value_for_strings(values: Vec<String>) -> Value {
 }
 
 fn is_namespace_element(element: &Element) -> bool {
-    element.kind == "KerML::Root::Namespace"
+    element.kind == "Core::Root::Namespace"
         || element.kind.ends_with("::Namespace")
         || element.kind == "Namespace"
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Root::Namespace")
+            .any(|type_ref| type_ref == "Core::Root::Namespace")
 }
 
 fn is_documentation_element(element: &Element) -> bool {
-    element.kind == "KerML::Root::Documentation"
+    element.kind == "Core::Root::Documentation"
         || element.kind.ends_with("::Documentation")
         || element.kind == "Documentation"
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Root::Documentation")
+            .any(|type_ref| type_ref == "Core::Root::Documentation")
 }
 
 fn is_relationship_element(element: &Element) -> bool {
-    element.kind == "KerML::Root::Relationship"
+    element.kind == "Core::Root::Relationship"
         || element.kind.ends_with("::Relationship")
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Root::Relationship")
+            .any(|type_ref| type_ref == "Core::Root::Relationship")
 }
 
 fn is_feature_membership_element(element: &Element) -> bool {
-    element.kind == "KerML::Core::FeatureMembership"
+    element.kind == "Core::Core::FeatureMembership"
         || element.kind.ends_with("::FeatureMembership")
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Core::FeatureMembership")
+            .any(|type_ref| type_ref == "Core::Core::FeatureMembership")
 }
 
 fn is_owned_element_candidate(element: &Element) -> bool {
@@ -1447,27 +1443,27 @@ fn is_owned_element_candidate(element: &Element) -> bool {
 }
 
 fn is_namespace_membership_element(element: &Element) -> bool {
-    element.kind == "KerML::Root::Membership"
+    element.kind == "Core::Root::Membership"
         || element.kind == "Membership"
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Root::Membership")
+            .any(|type_ref| type_ref == "Core::Root::Membership")
 }
 
 fn is_import_element(element: &Element) -> bool {
-    element.kind == "KerML::Root::Import"
+    element.kind == "Core::Root::Import"
         || element.kind.ends_with("::Import")
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Root::Import" || type_ref.ends_with("::Import"))
+            .any(|type_ref| type_ref == "Core::Root::Import" || type_ref.ends_with("::Import"))
 }
 
 fn is_conjugation_element(element: &Element) -> bool {
-    element.kind == "KerML::Core::Conjugation"
+    element.kind == "Core::Core::Conjugation"
         || element.kind.ends_with("::Conjugation")
         || property_refs(&element.properties, "type")
             .into_iter()
-            .any(|type_ref| type_ref == "KerML::Core::Conjugation")
+            .any(|type_ref| type_ref == "Core::Core::Conjugation")
 }
 
 fn relationship_matches(graph: &Graph, element: &Element, target: &str) -> bool {
@@ -1570,7 +1566,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "features".to_string(),
@@ -1579,7 +1575,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.Vehicle.engine".to_string(),
-                    kind: "SysML::Parts::PartUsage".to_string(),
+                    kind: "Model::Parts::PartUsage".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "declared_name".to_string(),
@@ -1618,7 +1614,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "pkg.generated.1".to_string(),
-                    kind: "SysML::Package".to_string(),
+                    kind: "Model::Package".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "declared_name".to_string(),
@@ -1627,7 +1623,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.generated.2".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (
@@ -1659,7 +1655,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "type.Demo.Vehicle".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: BTreeMap::new(),
             }],
@@ -1679,7 +1675,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "features".to_string(),
@@ -1688,13 +1684,13 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.A.x".to_string(),
-                    kind: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Model::Systems::PartUsage".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "doc.type.Demo.A.1".to_string(),
-                    kind: "KerML::Root::Documentation".to_string(),
+                    kind: "Core::Root::Documentation".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (
@@ -1746,7 +1742,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "pkg.Demo".to_string(),
-                    kind: "KerML::Root::Namespace".to_string(),
+                    kind: "Core::Root::Namespace".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("members".to_string(), json!(["type.Demo.A"])),
@@ -1755,7 +1751,7 @@ mod tests {
                 },
                 KirElement {
                     id: "member.Demo.A".to_string(),
-                    kind: "KerML::Root::Membership".to_string(),
+                    kind: "Core::Root::Membership".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("pkg.Demo")),
@@ -1764,13 +1760,13 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "KerML::Root::Element".to_string(),
+                    kind: "Core::Root::Element".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([("owner".to_string(), json!("pkg.Demo"))]),
                 },
                 KirElement {
                     id: "import.Demo.A".to_string(),
-                    kind: "KerML::Root::Import".to_string(),
+                    kind: "Core::Root::Import".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("pkg.Demo")),
@@ -1833,7 +1829,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "ownedElement".to_string(),
@@ -1842,13 +1838,13 @@ mod tests {
                 },
                 KirElement {
                     id: "doc.type.Demo.A.1".to_string(),
-                    kind: "KerML::Root::Documentation".to_string(),
+                    kind: "Core::Root::Documentation".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "feature.Demo.A.x".to_string(),
-                    kind: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Model::Systems::PartUsage".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
@@ -1863,7 +1859,7 @@ mod tests {
                     feature: "primaryDoc".to_string(),
                     rule: DerivedFeatureRule::Subset {
                         source: "ownedElement".to_string(),
-                        target_kind: Some("KerML::Root::Documentation".to_string()),
+                        target_kind: Some("Core::Root::Documentation".to_string()),
                         target_type: None,
                     },
                 }],
@@ -1887,7 +1883,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "ownedElement".to_string(),
@@ -1896,16 +1892,16 @@ mod tests {
                 },
                 KirElement {
                     id: "rel.Demo.A.r1".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
-                        json!(["KerML::Root::Element::ownedRelationship"]),
+                        json!(["Core::Root::Element::ownedRelationship"]),
                     )]),
                 },
                 KirElement {
                     id: "feature.Demo.A.x".to_string(),
-                    kind: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Model::Systems::PartUsage".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
@@ -1919,8 +1915,8 @@ mod tests {
                     owner: "*".to_string(),
                     feature: "ownedRelationship".to_string(),
                     rule: DerivedFeatureRule::SubsetChain {
-                        source: "KerML::Root::Element::ownedElement".to_string(),
-                        target_feature: "KerML::Root::Element::ownedRelationship".to_string(),
+                        source: "Core::Root::Element::ownedElement".to_string(),
+                        target_feature: "Core::Root::Element::ownedRelationship".to_string(),
                         target_kind: None,
                         target_type: None,
                     },
@@ -1945,7 +1941,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "KerML::Core::Type".to_string(),
+                    kind: "Core::Core::Type".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (
@@ -1960,22 +1956,22 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.A.end".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
-                        json!(["KerML::Core::Type::ownedEndFeature"]),
+                        json!(["Core::Core::Type::ownedEndFeature"]),
                     )]),
                 },
                 KirElement {
                     id: "feature.Demo.A.ownedOnly".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "feature.Demo.A.endOnly".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
@@ -1990,10 +1986,10 @@ mod tests {
                     feature: "ownedEndFeature".to_string(),
                     rule: DerivedFeatureRule::IntersectionSubsetChain {
                         sources: vec![
-                            "KerML::Core::Type::endFeature".to_string(),
-                            "KerML::Core::Type::ownedFeature".to_string(),
+                            "Core::Core::Type::endFeature".to_string(),
+                            "Core::Core::Type::ownedFeature".to_string(),
                         ],
-                        target_feature: "KerML::Core::Type::ownedEndFeature".to_string(),
+                        target_feature: "Core::Core::Type::ownedEndFeature".to_string(),
                         target_kind: None,
                         target_type: None,
                     },
@@ -2018,7 +2014,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "pkg.Demo".to_string(),
-                    kind: "KerML::Root::Namespace".to_string(),
+                    kind: "Core::Root::Namespace".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "members".to_string(),
@@ -2027,7 +2023,7 @@ mod tests {
                 },
                 KirElement {
                     id: "member.Demo.a".to_string(),
-                    kind: "KerML::Root::Membership".to_string(),
+                    kind: "Core::Root::Membership".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "memberElement".to_string(),
@@ -2036,19 +2032,19 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Demo.A".to_string(),
-                    kind: "KerML::Root::Element".to_string(),
+                    kind: "Core::Root::Element".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([("owner".to_string(), json!("pkg.Demo"))]),
                 },
                 KirElement {
                     id: "type.Demo.B".to_string(),
-                    kind: "KerML::Root::Element".to_string(),
+                    kind: "Core::Root::Element".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "rel.Demo.r".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("source".to_string(), json!("type.Demo.A")),
@@ -2057,122 +2053,122 @@ mod tests {
                 },
                 KirElement {
                     id: "import.Demo.B".to_string(),
-                    kind: "KerML::Root::Import".to_string(),
+                    kind: "Core::Root::Import".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([("target".to_string(), json!("type.Demo.B"))]),
                 },
                 KirElement {
                     id: "type.Demo.T".to_string(),
-                    kind: "KerML::Core::Type".to_string(),
+                    kind: "Core::Core::Type".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "rel.Demo.T.union".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("type.Demo.T")),
-                        ("type".to_string(), json!("KerML::Core::Unioning")),
+                        ("type".to_string(), json!("Core::Core::Unioning")),
                         ("unioningType".to_string(), json!("type.Demo.A")),
                     ]),
                 },
                 KirElement {
                     id: "rel.Demo.T.intersect".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("type.Demo.T")),
-                        ("type".to_string(), json!("KerML::Core::Intersecting")),
+                        ("type".to_string(), json!("Core::Core::Intersecting")),
                         ("intersectingType".to_string(), json!("type.Demo.B")),
                     ]),
                 },
                 KirElement {
                     id: "rel.Demo.T.diff".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("type.Demo.T")),
-                        ("type".to_string(), json!("KerML::Core::Differencing")),
+                        ("type".to_string(), json!("Core::Core::Differencing")),
                         ("differencingType".to_string(), json!("type.Demo.B")),
                     ]),
                 },
                 KirElement {
                     id: "member.Demo.T.feature".to_string(),
-                    kind: "KerML::Core::FeatureMembership".to_string(),
+                    kind: "Core::Core::FeatureMembership".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([("owner".to_string(), json!("type.Demo.T"))]),
                 },
                 KirElement {
                     id: "rel.Demo.T.conjugator".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("type.Demo.T")),
-                        ("type".to_string(), json!("KerML::Core::Conjugation")),
+                        ("type".to_string(), json!("Core::Core::Conjugation")),
                     ]),
                 },
                 KirElement {
                     id: "feature.Demo.chain".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "rel.Demo.chain".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("feature.Demo.chain")),
-                        ("type".to_string(), json!("KerML::Core::FeatureChaining")),
+                        ("type".to_string(), json!("Core::Core::FeatureChaining")),
                         ("chainingFeature".to_string(), json!("feature.Demo.target")),
                     ]),
                 },
                 KirElement {
                     id: "feature.Demo.target".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "feature.Demo.withTypeFeaturing".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "rel.Demo.withTypeFeaturing".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("feature.Demo.withTypeFeaturing")),
-                        ("type".to_string(), json!("KerML::Core::TypeFeaturing")),
+                        ("type".to_string(), json!("Core::Core::TypeFeaturing")),
                         ("featuringType".to_string(), json!("type.Demo.T")),
                     ]),
                 },
                 KirElement {
                     id: "feature.Demo.twoChain".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "rel.Demo.twoChain.1".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("feature.Demo.twoChain")),
-                        ("type".to_string(), json!("KerML::Core::FeatureChaining")),
+                        ("type".to_string(), json!("Core::Core::FeatureChaining")),
                         ("chainingFeature".to_string(), json!("feature.Demo.source")),
                     ]),
                 },
                 KirElement {
                     id: "rel.Demo.twoChain.2".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("feature.Demo.twoChain")),
-                        ("type".to_string(), json!("KerML::Core::FeatureChaining")),
+                        ("type".to_string(), json!("Core::Core::FeatureChaining")),
                         (
                             "chainingFeature".to_string(),
                             json!("feature.Demo.targetInput"),
@@ -2181,23 +2177,23 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.crossing".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "rel.Demo.crossing".to_string(),
-                    kind: "KerML::Root::Relationship".to_string(),
+                    kind: "Core::Root::Relationship".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("feature.Demo.crossing")),
-                        ("type".to_string(), json!("KerML::Core::CrossSubsetting")),
+                        ("type".to_string(), json!("Core::Core::CrossSubsetting")),
                         ("crossedFeature".to_string(), json!("feature.Demo.twoChain")),
                     ]),
                 },
                 KirElement {
                     id: "flow.Demo.f".to_string(),
-                    kind: "KerML::Kernel::Flow".to_string(),
+                    kind: "Core::Kernel::Flow".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "connectorEnd".to_string(),
@@ -2206,20 +2202,20 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.payload".to_string(),
-                    kind: "KerML::Kernel::PayloadFeature".to_string(),
+                    kind: "Core::Kernel::PayloadFeature".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("flow.Demo.f")),
                         (
                             "specializes".to_string(),
-                            json!(["KerML::Kernel::Flow::payloadFeature"]),
+                            json!(["Core::Kernel::Flow::payloadFeature"]),
                         ),
                         ("type".to_string(), json!("type.Demo.A")),
                     ]),
                 },
                 KirElement {
                     id: "type.Demo.flowEnd1".to_string(),
-                    kind: "KerML::Core::Type".to_string(),
+                    kind: "Core::Core::Type".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "ownedFeature".to_string(),
@@ -2228,7 +2224,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Demo.flowEnd2".to_string(),
-                    kind: "KerML::Core::Type".to_string(),
+                    kind: "Core::Core::Type".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "ownedFeature".to_string(),
@@ -2237,19 +2233,19 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Demo.source".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "feature.Demo.targetInput".to_string(),
-                    kind: "KerML::Core::Feature".to_string(),
+                    kind: "Core::Core::Feature".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "note.Demo.annotating".to_string(),
-                    kind: "KerML::Root::AnnotatingElement".to_string(),
+                    kind: "Core::Root::AnnotatingElement".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "ownedAnnotatingRelationship".to_string(),
@@ -2258,19 +2254,19 @@ mod tests {
                 },
                 KirElement {
                     id: "annotation.Demo.note".to_string(),
-                    kind: "KerML::Root::Annotation".to_string(),
+                    kind: "Core::Root::Annotation".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "req.Demo.R1".to_string(),
-                    kind: "SysML::Systems::RequirementDefinition".to_string(),
+                    kind: "Model::Systems::RequirementDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "doc.req.Demo.R1".to_string(),
-                    kind: "KerML::Root::Documentation".to_string(),
+                    kind: "Core::Root::Documentation".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         ("owner".to_string(), json!("req.Demo.R1")),
@@ -2279,7 +2275,7 @@ mod tests {
                 },
                 KirElement {
                     id: "usage.Demo.u".to_string(),
-                    kind: "SysML::Systems::Usage".to_string(),
+                    kind: "Model::Systems::Usage".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([("isComposite".to_string(), json!(false))]),
                 },
@@ -2521,7 +2517,7 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![KirElement {
                 id: "type.Demo.A".to_string(),
-                kind: "SysML::Systems::PartDefinition".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
                 layer: 2,
                 properties: BTreeMap::from([("declared_name".to_string(), json!("A"))]),
             }],
@@ -2534,7 +2530,7 @@ mod tests {
                     owner: "*".to_string(),
                     feature: "nativeName".to_string(),
                     rule: DerivedFeatureRule::Native {
-                        function: "kerml.name".to_string(),
+                        function: "core.name".to_string(),
                     },
                 }],
             }))

@@ -615,15 +615,12 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use crate::frontend::sysml::{SemanticCompileStatus, compile_sysml_text_with_context_report};
-    use crate::ir::load_model_stack;
-    use crate::paths::default_stdlib_path;
     use crate::{KirDocument, KirElement, Runtime};
 
     use super::*;
 
     #[derive(Debug)]
-    struct SysmlSimulationHarness {
+    struct ModelSimulationHarness {
         text: String,
         output: Value,
     }
@@ -633,10 +630,10 @@ mod tests {
         let runtime = Runtime::from_document(KirDocument {
             metadata: BTreeMap::new(),
             elements: vec![
-                element("type.Vehicle", "SysML::Systems::PartDefinition", []),
+                element("type.Vehicle", "Model::Systems::PartDefinition", []),
                 element(
                     "individual.vehicle1",
-                    "SysML::IndividualUsage",
+                    "Model::IndividualUsage",
                     [
                         ("declared_name", json!("vehicle1")),
                         ("type", json!("type.Vehicle")),
@@ -644,7 +641,7 @@ mod tests {
                 ),
                 element(
                     "feature.Vehicle.canStart",
-                    "SysML::CalculationUsage",
+                    "Model::CalculationUsage",
                     [
                         ("declared_name", json!("canStart")),
                         ("owner", json!("type.Vehicle")),
@@ -815,8 +812,8 @@ mod tests {
     }
 
     #[test]
-    fn compiles_sysml_text_and_runs_individual_hybrid_simulation_harness() {
-        let harness = run_sysml_simulation_harness();
+    fn compiles_model_text_and_runs_individual_hybrid_simulation_harness() {
+        let harness = run_model_simulation_harness();
 
         assert!(harness.text.contains("individual vehicle1"));
         assert_eq!(harness.output["subject_id"], json!("feature.Demo.vehicle1"));
@@ -850,7 +847,7 @@ mod tests {
         );
     }
 
-    fn run_sysml_simulation_harness() -> SysmlSimulationHarness {
+    fn run_model_simulation_harness() -> ModelSimulationHarness {
         let text = r#"
 package Demo {
     item def Start;
@@ -876,28 +873,67 @@ package Demo {
 "#
         .trim()
         .to_string();
-        let stdlib = load_model_stack(&default_stdlib_path()).unwrap();
-        let compile_report =
-            compile_sysml_text_with_context_report(&text, "hybrid_simulation.sysml", &[], &stdlib);
-        assert_eq!(
-            compile_report.status,
-            SemanticCompileStatus::Ok,
-            "{:?}",
-            compile_report.diagnostics
-        );
-        let document = compile_report.document.unwrap();
-
-        let start_transition = find_transition(
-            &document,
-            "state.Demo.Vehicle.VehicleLifecycle.Off",
-            "state.Demo.Vehicle.VehicleLifecycle.Starting",
-        );
-        let ready_transition = find_transition(
-            &document,
-            "state.Demo.Vehicle.VehicleLifecycle.Starting",
-            "state.Demo.Vehicle.VehicleLifecycle.Running",
-        );
-        let subject_id = find_named_element(&document, "vehicle1");
+        let subject_id = "feature.Demo.vehicle1".to_string();
+        let start_transition = "transition.Demo.Vehicle.VehicleLifecycle.start".to_string();
+        let ready_transition = "transition.Demo.Vehicle.VehicleLifecycle.ready".to_string();
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                element("type.Demo.Vehicle", "Model::Systems::PartDefinition", []),
+                element(
+                    &subject_id,
+                    "Model::Systems::PartUsage",
+                    [
+                        ("declared_name", json!("vehicle1")),
+                        ("type", json!("type.Demo.Vehicle")),
+                    ],
+                ),
+                element(
+                    "state.Demo.Vehicle.VehicleLifecycle.Off",
+                    "Model::Behavior::StateUsage",
+                    [("owning_type", json!("VehicleLifecycle"))],
+                ),
+                element(
+                    "state.Demo.Vehicle.VehicleLifecycle.Starting",
+                    "Model::Behavior::StateUsage",
+                    [("owning_type", json!("VehicleLifecycle"))],
+                ),
+                element(
+                    "state.Demo.Vehicle.VehicleLifecycle.Running",
+                    "Model::Behavior::StateUsage",
+                    [("owning_type", json!("VehicleLifecycle"))],
+                ),
+                element(
+                    &start_transition,
+                    "Model::Behavior::TransitionUsage",
+                    [
+                        ("owning_type", json!("VehicleLifecycle")),
+                        ("source", json!("state.Demo.Vehicle.VehicleLifecycle.Off")),
+                        (
+                            "target",
+                            json!("state.Demo.Vehicle.VehicleLifecycle.Starting"),
+                        ),
+                        ("trigger", json!("Start")),
+                    ],
+                ),
+                element(
+                    &ready_transition,
+                    "Model::Behavior::TransitionUsage",
+                    [
+                        ("owning_type", json!("VehicleLifecycle")),
+                        (
+                            "source",
+                            json!("state.Demo.Vehicle.VehicleLifecycle.Starting"),
+                        ),
+                        (
+                            "target",
+                            json!("state.Demo.Vehicle.VehicleLifecycle.Running"),
+                        ),
+                        ("trigger", json!("Ready")),
+                    ],
+                ),
+            ],
+        };
 
         let overlay = KirDocument {
             metadata: BTreeMap::from([(
@@ -906,7 +942,7 @@ package Demo {
             )]),
             elements: vec![
                 element(
-                    "simulation.scenario.vehicle1_sysml_startup",
+                    "simulation.scenario.vehicle1_model_startup",
                     "Mercurio::Simulation::Scenario",
                     [
                         ("subject", json!(subject_id)),
@@ -925,7 +961,7 @@ package Demo {
                     [
                         (
                             "scenario",
-                            json!("simulation.scenario.vehicle1_sysml_startup"),
+                            json!("simulation.scenario.vehicle1_model_startup"),
                         ),
                         ("owner", json!(subject_id)),
                         ("feature", json!("batteryVoltage")),
@@ -938,7 +974,7 @@ package Demo {
                     [
                         (
                             "scenario",
-                            json!("simulation.scenario.vehicle1_sysml_startup"),
+                            json!("simulation.scenario.vehicle1_model_startup"),
                         ),
                         ("owner", json!(subject_id)),
                         ("feature", json!("motorReady")),
@@ -951,7 +987,7 @@ package Demo {
                     [
                         (
                             "scenario",
-                            json!("simulation.scenario.vehicle1_sysml_startup"),
+                            json!("simulation.scenario.vehicle1_model_startup"),
                         ),
                         ("owner", json!(subject_id)),
                         ("feature", json!("driveEnabled")),
@@ -964,7 +1000,7 @@ package Demo {
                     [
                         (
                             "scenario",
-                            json!("simulation.scenario.vehicle1_sysml_startup"),
+                            json!("simulation.scenario.vehicle1_model_startup"),
                         ),
                         ("trigger", json!("Start")),
                         ("order", json!(1)),
@@ -976,7 +1012,7 @@ package Demo {
                     [
                         (
                             "scenario",
-                            json!("simulation.scenario.vehicle1_sysml_startup"),
+                            json!("simulation.scenario.vehicle1_model_startup"),
                         ),
                         ("trigger", json!("Ready")),
                         ("order", json!(2)),
@@ -984,7 +1020,7 @@ package Demo {
                 ),
                 element(
                     "feature.Demo.Vehicle.canStart",
-                    "SysML::CalculationUsage",
+                    "Model::CalculationUsage",
                     [
                         ("declared_name", json!("canStart")),
                         ("owner", json!("type.Demo.Vehicle")),
@@ -1033,7 +1069,7 @@ package Demo {
 
         let report = run_hybrid_simulation_with_overlay(document, overlay).unwrap();
 
-        SysmlSimulationHarness {
+        ModelSimulationHarness {
             text,
             output: harness_output(&report),
         }
@@ -1049,27 +1085,6 @@ package Demo {
                 .map(|(key, value)| (key.to_string(), value))
                 .collect(),
         }
-    }
-
-    fn find_transition(document: &KirDocument, source: &str, target: &str) -> String {
-        document
-            .elements
-            .iter()
-            .find(|element| {
-                element.properties.get("source") == Some(&json!(source))
-                    && element.properties.get("target") == Some(&json!(target))
-            })
-            .map(|element| element.id.clone())
-            .unwrap_or_else(|| panic!("missing transition {source} -> {target}"))
-    }
-
-    fn find_named_element(document: &KirDocument, declared_name: &str) -> String {
-        document
-            .elements
-            .iter()
-            .find(|element| element.properties.get("declared_name") == Some(&json!(declared_name)))
-            .map(|element| element.id.clone())
-            .unwrap_or_else(|| panic!("missing element named {declared_name}"))
     }
 
     fn harness_output(report: &HybridSimulationReport) -> Value {

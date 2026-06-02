@@ -476,18 +476,18 @@ mod tests {
     fn mpack_activation_index_resolves_installed_assets() {
         let root = temp_dir("mercurio-mpack-activation-core");
         let manifest = serde_json::json!({
-            "id": "org.mercurio.sysml-stdlib-support",
+            "id": "org.mercurio.model-stdlib-support",
             "version": "2.0.0",
-            "name": "SysML Stdlib Support",
+            "name": "Model Stdlib Support",
             "libraries": [
-                {"id": "org.omg/sysml-stdlib", "path": "libraries/sysml.kpar"}
+                {"id": "org.omg/model-stdlib", "path": "libraries/model.kpar"}
             ],
             "languageProfiles": [
                 {
-                    "id": "sysml-2.0",
-                    "path": "profiles/sysml/profile.json",
+                    "id": "model-2.0",
+                    "path": "profiles/model/profile.json",
                     "pythonWrappers": {
-                        "module": "mercurio_sysml",
+                        "module": "mercurio_model",
                         "path": "python"
                     }
                 }
@@ -496,12 +496,12 @@ mod tests {
                 {"id": "stdlib", "path": "rules/stdlib.json"}
             ],
             "pythonPackages": [
-                {"module": "mercurio_sysml", "path": "python", "profile": "sysml-2.0"}
+                {"module": "mercurio_model", "path": "python", "profile": "model-2.0"}
             ]
         });
         let manifest_path = install_plugin_manifest(
             &root.join("plugins"),
-            "org.mercurio.sysml-stdlib-support",
+            "org.mercurio.model-stdlib-support",
             "2.0.0",
             &manifest,
             None,
@@ -512,17 +512,17 @@ mod tests {
         let index = mpack_activation_index(&root.join("plugins")).unwrap();
 
         assert_eq!(index.installed.len(), 1);
-        assert_eq!(index.language_profiles[0].entry.id, "sysml-2.0");
+        assert_eq!(index.language_profiles[0].entry.id, "model-2.0");
         assert_eq!(
             index.language_profiles[0].asset_path.as_ref().unwrap(),
             &manifest_path
                 .parent()
                 .unwrap()
                 .join("profiles")
-                .join("sysml")
+                .join("model")
                 .join("profile.json")
         );
-        assert_eq!(index.python_packages[0].entry.module, "mercurio_sysml");
+        assert_eq!(index.python_packages[0].entry.module, "mercurio_model");
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -530,30 +530,30 @@ mod tests {
     #[test]
     fn mpack_activation_index_resolves_extension_repository_layout() {
         let root = temp_dir("mercurio-mpack-extension-repo-core");
-        let extension_dir = root.join("org.mercurio.sysml-stdlib-support").join("2.0.0");
+        let extension_dir = root.join("org.mercurio.model-stdlib-support").join("2.0.0");
         std::fs::create_dir_all(&extension_dir).unwrap();
         std::fs::write(extension_dir.join("plugin.mpack"), b"package").unwrap();
         std::fs::write(
             extension_dir.join("extension.json"),
             r#"{
-  "id": "org.mercurio.sysml-stdlib-support",
+  "id": "org.mercurio.model-stdlib-support",
   "version": "2.0.0",
-  "name": "SysML Stdlib Support",
+  "name": "Model Stdlib Support",
   "libraries": [
-    {"id": "org.omg/sysml-stdlib", "path": "libraries/sysml.kpar"}
+    {"id": "org.omg/model-stdlib", "path": "libraries/model.kpar"}
   ],
   "languageProfiles": [
     {
-      "id": "sysml-2.0",
-      "path": "profiles/sysml/profile.json",
+      "id": "model-2.0",
+      "path": "profiles/model/profile.json",
       "pythonWrappers": {
-        "module": "mercurio_sysml",
+        "module": "mercurio_model",
         "path": "python"
       }
     }
   ],
   "pythonPackages": [
-    {"module": "mercurio_sysml", "path": "python", "profile": "sysml-2.0"}
+    {"module": "mercurio_model", "path": "python", "profile": "model-2.0"}
   ]
 }"#,
         )
@@ -572,7 +572,7 @@ mod tests {
         );
         assert_eq!(
             index.libraries[0].asset_path.as_ref().unwrap(),
-            &extension_dir.join("libraries").join("sysml.kpar")
+            &extension_dir.join("libraries").join("model.kpar")
         );
 
         std::fs::remove_dir_all(root).unwrap();

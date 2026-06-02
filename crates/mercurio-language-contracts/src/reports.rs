@@ -1,9 +1,9 @@
-use crate::ast::SysmlModule;
+use crate::ast::ParsedModule;
 use crate::diagnostics::Diagnostic;
 
 #[derive(Debug, Clone)]
 pub struct ParseReport {
-    pub module: SysmlModule,
+    pub module: ParsedModule,
     pub diagnostics: Vec<Diagnostic>,
 }
 

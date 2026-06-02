@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::datalog::{
     Atom, DatalogError, Evaluation, Fact, RulePack, Term, evaluate, extract_graph_facts,
 };
-use crate::frontend::ast::{Declaration, SysmlModule};
+use crate::frontend::ast::{Declaration, ParsedModule};
 use crate::graph::Graph;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,7 +215,7 @@ pub fn query_evaluation(
     Ok(dedupe_bindings(bindings))
 }
 
-pub fn sysml_module_assessment_facts(module: &SysmlModule) -> Vec<Fact> {
+pub fn parsed_module_assessment_facts(module: &ParsedModule) -> Vec<Fact> {
     let mut facts = Vec::new();
     collect_declaration_assessment_facts(&module.members, None, &mut facts);
     facts
@@ -467,62 +467,6 @@ fn dedupe_bindings(bindings: Vec<BTreeMap<String, String>>) -> Vec<BTreeMap<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::sysml::parse_sysml_recovering;
-
-    #[test]
-    fn assesses_package_count_and_name_from_sysml_module_facts() {
-        let parse_report = parse_sysml_recovering(
-            "package UavLibrary { part def BatteryPack; } package UavSystem { }",
-        )
-        .unwrap();
-        let facts = sysml_module_assessment_facts(&parse_report.module);
-        let evaluation = evaluate(facts, &[]).unwrap();
-        let spec = AssessmentSpec {
-            id: "training.packages.1_1".to_string(),
-            title: "Package structure".to_string(),
-            assertions: vec![
-                AssessmentAssertion {
-                    id: "two-packages".to_string(),
-                    description: "Model declares two top-level packages".to_string(),
-                    query: AssessmentQuery {
-                        find: vec!["P".to_string()],
-                        where_atoms: vec![Atom {
-                            predicate: "top_level_package".to_string(),
-                            terms: vec![Term::Var("P".to_string())],
-                        }],
-                    },
-                    expect: AssessmentExpectation::CountEq { value: 2 },
-                },
-                AssessmentAssertion {
-                    id: "has-uav-library".to_string(),
-                    description: "One package is named UavLibrary".to_string(),
-                    query: AssessmentQuery {
-                        find: vec!["P".to_string()],
-                        where_atoms: vec![
-                            Atom {
-                                predicate: "package".to_string(),
-                                terms: vec![Term::Var("P".to_string())],
-                            },
-                            Atom {
-                                predicate: "name".to_string(),
-                                terms: vec![
-                                    Term::Var("P".to_string()),
-                                    Term::Const("UavLibrary".to_string()),
-                                ],
-                            },
-                        ],
-                    },
-                    expect: AssessmentExpectation::Exists,
-                },
-            ],
-        };
-
-        let report = run_evaluation_assessment(&evaluation, &spec).unwrap();
-
-        assert_eq!(report.status, AssessmentStatus::Pass);
-        assert_eq!(report.assertions[0].binding_count, 2);
-        assert_eq!(report.assertions[1].binding_count, 1);
-    }
 
     #[test]
     fn runs_runtime_assessment_from_supplied_facts_rules_and_queries() {
@@ -575,56 +519,5 @@ mod tests {
                 .iter()
                 .any(|fact| fact.predicate == "top_level_package" && fact.terms == ["Demo"])
         );
-    }
-
-    #[test]
-    fn emits_part_usage_type_and_multiplicity_facts() {
-        let parse_report = parse_sysml_recovering(
-            "package UavParts { part def RotorAssembly; part def UavSystem { part rotors: RotorAssembly[6]; } }",
-        )
-        .unwrap();
-        let facts = sysml_module_assessment_facts(&parse_report.module);
-        let evaluation = evaluate(facts, &[]).unwrap();
-        let usage_id = "UavParts::UavSystem::rotors";
-
-        assert!(evaluation.contains("part_usage", &[usage_id]));
-        assert!(evaluation.contains("name", &[usage_id, "rotors"]));
-        assert!(evaluation.contains("type", &[usage_id, "RotorAssembly"]));
-        assert!(evaluation.contains("multiplicity", &[usage_id, "6"]));
-        assert!(evaluation.contains("multiplicity_lower", &[usage_id, "6"]));
-        assert!(evaluation.contains("multiplicity_upper", &[usage_id, "6"]));
-    }
-
-    #[test]
-    fn emits_connection_endpoint_facts() {
-        let parse_report = parse_sysml_recovering(
-            "package Demo {
-                port def P;
-                part def A { port out: P; }
-                part def B { port input: P; }
-                part def System {
-                    part controller: A;
-                    part rotor: B;
-                    interface link connect controller.out to rotor.input;
-                }
-            }",
-        )
-        .unwrap();
-        let facts = sysml_module_assessment_facts(&parse_report.module);
-        let debug_facts = format!("{facts:#?}");
-        let evaluation = evaluate(facts, &[]).unwrap();
-        let link_id = "Demo::System::link";
-
-        assert!(evaluation.contains("interface_usage", &[link_id]));
-        assert!(
-            evaluation.contains("connected_source", &[link_id, "controller::out"]),
-            "{debug_facts}"
-        );
-        assert!(evaluation.contains("connected_target", &[link_id, "rotor::input"]));
-        assert!(evaluation.contains(
-            "connected_endpoint",
-            &[link_id, "source", "controller::out"]
-        ));
-        assert!(evaluation.contains("connected_endpoint", &[link_id, "target", "rotor::input"]));
     }
 }

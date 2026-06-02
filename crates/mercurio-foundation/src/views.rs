@@ -1197,9 +1197,9 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
-    use crate::{Graph, KirDocument, KirElement, MetamodelAttributeRegistry, Runtime, repo_path};
+    use crate::{Graph, KirDocument, KirElement, MetamodelAttributeRegistry, Runtime};
 
     use super::{
         GraphScope, L2ExplorerRequestDto, MetatypeExplorerRequestDto, document_model_metadata_view,
@@ -1209,10 +1209,91 @@ mod tests {
 
     #[test]
     fn extracts_requirement_rows_from_example_model() {
-        let document = KirDocument::from_path(&repo_path(
-            "test_files/examples/requirements_table_model.json",
-        ))
-        .unwrap();
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![
+                KirElement {
+                    id: "req.VehicleSafety.BrakingDistance".to_string(),
+                    kind: "model.RequirementUsage".to_string(),
+                    layer: 2,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("VehicleSafety.BrakingDistance"),
+                        ),
+                        ("declared_name".to_string(), json!("BrakingDistance")),
+                        (
+                            "text".to_string(),
+                            json!("Stop within the required distance."),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "part.VehicleSafety.BrakeController".to_string(),
+                    kind: "model.PartUsage".to_string(),
+                    layer: 2,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("VehicleSafety.BrakeController"),
+                        ),
+                        (
+                            "satisfy".to_string(),
+                            json!(["req.VehicleSafety.BrakingDistance"]),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "case.VehicleSafety.BrakingDistanceTest".to_string(),
+                    kind: "model.VerificationCaseUsage".to_string(),
+                    layer: 2,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("VehicleSafety.BrakingDistanceTest"),
+                        ),
+                        (
+                            "verify".to_string(),
+                            json!(["req.VehicleSafety.BrakingDistance"]),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "req.VehicleSafety.PowerLoss".to_string(),
+                    kind: "model.RequirementUsage".to_string(),
+                    layer: 2,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("VehicleSafety.PowerLoss"),
+                        ),
+                        ("declared_name".to_string(), json!("PowerLoss")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "req.VehicleSafety.OperatorAlert".to_string(),
+                    kind: "model.RequirementUsage".to_string(),
+                    layer: 2,
+                    properties: [
+                        (
+                            "qualified_name".to_string(),
+                            json!("VehicleSafety.OperatorAlert"),
+                        ),
+                        ("declared_name".to_string(), json!("OperatorAlert")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ],
+        };
         let runtime = Runtime::from_document(document).unwrap();
 
         let view = requirements_table_view(runtime.graph());
@@ -1253,15 +1334,15 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "metatype".to_string(),
-                        Value::String("SysML::Systems::PartDefinition".to_string()),
+                        Value::String("Model::Systems::PartDefinition".to_string()),
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
@@ -1292,18 +1373,18 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "metatype".to_string(),
-                        Value::String("SysML::Systems::PartDefinition".to_string()),
+                        Value::String("Model::Systems::PartDefinition".to_string()),
                     )]),
                 },
             ],
@@ -1331,13 +1412,13 @@ mod tests {
             )]),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartUsage".to_string(),
+                    id: "Model::Systems::PartUsage".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
@@ -1363,13 +1444,13 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "feature.Vehicle.engine".to_string(),
-                    kind: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Model::Systems::PartUsage".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
@@ -1398,7 +1479,7 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.BaseVehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "mass".to_string(),
@@ -1407,7 +1488,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
@@ -1438,20 +1519,20 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartUsage".to_string(),
+                    id: "Model::Systems::PartUsage".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
@@ -1462,7 +1543,7 @@ mod tests {
         let tree = library_tree_view(&graph);
 
         assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].id, "SysML");
+        assert_eq!(tree[0].id, "Model");
         assert_eq!(tree[0].node_type, "namespace");
         let systems = &tree[0].children[0];
         assert_eq!(systems.id, "Systems");
@@ -1470,7 +1551,7 @@ mod tests {
         assert!(systems.children.iter().any(|child| {
             child.id == "PartDefinition"
                 && child.node_type == "element"
-                && child.element_id.as_deref() == Some("SysML::Systems::PartDefinition")
+                && child.element_id.as_deref() == Some("Model::Systems::PartDefinition")
         }));
     }
 
@@ -1480,25 +1561,25 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
-                    id: "SysML::Systems::Block".to_string(),
+                    id: "Model::Systems::Block".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
-                        Value::Array(vec![Value::String("SysML::Core::Type".to_string())]),
+                        Value::Array(vec![Value::String("Model::Core::Type".to_string())]),
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Systems::PartDefinition".to_string(),
+                    id: "Model::Systems::PartDefinition".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
-                        Value::Array(vec![Value::String("SysML::Systems::Block".to_string())]),
+                        Value::Array(vec![Value::String("Model::Systems::Block".to_string())]),
                     )]),
                 },
                 KirElement {
-                    id: "SysML::Core::Type".to_string(),
+                    id: "Model::Core::Type".to_string(),
                     kind: "Metaclass".to_string(),
                     layer: 1,
                     properties: BTreeMap::new(),
@@ -1512,17 +1593,17 @@ mod tests {
             &graph,
             &registry,
             &MetatypeExplorerRequestDto {
-                seed_id: "SysML::Systems::PartDefinition".to_string(),
-                expanded_parents: vec!["SysML::Systems::Block".to_string()],
+                seed_id: "Model::Systems::PartDefinition".to_string(),
+                expanded_parents: vec!["Model::Systems::Block".to_string()],
                 expanded_children: Vec::new(),
             },
         )
         .unwrap();
 
-        assert_eq!(view.seed_id, "SysML::Systems::PartDefinition");
-        assert!(view.nodes.iter().any(|node| node.id == "SysML::Core::Type"));
+        assert_eq!(view.seed_id, "Model::Systems::PartDefinition");
+        assert!(view.nodes.iter().any(|node| node.id == "Model::Core::Type"));
         assert!(view.edges.iter().any(|edge| {
-            edge.source == "SysML::Systems::Block" && edge.target == "SysML::Core::Type"
+            edge.source == "Model::Systems::Block" && edge.target == "Model::Core::Type"
         }));
     }
 
@@ -1533,13 +1614,13 @@ mod tests {
             elements: vec![
                 KirElement {
                     id: "type.BaseVehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::new(),
                 },
                 KirElement {
                     id: "type.Engine".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([(
                         "specializes".to_string(),
@@ -1548,7 +1629,7 @@ mod tests {
                 },
                 KirElement {
                     id: "type.Vehicle".to_string(),
-                    kind: "SysML::Systems::PartDefinition".to_string(),
+                    kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (
@@ -1567,7 +1648,7 @@ mod tests {
                 },
                 KirElement {
                     id: "feature.Vehicle.engine".to_string(),
-                    kind: "SysML::Systems::PartUsage".to_string(),
+                    kind: "Model::Systems::PartUsage".to_string(),
                     layer: 2,
                     properties: BTreeMap::from([
                         (

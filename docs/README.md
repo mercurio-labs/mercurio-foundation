@@ -1,28 +1,15 @@
-# Mercurio Core Docs
+# Mercurio Foundation Documentation
 
-This directory separates user-facing documentation from development architecture notes and implementation plans.
+Mercurio Foundation is a language-neutral modeling substrate. It stores models as KIR, builds graph/runtime views over those models, and exposes contracts that language-specific repositories can implement.
 
-UI and desktop/web product docs live in the sibling repo at `../../mercurio-ui/docs`.
+## Sections
 
-## Doc Sets
+- [Philosophy](philosophy.md): why foundation exists, what it owns, and how it compares to classic modeling frameworks.
+- [KIR](kir.md): the core interchange representation and its invariants.
+- [Crates](crates.md): intent and ownership of each crate in this workspace.
+- [Language Services](language-services.md): how source languages connect to foundation without becoming foundation dependencies.
+- [Examples](examples.md): small Rust snippets for KIR, graph, runtime, and language-service usage.
 
-- [User Docs](user/README.md): user-facing guides and operational documentation.
-- [Development Docs](development/README.md): architecture notes, implementation plans, runtime design, and engineering references.
-- [Core Repo Layout](CORE_REPO_LAYOUT.md): target open-core repository structure and migration boundaries.
-- [Repo Split Implementation](development/REPO_SPLIT_IMPLEMENTATION.md): current library-first split plan for core, SysML/KerML language libraries, CLI host, and examples.
-- [Repo Boundary Audit](REPO_BOUNDARY_AUDIT.md): current crate/module classification before the physical split.
-- [Peer Repository Layout](PEER_REPOSITORY_LAYOUT.md): placement rules for Pilot, examples, and sibling Mercurio repos.
+## Boundary
 
-## User Guides
-
-- [CLI Guide](user/CLI.md): public `mercurio` command examples and common workflows.
-- [Project Descriptors](user/PROJECTS.md)
-- [KIR User Guide](user/KIR.md)
-- [Querying And Evaluation](user/QUERY_EVALUATE.md)
-- [KPAR Packages](user/KPAR.md)
-- [Troubleshooting](user/TROUBLESHOOTING.md)
-
-## Placement Rule
-
-Put documentation for people using Mercurio in `user/`.
-Put architecture, plans, implementation notes, benchmarks, and internal design docs in `development/`.
+Foundation should not know any specific source language, metamodel lineage, command-line host, UI adapter, or product workflow. Those layers consume foundation through KIR and language-service contracts.

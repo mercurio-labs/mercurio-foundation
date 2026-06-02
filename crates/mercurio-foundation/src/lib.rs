@@ -40,15 +40,14 @@ pub mod views;
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
     AssessmentQuery, AssessmentReport, AssessmentSpec, AssessmentStatus, RuntimeAssessmentRequest,
-    RuntimeAssessmentResult, query_evaluation, run_evaluation_assessment, run_graph_assessment,
-    run_runtime_assessment, sysml_module_assessment_facts,
+    RuntimeAssessmentResult, parsed_module_assessment_facts, query_evaluation,
+    run_evaluation_assessment, run_graph_assessment, run_runtime_assessment,
 };
 pub use authoring::{
     Alias, AttributeWritePolicy, AuthoringError, AuthoringModule, AuthoringProject,
     ContainerSelector, Declaration, Definition, Import, Mutation, MutationResult, Package,
     QualifiedName, RenderedSpan, SemanticAttribute, SemanticEdit, Usage, ValidationReport,
     WriteBackMode, WriteBackResult, create_empty_model, load_authoring_project_from_kir,
-    load_authoring_project_from_sysml,
 };
 pub use behavior::{
     StateMachineExecutionReport, StateMachineExecutionStatus, StateMachineModel,
@@ -87,22 +86,10 @@ pub use feasibility::{
     MutationContext, MutationFeasibilityReport, MutationFeasibilityService, RequiredChoice,
     SemanticCapabilityOracle, workspace_revision_for_project,
 };
-pub use frontend::format::{FormatError, format_path_text, format_sysml_text, format_text};
-pub use frontend::kerml::{
-    KermlError, compile_kerml_text, compile_kerml_text_with_empty_context, load_kerml_document,
-    parse_kerml,
-};
-pub use frontend::lint::{
-    LintDiagnostic, LintReport, LintSeverity, lint_kerml_text, lint_sysml_text, lint_text,
-};
 pub use frontend::pilot::{
     PilotDocumentationBlock, PilotExportDocument, PilotExportElement, PilotExportRelationship,
     PilotImportError, PilotSource, load_pilot_export, normalize_pilot_export,
     normalize_pilot_export_for_compare,
-};
-pub use frontend::sysml::{
-    SemanticCompileReport, SemanticCompileStatus, SysmlError, compile_sysml_text,
-    compile_sysml_text_with_context_report, load_sysml_document, parse_sysml,
 };
 pub use goal::{
     GoalCheckEvaluation, GoalEvaluation, GoalPolicy, SemanticGoalCheck, SemanticGoalExplanation,
@@ -116,14 +103,12 @@ pub use identity::{
 };
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, load_model_stack, load_model_stack_with_language,
+    KirFieldSpec, load_model_stack, load_model_stack_with_registry,
 };
 pub use language::{
-    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, KermlLanguageModule, LanguageModule,
-    LanguageProfile, LanguageProfileError, LibraryContext, MetamodelConceptRegistry,
-    SemanticConcept, SourceLanguage, SysmlLanguageModule, default_language_profile,
-    default_metamodel_registry, language_module, language_module_for_path, language_modules,
-    load_language_profile,
+    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
+    LibraryContext, MetamodelConceptRegistry, SemanticConcept, SourceLanguage,
+    default_language_profile, default_metamodel_registry, load_language_profile,
 };
 pub use library::{
     BaselineLibraryConfig, KparLocator, KparPackageBuild, KparPackageSource, LibraryCacheMetadata,
@@ -165,8 +150,7 @@ pub use outline::{
 pub use paths::{
     bundled_extension_repo_path, bundled_package_repo_path, bundled_stdlib_package_set_path,
     default_kernel_library_path, default_package_kir_cache_path, default_package_repo_path,
-    default_stdlib_path, default_stdlib_rulepack_path, default_sysml_delta_library_path,
-    default_sysml_library_path, default_sysml_rulepack_path, default_user_config_path,
+    default_stdlib_path, default_stdlib_rulepack_path, default_user_config_path,
     default_workspace_root, repo_path, repo_root,
 };
 pub use performance::{
@@ -219,9 +203,8 @@ pub use session::{
     ModelWorkspace, SessionError, WorkspaceSnapshot,
 };
 pub use source_set::{
-    SourceCompileContext, SourceDocument, collect_context_modules,
-    compile_source_document_with_context, compile_source_documents, compile_source_text,
-    compile_source_text_with_context, parse_source_module, parse_source_text,
+    SourceDocument, compile_source_document_with_registry, compile_source_documents,
+    compile_source_documents_with_registry, parse_source_module,
 };
 pub use syntax_compare::{
     SyntaxComparisonReport, SyntaxNodeMismatch, SyntaxSnapshot, SyntaxSnapshotNode,
