@@ -27,6 +27,37 @@ const RUNTIME_CACHE_FORMAT_VERSION: u16 = 2;
 #[derive(Debug, Clone)]
 pub struct PersistentWorkspaceCache {
     root: PathBuf,
+    options: PersistentWorkspaceCacheOptions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersistentWorkspaceCacheOptions {
+    pub runtime_cache: RuntimeCachePolicy,
+}
+
+impl Default for PersistentWorkspaceCacheOptions {
+    fn default() -> Self {
+        Self {
+            runtime_cache: RuntimeCachePolicy::ReadWrite,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCachePolicy {
+    ReadWrite,
+    ReadOnly,
+    Disabled,
+}
+
+impl RuntimeCachePolicy {
+    fn can_read(self) -> bool {
+        matches!(self, Self::ReadWrite | Self::ReadOnly)
+    }
+
+    fn can_write(self) -> bool {
+        matches!(self, Self::ReadWrite)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,15 +147,38 @@ impl PersistentWorkspaceCache {
                 .into()
                 .join(".workspace-cache")
                 .join("compile"),
+            options: PersistentWorkspaceCacheOptions::default(),
         }
     }
 
     pub fn from_cache_root(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            options: PersistentWorkspaceCacheOptions::default(),
+        }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn options(&self) -> PersistentWorkspaceCacheOptions {
+        self.options
+    }
+
+    pub fn with_options(mut self, options: PersistentWorkspaceCacheOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    pub fn without_runtime_cache_writes(mut self) -> Self {
+        self.options.runtime_cache = RuntimeCachePolicy::ReadOnly;
+        self
+    }
+
+    pub fn without_runtime_cache(mut self) -> Self {
+        self.options.runtime_cache = RuntimeCachePolicy::Disabled;
+        self
     }
 
     pub fn compile_source_documents(
@@ -174,6 +228,18 @@ impl PersistentWorkspaceCache {
         )?;
         let artifact_key = artifact_key_digest(&key)?;
 
+        if !self.options.runtime_cache.can_read() {
+            let document = compile(source_documents, library_context)?;
+            let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
+            return Ok(PersistentCompileResult {
+                document,
+                runtime_artifact,
+                cache_status: PersistentCacheStatus::FreshCompile,
+                artifact_key,
+                cache_write_error: None,
+            });
+        }
+
         match self.load_compile_artifact(&artifact_key, &key, &files)? {
             CacheLookup::Hit {
                 document,
@@ -190,16 +256,13 @@ impl PersistentWorkspaceCache {
             CacheLookup::Miss => {
                 let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
-                let cache_write_error = self
-                    .write_compile_artifact(
-                        &artifact_key,
-                        &key,
-                        &files,
-                        &document,
-                        &runtime_artifact,
-                    )
-                    .err()
-                    .map(|err| err.to_string());
+                let cache_write_error = self.write_compile_artifact_if_enabled(
+                    &artifact_key,
+                    &key,
+                    &files,
+                    &document,
+                    &runtime_artifact,
+                );
                 return Ok(PersistentCompileResult {
                     document,
                     runtime_artifact,
@@ -211,16 +274,13 @@ impl PersistentWorkspaceCache {
             CacheLookup::Rejected(reason) => {
                 let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
-                let cache_write_error = self
-                    .write_compile_artifact(
-                        &artifact_key,
-                        &key,
-                        &files,
-                        &document,
-                        &runtime_artifact,
-                    )
-                    .err()
-                    .map(|err| err.to_string());
+                let cache_write_error = self.write_compile_artifact_if_enabled(
+                    &artifact_key,
+                    &key,
+                    &files,
+                    &document,
+                    &runtime_artifact,
+                );
                 return Ok(PersistentCompileResult {
                     document,
                     runtime_artifact,
@@ -230,6 +290,21 @@ impl PersistentWorkspaceCache {
                 });
             }
         }
+    }
+
+    fn write_compile_artifact_if_enabled(
+        &self,
+        artifact_key: &str,
+        key: &WorkspaceCompileArtifactKey,
+        files: &[WorkspaceSourceFileFingerprint],
+        document: &KirDocument,
+        runtime_artifact: &RuntimeArtifact,
+    ) -> Option<String> {
+        self.options.runtime_cache.can_write().then(|| {
+            self.write_compile_artifact(artifact_key, key, files, document, runtime_artifact)
+                .err()
+                .map(|err| err.to_string())
+        })?
     }
 
     fn artifact_dir(&self, artifact_key: &str) -> PathBuf {
@@ -1189,7 +1264,8 @@ mod tests {
 
     use super::{
         PersistentCacheStatus, PersistentWorkspaceCache, RUNTIME_CACHE_FILE_NAME,
-        RUNTIME_CACHE_MANIFEST_FILE_NAME, WorkspaceCompileCacheManifest, source_file_fingerprints,
+        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, WorkspaceCompileCacheManifest,
+        source_file_fingerprints,
     };
     use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
     use crate::runtime::Runtime;
@@ -1254,6 +1330,70 @@ mod tests {
         assert!(dir.join(RUNTIME_CACHE_FILE_NAME).is_file());
         assert!(dir.join(RUNTIME_CACHE_MANIFEST_FILE_NAME).is_file());
         assert!(!dir.join("runtime-artifact.json").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_read_only_does_not_write_runtime_cache() {
+        let root = temp_dir("persistent_read_only");
+        let cache =
+            PersistentWorkspaceCache::for_workspace_root(&root).without_runtime_cache_writes();
+        let library_context = test_library_context();
+        let sources = vec![SourceDocument::new(
+            "demo.model",
+            "package Demo { part def Thing; }",
+        )];
+
+        let first = cache
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+        let second = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+
+        assert_eq!(cache.options().runtime_cache, RuntimeCachePolicy::ReadOnly);
+        assert_eq!(first.cache_status, PersistentCacheStatus::PersistentMiss);
+        assert_eq!(second.cache_status, PersistentCacheStatus::PersistentMiss);
+        assert!(first.cache_write_error.is_none());
+        assert!(!artifact_dir(&cache, &first.artifact_key).is_dir());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_disabled_skips_runtime_cache() {
+        let root = temp_dir("persistent_disabled");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root).without_runtime_cache();
+        let library_context = test_library_context();
+        let sources = vec![SourceDocument::new(
+            "demo.model",
+            "package Demo { part def Thing; }",
+        )];
+
+        let result = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+
+        assert_eq!(cache.options().runtime_cache, RuntimeCachePolicy::Disabled);
+        assert_eq!(result.cache_status, PersistentCacheStatus::FreshCompile);
+        assert!(result.cache_write_error.is_none());
+        assert!(!artifact_dir(&cache, &result.artifact_key).is_dir());
 
         std::fs::remove_dir_all(root).unwrap();
     }

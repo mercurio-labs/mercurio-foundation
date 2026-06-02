@@ -70,6 +70,15 @@ Workspace compile cache targets runtime state directly instead of storing additi
 
 Workspace compile artifacts now store `document.kir.json` and `runtime.mruntime`. On a cache hit, the workspace cache loads canonical text KIR first, then loads `runtime.mruntime` when its manifest matches the compile inputs. If the runtime cache is stale, missing, or malformed, the compile artifact is rejected and rebuilt from source.
 
+Clients can opt out of creating runtime cache files when opening or compiling a workspace. `ReadOnly` will use an existing cache if present, but will not write a new `runtime.mruntime`; `Disabled` skips runtime cache reads and writes entirely.
+
+```rust
+use mercurio_core::PersistentWorkspaceCache;
+
+let cache = PersistentWorkspaceCache::for_workspace_root(workspace_root)
+    .without_runtime_cache_writes();
+```
+
 ## Workspace Cache Layers
 
 The cache keeps text KIR as the canonical document and stores runtime-focused warm-load artifacts so a workspace can avoid repeated runtime construction when compile inputs are unchanged.

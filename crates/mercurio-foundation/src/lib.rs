@@ -226,6 +226,7 @@ pub use workspace::{
 };
 pub use workspace_cache::{
     PersistentCacheStatus, PersistentCompileResult, PersistentWorkspaceCache,
-    WorkspaceCompileArtifactKey, WorkspaceCompileCacheManifest, WorkspaceCompileCacheOutputs,
-    WorkspaceSourceFileFingerprint, source_file_fingerprints, workspace_compile_artifact_key,
+    PersistentWorkspaceCacheOptions, RuntimeCachePolicy, WorkspaceCompileArtifactKey,
+    WorkspaceCompileCacheManifest, WorkspaceCompileCacheOutputs, WorkspaceSourceFileFingerprint,
+    source_file_fingerprints, workspace_compile_artifact_key,
 };
