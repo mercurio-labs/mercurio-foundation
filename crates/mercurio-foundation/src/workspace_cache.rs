@@ -131,6 +131,11 @@ struct RuntimeCacheManifest {
     requirement_count: usize,
 }
 
+struct RuntimeCacheRead {
+    bytes: Vec<u8>,
+    manifest: RuntimeCacheManifest,
+}
+
 enum CacheLookup {
     Hit {
         document: KirDocument,
@@ -606,6 +611,26 @@ fn load_runtime_artifact_cache(
     manifest_path: &Path,
     source_bytes: &[u8],
 ) -> Result<Option<RuntimeArtifact>, KirError> {
+    let Some(read) = read_runtime_cache_files(runtime_path, manifest_path)? else {
+        return Ok(None);
+    };
+    if !runtime_cache_manifest_matches(&read.manifest, &read.bytes, source_bytes) {
+        return Ok(None);
+    }
+    let runtime_artifact = match runtime_artifact_from_binary_bytes(&read.bytes) {
+        Ok(artifact) => artifact,
+        Err(_) => return Ok(None),
+    };
+    if !runtime_cache_counts_match(&read.manifest, &runtime_artifact) {
+        return Ok(None);
+    }
+    Ok(Some(runtime_artifact))
+}
+
+fn read_runtime_cache_files(
+    runtime_path: &Path,
+    manifest_path: &Path,
+) -> Result<Option<RuntimeCacheRead>, KirError> {
     let runtime_bytes = match std::fs::read(runtime_path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -620,28 +645,33 @@ fn load_runtime_artifact_cache(
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.runtime_format_version != RUNTIME_CACHE_FORMAT_VERSION
-        || manifest.kir_schema_version != KIR_SCHEMA_VERSION
-        || manifest.source_digest != digest_labeled_chunks([("source".as_bytes(), source_bytes)])
-        || manifest.runtime_digest
-            != digest_labeled_chunks([("runtime".as_bytes(), runtime_bytes.as_slice())])
-    {
-        return Ok(None);
-    }
-    let runtime_artifact = match runtime_artifact_from_binary_bytes(&runtime_bytes) {
-        Ok(artifact) => artifact,
-        Err(_) => return Ok(None),
-    };
-    if runtime_artifact.graph.elements.len() != manifest.element_count
-        || runtime_artifact.graph.edges.len() != manifest.edge_count
-        || runtime_artifact.derived.subtypes.len() != manifest.subtype_count
-        || runtime_artifact.derived.ownership.len() != manifest.ownership_count
-        || runtime_artifact.derived.inherited_features.len() != manifest.inherited_feature_count
-        || runtime_artifact.derived.requirements.len() != manifest.requirement_count
-    {
-        return Ok(None);
-    }
-    Ok(Some(runtime_artifact))
+    Ok(Some(RuntimeCacheRead {
+        bytes: runtime_bytes,
+        manifest,
+    }))
+}
+
+fn runtime_cache_manifest_matches(
+    manifest: &RuntimeCacheManifest,
+    runtime_bytes: &[u8],
+    source_bytes: &[u8],
+) -> bool {
+    manifest.runtime_format_version == RUNTIME_CACHE_FORMAT_VERSION
+        && manifest.kir_schema_version == KIR_SCHEMA_VERSION
+        && manifest.source_digest == digest_labeled_chunks([("source".as_bytes(), source_bytes)])
+        && manifest.runtime_digest == digest_labeled_chunks([("runtime".as_bytes(), runtime_bytes)])
+}
+
+fn runtime_cache_counts_match(
+    manifest: &RuntimeCacheManifest,
+    runtime_artifact: &RuntimeArtifact,
+) -> bool {
+    runtime_artifact.graph.elements.len() == manifest.element_count
+        && runtime_artifact.graph.edges.len() == manifest.edge_count
+        && runtime_artifact.derived.subtypes.len() == manifest.subtype_count
+        && runtime_artifact.derived.ownership.len() == manifest.ownership_count
+        && runtime_artifact.derived.inherited_features.len() == manifest.inherited_feature_count
+        && runtime_artifact.derived.requirements.len() == manifest.requirement_count
 }
 
 pub(crate) fn runtime_artifact_to_binary_bytes(

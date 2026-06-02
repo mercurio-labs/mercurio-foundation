@@ -30,6 +30,8 @@ cargo run --release -p mercurio-foundation --bin cache_performance -- --sizes 10
 
 This reports cold document-to-runtime timing plus warm-load paths for text KIR, pretty runtime JSON, and `runtime.mruntime`.
 
+The `runtime.mruntime` timing includes a phase breakdown for file read, binary payload decode, and `Runtime::from_artifact` reconstruction. This is intended to keep warm-load optimization focused on the dominant cost.
+
 By default, runtime construction and semantic diff are skipped above 100,000 elements. Those guards keep the full ladder from exhausting memory while still measuring creation, validation, JSON persistence, JSON load, graph construction, and mutation for 1M elements. Override with `--max-runtime-size` and `--max-diff-size`.
 
 The JSON report includes:

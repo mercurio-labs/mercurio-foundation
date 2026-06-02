@@ -185,6 +185,14 @@ pub struct CachePerformanceTimings {
     pub text_kir_to_runtime: TimingMetric,
     pub runtime_artifact_to_runtime: TimingMetric,
     pub runtime_cache_to_runtime: TimingMetric,
+    pub runtime_cache_phases: RuntimeCacheLoadTimings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeCacheLoadTimings {
+    pub read_file: TimingMetric,
+    pub decode_payload: TimingMetric,
+    pub runtime_from_artifact: TimingMetric,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -392,10 +400,18 @@ fn run_cache_performance_scenario(
     drop(runtime);
 
     let runtime_cache_timer = Instant::now();
-    let runtime_artifact = read_perf_runtime_cache(&runtime_cache_path)?;
+    let (runtime_artifact, runtime_cache_phases) =
+        read_perf_runtime_cache_with_timings(&runtime_cache_path)?;
+    let runtime_from_cache_artifact_timer = Instant::now();
     let runtime = Runtime::from_artifact(runtime_artifact)?;
+    let runtime_from_artifact =
+        TimingMetric::from_duration(runtime_from_cache_artifact_timer.elapsed());
     let runtime_cache_to_runtime = TimingMetric::from_duration(runtime_cache_timer.elapsed());
     drop(runtime);
+    let runtime_cache_phases = RuntimeCacheLoadTimings {
+        runtime_from_artifact,
+        ..runtime_cache_phases
+    };
 
     let text_kir_bytes = std::fs::metadata(&text_kir_path)?.len();
     let runtime_artifact_bytes = std::fs::metadata(&runtime_artifact_path)?.len();
@@ -415,6 +431,7 @@ fn run_cache_performance_scenario(
             text_kir_to_runtime,
             runtime_artifact_to_runtime,
             runtime_cache_to_runtime,
+            runtime_cache_phases,
         },
     })
 }
@@ -620,8 +637,25 @@ fn write_perf_runtime_cache(
     Ok(())
 }
 
-fn read_perf_runtime_cache(path: &Path) -> Result<RuntimeArtifact, Box<dyn Error>> {
-    Ok(runtime_artifact_from_binary_bytes(&std::fs::read(path)?)?)
+fn read_perf_runtime_cache_with_timings(
+    path: &Path,
+) -> Result<(RuntimeArtifact, RuntimeCacheLoadTimings), Box<dyn Error>> {
+    let read_timer = Instant::now();
+    let bytes = std::fs::read(path)?;
+    let read_file = TimingMetric::from_duration(read_timer.elapsed());
+
+    let decode_timer = Instant::now();
+    let artifact = runtime_artifact_from_binary_bytes(&bytes)?;
+    let decode_payload = TimingMetric::from_duration(decode_timer.elapsed());
+
+    Ok((
+        artifact,
+        RuntimeCacheLoadTimings {
+            read_file,
+            decode_payload,
+            runtime_from_artifact: TimingMetric::zero(),
+        },
+    ))
 }
 
 fn run_emf_comparison(command: Option<&str>, output_dir: &Path) -> EmfComparisonReport {
