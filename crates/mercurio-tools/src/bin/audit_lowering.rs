@@ -531,6 +531,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let hardcoded_lowering_policies = hardcoded_lowering_policy_burndown();
+    let hardcoded_lowering_policy_counts =
+        hardcoded_lowering_policy_counts(&hardcoded_lowering_policies);
+    println!();
+    println!("Hard-coded lowering policy burndown");
+    println!(
+        "  remaining policies: {}",
+        hardcoded_lowering_policies.len()
+    );
+    for (category, count) in &hardcoded_lowering_policy_counts {
+        println!("  {category}: {count}");
+    }
+    if args.verbose_rules {
+        println!();
+        println!("Hard-coded lowering policies:");
+        for policy in &hardcoded_lowering_policies {
+            println!(
+                "  {} [{}] {} -> {}",
+                policy.construct, policy.category, policy.location, policy.extraction
+            );
+        }
+    }
+
     if let Some(evidence_path) = args.evidence.as_deref() {
         let evidence = read_pilot_evidence(evidence_path)?;
         let grammar_returns = grammar_returns(&evidence);
@@ -1877,6 +1900,71 @@ fn collect_nested_owner_override_gaps(
 fn nested_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .try_fold(value, |current, segment| current.get(segment))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HardcodedLoweringPolicy {
+    construct: &'static str,
+    category: &'static str,
+    location: &'static str,
+    extraction: &'static str,
+}
+
+fn hardcoded_lowering_policy_burndown() -> Vec<HardcodedLoweringPolicy> {
+    vec![
+        HardcodedLoweringPolicy {
+            construct: "ReferenceUsage",
+            category: "reference semantics",
+            location: "lowering/emit.rs::reference_usage_semantics",
+            extraction: "already partly profile-backed; remaining type-family branching should stay named algorithmic policy",
+        },
+        HardcodedLoweringPolicy {
+            construct: "ReferenceUsage",
+            category: "specialization refs",
+            location: "lowering/emit.rs::usage_specialization_refs",
+            extraction: "candidate usage_specialization_policies entry for reference refs merge ordering",
+        },
+        HardcodedLoweringPolicy {
+            construct: "ReferenceUsage",
+            category: "subset refs",
+            location: "lowering/emit.rs::usage_subsetted_feature_refs",
+            extraction: "candidate usage_subset_defaults policy for semantic-specialization fallback",
+        },
+        HardcodedLoweringPolicy {
+            construct: "PartUsage",
+            category: "specialization refs",
+            location: "lowering/emit.rs::usage_specialization_refs",
+            extraction: "candidate named policy for explicit-type specialized feature handling",
+        },
+        HardcodedLoweringPolicy {
+            construct: "PartUsage",
+            category: "subset refs",
+            location: "lowering/emit.rs::usage_subsetted_feature_refs",
+            extraction: "candidate usage_subset_defaults flag for suppressing end-part defaults",
+        },
+        HardcodedLoweringPolicy {
+            construct: "ConnectionUsage/ReferenceUsage",
+            category: "resolver",
+            location: "lowering/resolve.rs::resolve_connection_end_specialization",
+            extraction: "candidate usage_resolution_policies entry, but algorithm remains resolver code",
+        },
+        HardcodedLoweringPolicy {
+            construct: "PortDefinition/ConjugatedPortDefinition",
+            category: "derived companion element",
+            location: "lowering/emit.rs::transpile_module_with_source",
+            extraction: "candidate definition companion policy for generated conjugated ports",
+        },
+    ]
+}
+
+fn hardcoded_lowering_policy_counts(
+    policies: &[HardcodedLoweringPolicy],
+) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for policy in policies {
+        *counts.entry(policy.category).or_default() += 1;
+    }
+    counts
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
