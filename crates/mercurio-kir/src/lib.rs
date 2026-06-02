@@ -5,10 +5,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-mod binary;
-
-pub use binary::{BINARY_KIR_FORMAT_VERSION, BINARY_KIR_GENERATOR, BinaryKirCacheManifest};
-
 pub const KIR_SCHEMA_VERSION: &str = "0.2";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
 
@@ -33,7 +29,6 @@ pub struct KirElement {
 pub enum KirError {
     Io(std::io::Error),
     Json(serde_json::Error),
-    Binary(String),
     DuplicateId(String),
     Validation(Vec<KirValidationDiagnostic>),
     Frontend(String),
@@ -256,7 +251,6 @@ impl fmt::Display for KirError {
         match self {
             Self::Io(err) => write!(f, "failed to read KIR document: {err}"),
             Self::Json(err) => write!(f, "failed to parse KIR document: {err}"),
-            Self::Binary(err) => write!(f, "failed to read binary KIR document: {err}"),
             Self::DuplicateId(id) => write!(f, "duplicate KIR element id: {id}"),
             Self::Validation(diagnostics) => {
                 write!(f, "invalid KIR document")?;
