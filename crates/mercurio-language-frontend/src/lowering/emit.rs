@@ -20,7 +20,7 @@ use crate::lowering::ir::{
     ResolvedPathSegment, ResolvedUsage,
 };
 use crate::lowering::rules::{LoweringRule, LoweringRuleSeed};
-use crate::lowering::semantic_actions::apply_usage_actions;
+use crate::lowering::semantic_actions::{apply_usage_actions, usage_action_applies};
 use crate::lowering::semantic_defaults::{
     ReferenceModifierSemanticsSeed, SemanticDefaultsSeed, UsageActionSeed, UsagePropertyDefaultSeed,
 };
@@ -936,11 +936,6 @@ fn reference_direction_from_modifiers(
                 .any(|modifier| modifier == *direction)
         })
         .cloned()
-}
-
-fn usage_action_applies(action: &UsageActionSeed, usage: &ResolvedUsage) -> bool {
-    (!action.requires_metadata_properties || !usage.metadata_properties.is_empty())
-        && (!action.requires_previous_state || usage.construct == "AcceptActionUsage")
 }
 
 fn all_data_value_like_refs(type_refs: &[String]) -> bool {
