@@ -9,7 +9,8 @@ use crate::graph::{Edge, Element, Graph};
 use crate::ir::KirDocument;
 use crate::metamodel::{
     AttributeRow, AttributeValueSource, ElementSummary, MetamodelAttributeRegistry,
-    collect_specialization_ancestors, effective_properties_with_derived, query_element_attributes,
+    collect_specialization_ancestors, effective_element_properties_with_derived,
+    query_element_attributes,
 };
 use crate::runtime::{Runtime, RuntimeError};
 
@@ -257,7 +258,7 @@ pub fn graph_view(graph: &Graph, scope: GraphScope) -> GraphDto {
         .map(|element| GraphNodeDto {
             id: element.element_id.clone(),
             label: label_for_id(&element.element_id),
-            kind: element.kind.clone(),
+            kind: element.kind.to_string(),
             layer: element.layer,
             property_count: element.properties.len(),
         })
@@ -286,7 +287,7 @@ pub fn model_metadata_view(graph: &Graph, stdlib_document: &KirDocument) -> Mode
     let relations = graph
         .edges()
         .iter()
-        .map(|edge| edge.relation.clone())
+        .map(|edge| edge.relation.to_string())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -372,7 +373,7 @@ pub fn search_view(graph: &Graph, query: &str) -> Vec<SearchResultDto> {
         .map(|element| SearchResultDto {
             id: element.element_id.clone(),
             label: label_for_id(&element.element_id),
-            kind: element.kind.clone(),
+            kind: element.kind.to_string(),
             layer: element.layer,
         })
         .filter(|entry| {
@@ -573,7 +574,7 @@ pub fn l2_explorer_view(
                 edge_keys.insert((
                     source_id.to_string(),
                     target_id.to_string(),
-                    edge.relation.clone(),
+                    edge.relation.to_string(),
                 ));
             }
         }
@@ -710,13 +711,16 @@ fn build_element_details(
         .filter(|ancestor| !ancestor.properties.is_empty())
         .map(|ancestor| InheritedPropertiesDto {
             element: element_summary_dto(ancestor),
-            properties: ancestor.properties.clone(),
+            properties: ancestor.properties.to_btree_map(),
         })
         .collect::<Vec<_>>();
 
     let derived_properties = derived_properties(graph, element);
-    let effective_properties =
-        effective_properties_with_derived(&ancestors, &element.properties, &derived_properties);
+    let effective_properties = effective_element_properties_with_derived(
+        &ancestors,
+        &element.properties,
+        &derived_properties,
+    );
     let attribute_query = query_element_attributes(graph, metamodel_registry, element.id, None)
         .unwrap_or_else(|| crate::metamodel::ElementAttributeQuery {
             metatype: None,
@@ -727,7 +731,7 @@ fn build_element_details(
     ElementDetailsDto {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
         metatype: attribute_query.metatype.map(element_summary_from_query),
         metatype_specialization_chain: attribute_query
@@ -735,7 +739,7 @@ fn build_element_details(
             .into_iter()
             .map(element_summary_from_query)
             .collect(),
-        direct_properties: element.properties.clone(),
+        direct_properties: element.properties.to_btree_map(),
         inherited_properties,
         effective_properties,
         property_table: ElementPropertyTableDto {
@@ -792,7 +796,7 @@ fn element_summary_dto(element: &Element) -> ElementSummaryDto {
     ElementSummaryDto {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
     }
 }
@@ -805,7 +809,7 @@ fn edge_view(graph: &Graph, edge: &Edge) -> Option<GraphEdgeDto> {
         id: format!("{source}:{}:{target}", edge.relation),
         source,
         target,
-        relation: edge.relation.clone(),
+        relation: edge.relation.to_string(),
     })
 }
 
@@ -859,7 +863,7 @@ fn metatype_explorer_node(
     MetatypeExplorerNodeDto {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
         attributes,
         specializes_count: graph.outgoing(element.id, "specializes").count(),
@@ -875,7 +879,7 @@ fn l2_explorer_node(graph: &Graph, element: &Element, seed_id: u32) -> L2Explore
     L2ExplorerNodeDto {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
         attributes,
         specializes_count: graph

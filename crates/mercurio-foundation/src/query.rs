@@ -42,7 +42,7 @@ pub fn requirement_traces(
         .filter(|edge| is_requirement_trace_relation(&edge.relation))
         .filter_map(|edge| {
             Some(RequirementTrace {
-                relationship: edge.relation.clone(),
+                relationship: edge.relation.to_string(),
                 source: graph.element_id(edge.source)?.to_string(),
                 target: graph.element_id(edge.target)?.to_string(),
             })

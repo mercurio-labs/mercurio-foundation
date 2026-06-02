@@ -2,6 +2,8 @@
 
 Mercurio Foundation is the model substrate underneath language-specific tooling. Its job is to provide a stable representation and runtime for models without deciding which surface language, metamodel version, editor, or product owns those models.
 
+Foundation is source-language neutral, not metamodel-agnostic. Its semantic vocabulary is aligned with the OMG Kernel Modeling Language (KerML): packages, types, features, definitions, usages, specialization, typing, ownership, multiplicity, and derived metamodel views are first-class modeling concepts in foundation. The current normative reference point is the [OMG KerML 1.0 specification](https://www.omg.org/spec/KerML/1.0), formally published in September 2025.
+
 ## Design Intent
 
 Foundation treats a model as structured semantic data:
@@ -13,6 +15,19 @@ Foundation treats a model as structured semantic data:
 - Source languages are adapters that compile text or other authoring forms into KIR.
 
 This keeps the substrate reusable. A language repository can provide parsing and metamodel-specific compilation. A product can provide persistence, collaboration, UI, and authorization. Foundation remains the common semantic core.
+
+## KerML Alignment
+
+Foundation should be honest about the shape of that core:
+
+- KIR uses metamodel-style `kind` values such as package, type, feature, definition, and usage.
+- Graph and runtime services understand common modeling relationships such as ownership, membership, specialization, and typing.
+- Metamodel views expose classes, features, attributes, inherited values, and specialization chains.
+- Authoring and mutation APIs use package, definition, usage, and type concepts.
+
+That alignment is deliberate. KerML is the modeling kernel underneath SysML v2 and provides a useful conceptual baseline for a reflective modeling runtime.
+
+The boundary is version ownership. Foundation should not bundle a specific KerML library release, parse KerML textual notation, or hardcode a complete versioned KerML metamodel. Version-specific KerML/SysML libraries, parsers, and lowering rules belong in language repositories and packages that compile into KIR.
 
 ## Modeling Framework Analogy
 

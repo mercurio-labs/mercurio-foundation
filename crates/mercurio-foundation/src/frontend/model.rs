@@ -25,7 +25,7 @@ pub fn compile_model_text(
     crate::source_set::compile_source_document_with_registry(
         &crate::source_set::SourceDocument::new(source_name, input),
         library_context,
-        &fake_model_registry(),
+        &crate::test_support::toy_language::registry(),
     )
     .map_err(|err| Diagnostic::new(err.to_string(), None))
 }
@@ -66,48 +66,4 @@ pub fn compile_model_text_with_context_report(
             document: None,
         },
     }
-}
-
-#[cfg(test)]
-fn fake_model_registry() -> mercurio_language_contracts::LanguageRegistry {
-    struct FakeModelLanguage;
-
-    impl mercurio_language_contracts::LanguageService for FakeModelLanguage {
-        fn language_id(&self) -> &str {
-            "fake-model"
-        }
-
-        fn extensions(&self) -> &[&str] {
-            &["model"]
-        }
-
-        fn compile(
-            &self,
-            source: &str,
-            context: mercurio_language_contracts::CompileContext<'_>,
-        ) -> SemanticCompileReport<KirDocument> {
-            match crate::source_set::compile_source_documents(
-                vec![crate::source_set::SourceDocument::new(
-                    context.source_name,
-                    source,
-                )],
-                context.library_context,
-            ) {
-                Ok(document) => SemanticCompileReport {
-                    status: SemanticCompileStatus::Ok,
-                    diagnostics: Vec::new(),
-                    document: Some(document),
-                },
-                Err(err) => SemanticCompileReport {
-                    status: SemanticCompileStatus::Failed,
-                    diagnostics: vec![Diagnostic::new(err.to_string(), None)],
-                    document: None,
-                },
-            }
-        }
-    }
-
-    let mut registry = mercurio_language_contracts::LanguageRegistry::new();
-    registry.register(FakeModelLanguage);
-    registry
 }

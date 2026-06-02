@@ -2,6 +2,8 @@
 
 Foundation does not parse source text by itself. A source language connects by implementing `LanguageService` from `mercurio-language-contracts`.
 
+Foundation's target KIR vocabulary is KerML-aligned. Language services may compile KerML, SysML, or another compatible modeling syntax, but they should own the source parser, version-specific metamodel libraries, and lowering rules.
+
 The contract is intentionally small:
 
 ```rust
@@ -27,19 +29,23 @@ impl LanguageService for ToyLanguage {
         source: &str,
         context: CompileContext<'_>,
     ) -> SemanticCompileReport<KirDocument> {
-        let _ = (source, context);
-        SemanticCompileReport {
-            status: SemanticCompileStatus::Ok,
-            diagnostics: Vec::<Diagnostic>::new(),
-            document: KirDocument {
-                metadata: Default::default(),
-                elements: Vec::new(),
-            }
-            .with_schema_version(),
+        match compile_toy_source(source, context.source_name) {
+            Ok(document) => SemanticCompileReport {
+                status: SemanticCompileStatus::Ok,
+                diagnostics: Vec::<Diagnostic>::new(),
+                document: Some(document),
+            },
+            Err(message) => SemanticCompileReport {
+                status: SemanticCompileStatus::Failed,
+                diagnostics: vec![Diagnostic::new(message, None)],
+                document: None,
+            },
         }
     }
 }
 ```
+
+The compiler behind the service can be as simple or as rich as the language requires. A complete toy implementation is shown in [Sample Language](sample-language.md).
 
 A host registers language services and then asks foundation to compile source through that registry:
 

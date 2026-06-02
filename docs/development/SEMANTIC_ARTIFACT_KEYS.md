@@ -23,7 +23,7 @@ A key should identify the source authority and exact source snapshot:
 - `commit_sha`, `tag`, `branch + commit`, or local workspace revision fingerprint
 - `proposal_id` and `overlay_digest` when compiling a proposal or draft overlay
 - `source_tree_digest` when there is no immutable Git commit
-- `project_descriptor_digest`
+- `workspace_config_digest`
 
 For externally authoritative Git projects, prefer immutable commits over branch names. Branch names are useful request inputs, but artifact keys should resolve them to commits.
 
@@ -57,7 +57,7 @@ Different artifact families can share the same base key and append family-specif
 Minimum inputs:
 
 - source snapshot
-- project descriptor
+- workspace config
 - compiler digest
 - KIR schema version
 - standard library digest

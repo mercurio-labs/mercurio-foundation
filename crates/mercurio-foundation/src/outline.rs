@@ -92,7 +92,7 @@ pub fn build_editor_outline_index_for_graph(graph: &Graph) -> HashMap<EditorOutl
     let mut index = HashMap::new();
     for element in graph.elements() {
         let Some((source_file, start_line, start_column, end_line, end_column)) =
-            editor_outline_key_parts_for_properties(&element.properties)
+            editor_outline_key_parts_for_properties(&element.properties.to_btree_map())
         else {
             continue;
         };

@@ -760,7 +760,7 @@ fn snapshot_element(
             .collect(),
     );
     let declared_attributes =
-        snapshot_attributes_from_rows(attribute_query.rows, &element.properties);
+        snapshot_attributes_from_rows(attribute_query.rows, &element.properties.to_btree_map());
     if is_pilot_connection_end_typing_artifact(
         graph,
         element,
@@ -801,7 +801,7 @@ fn snapshot_element(
         match_key: build_match_key(source_file, source_span.as_ref(), match_name),
         id: element.element_id.clone(),
         label,
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
         declared_name,
         source_span,
@@ -884,7 +884,7 @@ fn metatype_override_for(
                 .collect(),
         }),
         SnapshotMode::Pilot => Some(MetatypeQueryOverride {
-            metatype_key: Some(element.kind.clone()),
+            metatype_key: Some(element.kind.to_string()),
             specialization_chain: element
                 .properties
                 .get("metatype_specialization_chain")

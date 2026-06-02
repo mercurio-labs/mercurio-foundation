@@ -1,6 +1,6 @@
 # Examples
 
-These examples use language-neutral KIR directly.
+These examples use language-neutral KIR directly. For an end-to-end source-language example, see [Sample Language](sample-language.md).
 
 ## Build A KIR Document
 
@@ -91,3 +91,46 @@ let compiled = load_model_stack_with_registry(
 ```
 
 The important point is that foundation sees only the language service contract and the resulting KIR.
+
+## Create A Sample Language
+
+```rust
+use mercurio_language_contracts::{
+    CompileContext, Diagnostic, LanguageService, SemanticCompileReport,
+    SemanticCompileStatus,
+};
+use mercurio_kir::KirDocument;
+
+struct ToyLanguage;
+
+impl LanguageService for ToyLanguage {
+    fn language_id(&self) -> &str {
+        "toy"
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["toy"]
+    }
+
+    fn compile(
+        &self,
+        source: &str,
+        context: CompileContext<'_>,
+    ) -> SemanticCompileReport<KirDocument> {
+        match compile_toy_source(source, context.source_name) {
+            Ok(document) => SemanticCompileReport {
+                status: SemanticCompileStatus::Ok,
+                diagnostics: Vec::new(),
+                document: Some(document),
+            },
+            Err(message) => SemanticCompileReport {
+                status: SemanticCompileStatus::Failed,
+                diagnostics: vec![Diagnostic::new(message, None)],
+                document: None,
+            },
+        }
+    }
+}
+```
+
+`compile_toy_source` is language-owned. It parses toy source, validates language rules, and lowers declarations into KIR. The rest of foundation consumes only `KirDocument`.

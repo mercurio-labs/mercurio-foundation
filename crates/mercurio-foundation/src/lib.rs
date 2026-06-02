@@ -23,8 +23,6 @@ pub mod outline;
 pub mod paths;
 pub mod performance;
 pub mod plugin_registry;
-pub mod project;
-pub mod project_cache;
 pub mod proposal;
 pub mod python_codegen;
 pub mod query;
@@ -35,7 +33,11 @@ pub mod session;
 pub mod simulation;
 pub mod source_set;
 pub mod syntax_compare;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod views;
+pub mod workspace;
+pub mod workspace_cache;
 
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
@@ -155,8 +157,10 @@ pub use paths::{
 };
 pub use performance::{
     CoreScalabilityCreationStrategy, CoreScalabilityMetricConfig, CoreScalabilityReport,
-    CoreScalabilityScenarioReport, CoreScalabilityTimings, SemanticDiffSummary, TimingMetric,
-    run_core_scalability_metric,
+    CoreScalabilityScenarioReport, CoreScalabilityTimings, EmfComparisonReport,
+    KirPerformanceConfig, KirPerformanceMemory, KirPerformanceReport, KirPerformanceScenarioReport,
+    KirPerformanceTimings, MemoryMetric, SemanticDiffSummary, TimingMetric,
+    run_core_scalability_metric, run_kir_performance,
 };
 pub use plugin_registry::{
     InstalledMpack, MpackActivationIndex, MpackAssetRef,
@@ -165,17 +169,6 @@ pub use plugin_registry::{
     installed_plugin_manifest_paths, mpack_activation_index, plugin_manifest_dir,
     plugin_package_digest, plugin_registry_root, publish_plugin_package,
     read_plugin_install_source, read_plugin_manifest as read_registry_plugin_manifest,
-};
-pub use project::{
-    PROJECT_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectDescriptorError, ProjectLibraryConfig,
-    ProjectLibraryRole, ProjectPluginConfig, ResolvedProjectContext, ResolvedProjectLibrary,
-    discover_project_descriptor_path, resolve_project_context,
-    resolve_project_context_for_language,
-};
-pub use project_cache::{
-    PersistentCacheStatus, PersistentCompileResult, PersistentProjectCache,
-    ProjectCompileArtifactKey, ProjectCompileCacheManifest, ProjectCompileCacheOutputs,
-    ProjectSourceFileFingerprint, project_compile_artifact_key, source_file_fingerprints,
 };
 pub use proposal::{
     Proposal, ProposalStatus, PullRequestBinding, PullRequestState, SemanticImpact,
@@ -187,7 +180,10 @@ pub use query::{
     RequirementTrace, SortDirection, TermPattern, TriplePattern, elements_with_metadata,
     parse_query, requirement_traces,
 };
-pub use runtime::{ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError};
+pub use runtime::{
+    ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+    RuntimeProfileTimings,
+};
 pub use semantic_compare::{
     SemanticCompareError, SemanticCompareOptions, SemanticComparisonReport,
     SemanticElementMismatch, SemanticSnapshot, SemanticSnapshotAttribute, SemanticSnapshotElement,
@@ -220,4 +216,15 @@ pub use views::{
     document_model_metadata_view, element_details, graph_view, l2_explorer_view, library_tree_view,
     library_tree_view_from_document, metatype_explorer_view, model_metadata_view,
     requirements_table_view, search_view,
+};
+pub use workspace::{
+    ResolvedWorkspaceContext, ResolvedWorkspaceLibrary, WorkspaceConfig, WorkspaceConfigError,
+    WorkspaceContextOptions, WorkspaceLibraryConfig, WorkspaceLibraryRole, WorkspacePluginConfig,
+    discover_workspace_config_path, resolve_workspace_context,
+    resolve_workspace_context_from_config_path, resolve_workspace_context_with_options,
+};
+pub use workspace_cache::{
+    PersistentCacheStatus, PersistentCompileResult, PersistentWorkspaceCache,
+    WorkspaceCompileArtifactKey, WorkspaceCompileCacheManifest, WorkspaceCompileCacheOutputs,
+    WorkspaceSourceFileFingerprint, source_file_fingerprints, workspace_compile_artifact_key,
 };

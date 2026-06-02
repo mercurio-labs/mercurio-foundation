@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
@@ -30,6 +31,29 @@ pub struct Runtime {
 pub struct RuntimeArtifact {
     pub graph: GraphArtifact,
     pub derived: DerivedIndexes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeProfile {
+    pub element_count: usize,
+    pub timings: RuntimeProfileTimings,
+    pub graph_element_count: usize,
+    pub graph_edge_count: usize,
+    pub subtype_count: usize,
+    pub ownership_count: usize,
+    pub inherited_feature_count: usize,
+    pub requirement_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeProfileTimings {
+    pub workspace_revision_millis: f64,
+    pub derived_manifest_millis: f64,
+    pub rulepack_load_millis: f64,
+    pub graph_build_millis: f64,
+    pub derived_materialization_millis: f64,
+    pub cache_setup_millis: f64,
+    pub total_millis: f64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -156,6 +180,65 @@ impl Runtime {
         })
     }
 
+    pub fn profile_from_document(document: KirDocument) -> Result<RuntimeProfile, RuntimeError> {
+        let element_count = document.elements.len();
+        let total_timer = Instant::now();
+
+        let revision_timer = Instant::now();
+        let revision = workspace_revision_for_kir_document(&document)
+            .map(|revision| revision.fingerprint)
+            .unwrap_or_else(|_| "document".to_string());
+        let workspace_revision_millis = millis(revision_timer.elapsed());
+
+        let manifest_timer = Instant::now();
+        let derived_feature_registry = DerivedFeatureRegistry::with_manifest_and_builtins(
+            manifest_from_metadata(&document.metadata)?,
+        )?;
+        let derived_manifest_millis = millis(manifest_timer.elapsed());
+
+        let rulepack_timer = Instant::now();
+        let rulepacks = load_default_rulepacks()?;
+        let rulepack_load_millis = millis(rulepack_timer.elapsed());
+
+        let graph_timer = Instant::now();
+        let graph = Graph::from_document(document)?;
+        let graph_build_millis = millis(graph_timer.elapsed());
+        let graph_element_count = graph.elements().len();
+        let graph_edge_count = graph.edges().len();
+
+        let materialize_timer = Instant::now();
+        let derived = materialize_core_indexes(&graph, &rulepacks)?;
+        let derived_materialization_millis = millis(materialize_timer.elapsed());
+        let subtype_count = derived.subtypes.len();
+        let ownership_count = derived.ownership.len();
+        let inherited_feature_count = derived.inherited_features.len();
+        let requirement_count = derived.requirements.len();
+
+        let cache_timer = Instant::now();
+        let derived_feature_cache = DerivedFeatureCache::new(revision);
+        let cache_setup_millis = millis(cache_timer.elapsed());
+        drop((derived_feature_registry, derived_feature_cache));
+
+        Ok(RuntimeProfile {
+            element_count,
+            timings: RuntimeProfileTimings {
+                workspace_revision_millis,
+                derived_manifest_millis,
+                rulepack_load_millis,
+                graph_build_millis,
+                derived_materialization_millis,
+                cache_setup_millis,
+                total_millis: millis(total_timer.elapsed()),
+            },
+            graph_element_count,
+            graph_edge_count,
+            subtype_count,
+            ownership_count,
+            inherited_feature_count,
+            requirement_count,
+        })
+    }
+
     pub fn from_artifact(artifact: RuntimeArtifact) -> Result<Self, RuntimeError> {
         Ok(Self {
             graph: Graph::from_artifact(artifact.graph)?,
@@ -222,16 +305,11 @@ impl Runtime {
     }
 
     pub fn get_subtypes(&self, type_id: &str) -> Result<QueryResult<Vec<String>>, RuntimeError> {
-        if self.graph.node_id(type_id).is_none() {
+        let Some(type_node) = self.graph.node_id(type_id) else {
             return Err(RuntimeError::MissingElement(type_id.to_string()));
-        }
+        };
 
-        let subtypes = self
-            .derived
-            .subtypes
-            .iter()
-            .filter_map(|(subtype, supertype)| (supertype == type_id).then(|| subtype.to_string()))
-            .collect::<Vec<_>>();
+        let subtypes = self.transitive_subtypes_of(type_node);
         let explanation = subtypes
             .iter()
             .map(|subtype| {
@@ -253,16 +331,27 @@ impl Runtime {
     }
 
     pub fn get_features(&self, type_id: &str) -> Result<QueryResult<Vec<String>>, RuntimeError> {
-        if self.graph.node_id(type_id).is_none() {
+        let Some(type_node) = self.graph.node_id(type_id) else {
             return Err(RuntimeError::MissingElement(type_id.to_string()));
-        }
+        };
 
-        let features = self
+        let mut features = self
             .derived
             .inherited_features
             .iter()
             .filter_map(|(owner, feature)| (owner == type_id).then(|| feature.to_string()))
-            .collect::<Vec<_>>();
+            .collect::<BTreeSet<_>>();
+        for supertype in self.transitive_supertypes_of(type_node) {
+            for (_, feature) in self
+                .derived
+                .inherited_features
+                .iter()
+                .filter(|(owner, _)| owner == &supertype)
+            {
+                features.insert(feature.clone());
+            }
+        }
+        let features = features.into_iter().collect::<Vec<_>>();
         let explanation = features
             .iter()
             .map(|feature| {
@@ -281,6 +370,54 @@ impl Runtime {
             value: features,
             explanation,
         })
+    }
+
+    fn transitive_subtypes_of(&self, type_node: crate::graph::NodeId) -> Vec<String> {
+        let mut result = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        let mut stack = self
+            .graph
+            .incoming(type_node, "specializes")
+            .map(|edge| edge.source)
+            .collect::<Vec<_>>();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(element_id) = self.graph.element_id(current) {
+                result.insert(element_id.to_string());
+            }
+            for edge in self.graph.incoming(current, "specializes") {
+                stack.push(edge.source);
+            }
+        }
+
+        result.into_iter().collect()
+    }
+
+    fn transitive_supertypes_of(&self, type_node: crate::graph::NodeId) -> Vec<String> {
+        let mut result = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        let mut stack = self
+            .graph
+            .outgoing(type_node, "specializes")
+            .map(|edge| edge.target)
+            .collect::<Vec<_>>();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(element_id) = self.graph.element_id(current) {
+                result.insert(element_id.to_string());
+            }
+            for edge in self.graph.outgoing(current, "specializes") {
+                stack.push(edge.target);
+            }
+        }
+
+        result.into_iter().collect()
     }
 
     pub fn evaluate(
@@ -548,14 +685,15 @@ impl Runtime {
     }
 }
 
-fn element_name_matches(
-    properties: &std::collections::BTreeMap<String, Value>,
-    expected: &str,
-) -> bool {
+fn millis(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000.0
+}
+
+fn element_name_matches(properties: &crate::graph::ElementProperties, expected: &str) -> bool {
     feature_name(properties) == Some(expected)
 }
 
-fn feature_name(properties: &std::collections::BTreeMap<String, Value>) -> Option<&str> {
+fn feature_name(properties: &crate::graph::ElementProperties) -> Option<&str> {
     properties
         .get("declared_name")
         .or_else(|| properties.get("name"))

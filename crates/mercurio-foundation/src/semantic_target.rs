@@ -88,7 +88,7 @@ impl<'a> SemanticTargetResolver<'a> {
             .filter(|element| {
                 element_metatype(self.graph, element.id)
                     .map(|metatype| matching_metatypes.contains(&metatype.element_id))
-                    .unwrap_or_else(|| matching_metatypes.contains(&element.kind))
+                    .unwrap_or_else(|| matching_metatypes.contains(element.kind.as_ref()))
             })
             .map(|element| element.element_id.clone())
             .collect::<Vec<_>>();

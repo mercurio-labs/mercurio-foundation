@@ -1,8 +1,8 @@
 # Mercurio Foundation
 
-Mercurio Foundation is the language-neutral modeling substrate for Mercurio.
+Mercurio Foundation is the KerML-aligned, source-language-neutral modeling substrate for Mercurio.
 
-It stores models as KIR, projects them into graphs, runs deterministic semantic services, and exposes contracts that source-language repositories can implement. It does not own concrete source syntax, source-language metamodel bundles, command-line host behavior, UI adapters, or product workflows.
+It stores models as KIR, projects them into graphs, runs deterministic semantic services, and exposes contracts that source-language repositories can implement. It does not own concrete source syntax, versioned KerML/SysML metamodel bundles, command-line host behavior, UI adapters, or product workflows.
 
 ## Philosophy
 
@@ -15,6 +15,8 @@ Foundation is meant to work like a small reflective modeling core:
 - source languages plug in through explicit services,
 - hosts decide how models are edited, stored, packaged, and presented.
 
+The current foundation vocabulary is intentionally aligned with the OMG Kernel Modeling Language (KerML) concepts of packages, types, features, definitions, usages, specialization, typing, and ownership. Foundation should not import a concrete KerML parser or bundled version-specific KerML library; those belong in language repositories and packages.
+
 See [Foundation Philosophy](docs/philosophy.md) for the longer version, including a short comparison to classic modeling-framework responsibilities.
 
 ## Core Terms
@@ -24,14 +26,15 @@ See [Foundation Philosophy](docs/philosophy.md) for the longer version, includin
 - **Graph**: a relationship view derived from KIR reference properties.
 - **Runtime**: deterministic evaluation over a graph, derived indexes, expression IR, and rulepacks.
 - **Language service**: a registered compiler boundary that turns source text into KIR.
+- **KerML alignment**: the foundation semantic vocabulary follows the shape of the OMG Kernel Modeling Language while leaving version-specific metamodel packages outside foundation.
 
-See [KIR](docs/kir.md) and [Language Services](docs/language-services.md).
+See [KIR](docs/kir.md), [Language Services](docs/language-services.md), and the [Sample Language](docs/sample-language.md).
 
 ## Crates
 
 - `mercurio-kir`: KIR schema, validation, merge, and IO.
 - `mercurio-language-contracts`: diagnostics, reports, expression IR, and language-service contracts.
-- `mercurio-foundation`: graph, runtime, query, package, project, session, mutation, and view APIs built on KIR.
+- `mercurio-foundation`: graph, runtime, query, package, workspace, session, mutation, and view APIs built on KIR.
 
 See [Crates](docs/crates.md).
 
@@ -64,6 +67,8 @@ let graph = Graph::from_document(document)?;
 
 More snippets are in [Examples](docs/examples.md).
 
+Large-model timing and memory checks are documented in [Performance](docs/performance.md).
+
 ## Build
 
 ```powershell
@@ -76,4 +81,4 @@ cargo build
 cargo test --no-run
 ```
 
-The repository is currently being split away from language-specific fixtures. During that cleanup, `cargo check` and test compilation are expected to be the reliable boundary checks; full test replacement is tracked separately.
+Foundation tests use language-neutral KIR fixtures and a small test-only toy language service for registry, cache, graph, and runtime coverage.

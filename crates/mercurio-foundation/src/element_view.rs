@@ -5,7 +5,7 @@ use crate::graph::{Element, Graph, NodeId};
 use crate::metadata::{ElementMetadataView, KirMetadataAnnotation, metadata_annotations_named};
 use crate::metamodel::{
     ElementAttributeQuery, ElementSummary, MetamodelAttributeRegistry,
-    collect_specialization_ancestors, effective_properties_with_derived, element_metatype,
+    collect_specialization_ancestors, effective_element_properties_with_derived, element_metatype,
     query_element_attributes,
 };
 
@@ -73,7 +73,7 @@ impl<'a> ElementView<'a> {
         let ancestors = collect_specialization_ancestors(self.graph, self.node_id);
         let derived = derived_properties(self.graph, element);
         let effective =
-            effective_properties_with_derived(&ancestors, &element.properties, &derived);
+            effective_element_properties_with_derived(&ancestors, &element.properties, &derived);
         effective.get(name).cloned()
     }
 
@@ -86,7 +86,7 @@ impl<'a> ElementView<'a> {
     }
 
     pub fn metadata_by_type(&self, type_name: &str) -> Vec<KirMetadataAnnotation> {
-        metadata_annotations_named(&self.element().properties, type_name)
+        metadata_annotations_named(&self.element().properties.to_btree_map(), type_name)
     }
 
     pub fn metatype(&self) -> Option<ElementSummary> {
@@ -101,7 +101,7 @@ impl<'a> ElementView<'a> {
                 .last()
                 .unwrap_or(&element.element_id)
                 .to_string(),
-            kind: element.kind.clone(),
+            kind: element.kind.to_string(),
             layer: element.layer,
         })
     }

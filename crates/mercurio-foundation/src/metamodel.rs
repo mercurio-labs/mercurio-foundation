@@ -109,7 +109,7 @@ impl MetamodelFeatureRegistry {
         }
 
         for element in graph.elements() {
-            if element.kind == "MetamodelFeature" {
+            if element.kind.as_ref() == "MetamodelFeature" {
                 let Some(feature) = explicit_metamodel_feature_view(graph, element) else {
                     continue;
                 };
@@ -239,7 +239,7 @@ impl MetamodelAttributeRegistry {
         }
 
         for element in graph.elements() {
-            if element.kind == "MetamodelFeature" {
+            if element.kind.as_ref() == "MetamodelFeature" {
                 let Some(owner_id) = string_property(element, "owner") else {
                     continue;
                 };
@@ -363,8 +363,11 @@ pub fn query_element_attributes(
     let element = graph.element(node_id)?;
     let ancestors = collect_specialization_ancestors(graph, node_id);
     let derived_properties = derived_properties(graph, element);
-    let effective_properties =
-        effective_properties_with_derived(&ancestors, &element.properties, &derived_properties);
+    let effective_properties = effective_element_properties_with_derived(
+        &ancestors,
+        &element.properties,
+        &derived_properties,
+    );
 
     let (metatype, metatype_specialization_chain) = if let Some(override_query) = metatype_override
     {
@@ -506,11 +509,31 @@ pub fn effective_properties_with_derived(
     let mut effective = BTreeMap::new();
     for ancestor in ancestors.iter().rev() {
         for (key, value) in &ancestor.properties {
-            effective.insert(key.clone(), value.clone());
+            effective.insert(key.to_string(), value.clone());
         }
     }
     for (key, value) in direct_properties {
         effective.insert(key.clone(), value.clone());
+    }
+    for (key, value) in derived_properties {
+        effective.insert(key.clone(), value.value.clone());
+    }
+    effective
+}
+
+pub fn effective_element_properties_with_derived(
+    ancestors: &[&crate::graph::Element],
+    direct_properties: &crate::graph::ElementProperties,
+    derived_properties: &BTreeMap<String, crate::derived::DerivedPropertyValue>,
+) -> BTreeMap<String, Value> {
+    let mut effective = BTreeMap::new();
+    for ancestor in ancestors.iter().rev() {
+        for (key, value) in &ancestor.properties {
+            effective.insert(key.to_string(), value.clone());
+        }
+    }
+    for (key, value) in direct_properties {
+        effective.insert(key.to_string(), value.clone());
     }
     for (key, value) in derived_properties {
         effective.insert(key.clone(), value.value.clone());
@@ -557,7 +580,7 @@ fn metamodel_class_view(element: &crate::graph::Element) -> MetamodelClassView {
     MetamodelClassView {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
         metamodel_language: string_property(element, "metamodel_language")
             .or_else(|| pilot_library_group(element).map(metamodel_language_for_group)),
@@ -768,7 +791,7 @@ fn attribute_query_key(declared_name: &str) -> String {
 }
 
 fn is_metamodel_type(element: &crate::graph::Element) -> bool {
-    matches!(element.kind.as_str(), "Metaclass" | "MetadataDefinition")
+    matches!(element.kind.as_ref(), "Metaclass" | "MetadataDefinition")
 }
 
 fn to_snake_case(value: &str) -> String {
@@ -786,7 +809,7 @@ fn element_summary(element: &crate::graph::Element) -> ElementSummary {
     ElementSummary {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
-        kind: element.kind.clone(),
+        kind: element.kind.to_string(),
         layer: element.layer,
     }
 }
@@ -866,7 +889,7 @@ mod tests {
             Some(Value::String("Vehicle".to_string()))
         );
 
-        let effective = effective_properties_with_derived(
+        let effective = effective_element_properties_with_derived(
             &collect_specialization_ancestors(&graph, node_id),
             &graph.element(node_id).unwrap().properties,
             &crate::derived::derived_properties(&graph, graph.element(node_id).unwrap()),
@@ -903,7 +926,7 @@ mod tests {
         })
         .unwrap();
         let element = graph.element_by_element_id("type.generated.1").unwrap();
-        let effective = effective_properties_with_derived(
+        let effective = effective_element_properties_with_derived(
             &[],
             &element.properties,
             &crate::derived::derived_properties(&graph, element),

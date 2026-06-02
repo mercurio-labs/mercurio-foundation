@@ -296,18 +296,18 @@ impl RulePack {
         let mut facts = BTreeSet::new();
         for element in graph.elements() {
             if is_requirement_kind(&element.kind) && !is_trace_relationship_kind(&element.kind) {
-                facts.insert(Fact::new("requirement_kind", [element.kind.clone()]));
+                facts.insert(Fact::new("requirement_kind", [element.kind.to_string()]));
             }
             if trace_relationship_role(&element.kind) == Some("satisfy") {
                 facts.insert(Fact::new(
                     "relationship_kind",
-                    [element.kind.clone(), "satisfy".to_string()],
+                    [element.kind.to_string(), "satisfy".to_string()],
                 ));
             }
             if trace_relationship_role(&element.kind) == Some("verify") {
                 facts.insert(Fact::new(
                     "relationship_kind",
-                    [element.kind.clone(), "verify".to_string()],
+                    [element.kind.to_string(), "verify".to_string()],
                 ));
             }
         }
@@ -468,7 +468,7 @@ pub fn extract_graph_facts(graph: &Graph) -> Vec<Fact> {
         facts.insert(Fact::new("element", [element.element_id.clone()]));
         facts.insert(Fact::new(
             "kind",
-            [element.element_id.clone(), element.kind.clone()],
+            [element.element_id.clone(), element.kind.to_string()],
         ));
         facts.insert(Fact::new(
             "layer",
@@ -476,18 +476,18 @@ pub fn extract_graph_facts(graph: &Graph) -> Vec<Fact> {
         ));
 
         if is_requirement_kind(&element.kind) && !is_trace_relationship_kind(&element.kind) {
-            facts.insert(Fact::new("requirement_kind", [element.kind.clone()]));
+            facts.insert(Fact::new("requirement_kind", [element.kind.to_string()]));
         }
         if trace_relationship_role(&element.kind) == Some("satisfy") {
             facts.insert(Fact::new(
                 "relationship_kind",
-                [element.kind.clone(), "satisfy".to_string()],
+                [element.kind.to_string(), "satisfy".to_string()],
             ));
         }
         if trace_relationship_role(&element.kind) == Some("verify") {
             facts.insert(Fact::new(
                 "relationship_kind",
-                [element.kind.clone(), "verify".to_string()],
+                [element.kind.to_string(), "verify".to_string()],
             ));
         }
 
@@ -538,7 +538,7 @@ pub fn extract_graph_facts(graph: &Graph) -> Vec<Fact> {
             "edge",
             [
                 source.to_string(),
-                edge.relation.clone(),
+                edge.relation.to_string(),
                 target.to_string(),
             ],
         ));
@@ -628,16 +628,8 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
     }
 
     for element in graph.elements() {
-        let mut stack = graph
-            .outgoing(element.id, "specializes")
-            .map(|edge| edge.target)
-            .collect::<Vec<_>>();
-        let mut visited = BTreeSet::new();
-
-        while let Some(current) = stack.pop() {
-            if !visited.insert(current) {
-                continue;
-            }
+        for edge in graph.outgoing(element.id, "specializes") {
+            let current = edge.target;
             let Some(supertype) = graph.element_id(current) else {
                 continue;
             };
@@ -651,20 +643,16 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
                     [element.element_id.clone(), supertype.to_string()],
                 ))
                 .or_insert_with(|| Explanation {
-                    rule_id: if graph
-                        .outgoing(element.id, "specializes")
-                        .any(|edge| edge.target == current)
-                    {
-                        "core.subtype.direct".to_string()
-                    } else {
-                        "core.subtype.transitive".to_string()
-                    },
-                    source_facts: vec![],
+                    rule_id: "core.subtype.direct".to_string(),
+                    source_facts: vec![Fact::new(
+                        "edge",
+                        [
+                            element.element_id.clone(),
+                            "specializes".to_string(),
+                            supertype.to_string(),
+                        ],
+                    )],
                 });
-
-            for edge in graph.outgoing(current, "specializes") {
-                stack.push(edge.target);
-            }
         }
     }
 
@@ -710,7 +698,7 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
     }
 
     for element in graph.elements() {
-        if requirement_kinds.contains(&element.kind) {
+        if requirement_kinds.contains(element.kind.as_ref()) {
             indexes.requirements.insert(element.element_id.clone());
             indexes.explanations.insert(
                 Fact::new("requirement", [element.element_id.clone()]),
@@ -718,7 +706,7 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
                     rule_id: "core.requirement.kind".to_string(),
                     source_facts: vec![Fact::new(
                         "kind",
-                        [element.element_id.clone(), element.kind.clone()],
+                        [element.element_id.clone(), element.kind.to_string()],
                     )],
                 },
             );
@@ -750,7 +738,7 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
         let Some(target) = graph.element_id(edge.target) else {
             continue;
         };
-        match edge.relation.as_str() {
+        match edge.relation.as_ref() {
             "satisfy" | "satisfies" => {
                 indexes
                     .satisfied_by
@@ -772,12 +760,12 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
     for relationship in graph.elements() {
         let relation = if relationship_kinds
             .get("satisfy")
-            .is_some_and(|kinds| kinds.contains(&relationship.kind))
+            .is_some_and(|kinds| kinds.contains(relationship.kind.as_ref()))
         {
             Some("satisfy")
         } else if relationship_kinds
             .get("verify")
-            .is_some_and(|kinds| kinds.contains(&relationship.kind))
+            .is_some_and(|kinds| kinds.contains(relationship.kind.as_ref()))
         {
             Some("verify")
         } else {

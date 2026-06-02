@@ -330,8 +330,8 @@ pub fn enrich_semantic_reasoning_context_with_graph(
         {
             continue;
         }
-        let mut attributes = element.properties.clone();
-        attributes.insert("kirKind".to_string(), Value::String(element.kind.clone()));
+        let mut attributes = element.properties.to_btree_map();
+        attributes.insert("kirKind".to_string(), Value::String(element.kind.to_string()));
         attributes.insert("kirLayer".to_string(), Value::from(element.layer));
         context.elements.push(SemanticElementContext {
             element: ElementRef::new(element.element_id.clone()),
@@ -365,7 +365,7 @@ pub fn enrich_semantic_reasoning_context_with_graph(
         });
         if context.facts.len() < max_facts {
             context.facts.push(SemanticFactContext {
-                predicate: edge.relation.clone(),
+                predicate: edge.relation.to_string(),
                 terms: vec![source.to_string(), target.to_string()],
             });
         } else {
@@ -919,7 +919,7 @@ fn document_relationships(document: &KirDocument) -> BTreeSet<RelationshipChange
             let source = graph.element_id(edge.source)?;
             let target = graph.element_id(edge.target)?;
             Some(RelationshipChange {
-                kind: edge.relation.clone(),
+                kind: edge.relation.to_string(),
                 source: ElementRef::new(source.to_string()),
                 target: ElementRef::new(target.to_string()),
             })

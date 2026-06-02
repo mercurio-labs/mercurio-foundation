@@ -19,7 +19,7 @@ const MANIFEST_FILE_NAME: &str = "manifest.json";
 const RUNTIME_ARTIFACT_FILE_NAME: &str = "runtime-artifact.json";
 
 #[derive(Debug, Clone)]
-pub struct PersistentProjectCache {
+pub struct PersistentWorkspaceCache {
     root: PathBuf,
 }
 
@@ -42,18 +42,18 @@ pub struct PersistentCompileResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectSourceFileFingerprint {
+pub struct WorkspaceSourceFileFingerprint {
     pub path: String,
     pub size_bytes: usize,
     pub content_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectCompileArtifactKey {
+pub struct WorkspaceCompileArtifactKey {
     pub source_authority: String,
     pub source_tree_digest: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_descriptor_digest: Option<String>,
+    pub workspace_config_digest: Option<String>,
     pub compiler_digest: String,
     pub kir_schema_version: String,
     pub library_context_digest: String,
@@ -61,17 +61,17 @@ pub struct ProjectCompileArtifactKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectCompileCacheManifest {
+pub struct WorkspaceCompileCacheManifest {
     pub cache_schema_version: u32,
     pub artifact_family: String,
     pub artifact_key: String,
-    pub key: ProjectCompileArtifactKey,
-    pub files: Vec<ProjectSourceFileFingerprint>,
-    pub outputs: ProjectCompileCacheOutputs,
+    pub key: WorkspaceCompileArtifactKey,
+    pub files: Vec<WorkspaceSourceFileFingerprint>,
+    pub outputs: WorkspaceCompileCacheOutputs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectCompileCacheOutputs {
+pub struct WorkspaceCompileCacheOutputs {
     pub kir: String,
     pub runtime_artifact: String,
 }
@@ -85,14 +85,13 @@ enum CacheLookup {
     Rejected(String),
 }
 
-impl PersistentProjectCache {
+impl PersistentWorkspaceCache {
     pub fn for_workspace_root(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             root: workspace_root
                 .into()
-                .join(".mercurio")
-                .join("cache")
-                .join("project"),
+                .join(".workspace-cache")
+                .join("compile"),
         }
     }
 
@@ -108,12 +107,12 @@ impl PersistentProjectCache {
         &self,
         source_documents: Vec<SourceDocument>,
         library_context: &KirDocument,
-        project_descriptor_path: Option<&Path>,
+        workspace_config_path: Option<&Path>,
     ) -> Result<PersistentCompileResult, KirError> {
         self.compile_source_documents_with(
             source_documents,
             library_context,
-            project_descriptor_path,
+            workspace_config_path,
             |source_documents, library_context| {
                 compile_source_documents(source_documents, library_context)
             },
@@ -124,13 +123,13 @@ impl PersistentProjectCache {
         &self,
         source_documents: Vec<SourceDocument>,
         library_context: &KirDocument,
-        project_descriptor_path: Option<&Path>,
+        workspace_config_path: Option<&Path>,
         registry: &LanguageRegistry,
     ) -> Result<PersistentCompileResult, KirError> {
         self.compile_source_documents_with(
             source_documents,
             library_context,
-            project_descriptor_path,
+            workspace_config_path,
             |source_documents, library_context| {
                 compile_source_documents_with_registry(source_documents, library_context, registry)
             },
@@ -141,13 +140,13 @@ impl PersistentProjectCache {
         &self,
         source_documents: Vec<SourceDocument>,
         library_context: &KirDocument,
-        project_descriptor_path: Option<&Path>,
+        workspace_config_path: Option<&Path>,
         compile: impl Fn(Vec<SourceDocument>, &KirDocument) -> Result<KirDocument, KirError>,
     ) -> Result<PersistentCompileResult, KirError> {
-        let (key, files) = project_compile_artifact_key(
+        let (key, files) = workspace_compile_artifact_key(
             &source_documents,
             library_context,
-            project_descriptor_path,
+            workspace_config_path,
         )?;
         let artifact_key = artifact_key_digest(&key)?;
 
@@ -218,8 +217,8 @@ impl PersistentProjectCache {
     fn load_compile_artifact(
         &self,
         artifact_key: &str,
-        key: &ProjectCompileArtifactKey,
-        files: &[ProjectSourceFileFingerprint],
+        key: &WorkspaceCompileArtifactKey,
+        files: &[WorkspaceSourceFileFingerprint],
     ) -> Result<CacheLookup, KirError> {
         let artifact_dir = self.artifact_dir(artifact_key);
         let manifest_path = artifact_dir.join(MANIFEST_FILE_NAME);
@@ -233,7 +232,7 @@ impl PersistentProjectCache {
 
         let manifest = match std::fs::read_to_string(&manifest_path)
             .ok()
-            .and_then(|input| serde_json::from_str::<ProjectCompileCacheManifest>(&input).ok())
+            .and_then(|input| serde_json::from_str::<WorkspaceCompileCacheManifest>(&input).ok())
         {
             Some(manifest) => manifest,
             None => return Ok(CacheLookup::Rejected("manifest is unreadable".to_string())),
@@ -269,8 +268,8 @@ impl PersistentProjectCache {
     fn write_compile_artifact(
         &self,
         artifact_key: &str,
-        key: &ProjectCompileArtifactKey,
-        files: &[ProjectSourceFileFingerprint],
+        key: &WorkspaceCompileArtifactKey,
+        files: &[WorkspaceSourceFileFingerprint],
         document: &KirDocument,
         runtime_artifact: &RuntimeArtifact,
     ) -> Result<(), KirError> {
@@ -323,19 +322,19 @@ impl PersistentProjectCache {
         &self,
         dir: &Path,
         artifact_key: &str,
-        key: &ProjectCompileArtifactKey,
-        files: &[ProjectSourceFileFingerprint],
+        key: &WorkspaceCompileArtifactKey,
+        files: &[WorkspaceSourceFileFingerprint],
         document: &KirDocument,
         runtime_artifact: &RuntimeArtifact,
     ) -> Result<(), KirError> {
         std::fs::create_dir_all(dir)?;
-        let manifest = ProjectCompileCacheManifest {
+        let manifest = WorkspaceCompileCacheManifest {
             cache_schema_version: CACHE_SCHEMA_VERSION,
             artifact_family: ARTIFACT_FAMILY_COMPILE.to_string(),
             artifact_key: artifact_key.to_string(),
             key: key.clone(),
             files: files.to_vec(),
-            outputs: ProjectCompileCacheOutputs {
+            outputs: WorkspaceCompileCacheOutputs {
                 kir: DOCUMENT_FILE_NAME.to_string(),
                 runtime_artifact: RUNTIME_ARTIFACT_FILE_NAME.to_string(),
             },
@@ -350,7 +349,7 @@ impl PersistentProjectCache {
             serde_json::to_string_pretty(&manifest)?,
         )?;
 
-        let roundtrip_manifest: ProjectCompileCacheManifest =
+        let roundtrip_manifest: WorkspaceCompileCacheManifest =
             serde_json::from_str(&std::fs::read_to_string(dir.join(MANIFEST_FILE_NAME))?)?;
         if roundtrip_manifest != manifest {
             return Err(KirError::Model(
@@ -365,14 +364,20 @@ impl PersistentProjectCache {
     }
 }
 
-pub fn project_compile_artifact_key(
+pub fn workspace_compile_artifact_key(
     source_documents: &[SourceDocument],
     library_context: &KirDocument,
-    project_descriptor_path: Option<&Path>,
-) -> Result<(ProjectCompileArtifactKey, Vec<ProjectSourceFileFingerprint>), KirError> {
+    workspace_config_path: Option<&Path>,
+) -> Result<
+    (
+        WorkspaceCompileArtifactKey,
+        Vec<WorkspaceSourceFileFingerprint>,
+    ),
+    KirError,
+> {
     let files = source_file_fingerprints(source_documents);
     let source_tree_digest = digest_source_file_fingerprints(&files);
-    let project_descriptor_digest = project_descriptor_path
+    let workspace_config_digest = workspace_config_path
         .filter(|path| path.is_file())
         .map(digest_file)
         .transpose()?;
@@ -380,10 +385,10 @@ pub fn project_compile_artifact_key(
     let mapping_rules_digest = mapping_rules_digest()?;
 
     Ok((
-        ProjectCompileArtifactKey {
+        WorkspaceCompileArtifactKey {
             source_authority: "local_files".to_string(),
             source_tree_digest,
-            project_descriptor_digest,
+            workspace_config_digest,
             compiler_digest: compiler_digest(),
             kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
             library_context_digest,
@@ -395,10 +400,10 @@ pub fn project_compile_artifact_key(
 
 pub fn source_file_fingerprints(
     source_documents: &[SourceDocument],
-) -> Vec<ProjectSourceFileFingerprint> {
+) -> Vec<WorkspaceSourceFileFingerprint> {
     let mut files = source_documents
         .iter()
-        .map(|source| ProjectSourceFileFingerprint {
+        .map(|source| WorkspaceSourceFileFingerprint {
             path: normalized_source_path(&source.path),
             size_bytes: source.content.len(),
             content_digest: digest_labeled_chunks([(
@@ -412,10 +417,10 @@ pub fn source_file_fingerprints(
 }
 
 fn manifest_rejection_reason(
-    manifest: &ProjectCompileCacheManifest,
+    manifest: &WorkspaceCompileCacheManifest,
     artifact_key: &str,
-    key: &ProjectCompileArtifactKey,
-    files: &[ProjectSourceFileFingerprint],
+    key: &WorkspaceCompileArtifactKey,
+    files: &[WorkspaceSourceFileFingerprint],
 ) -> Option<String> {
     if manifest.cache_schema_version != CACHE_SCHEMA_VERSION {
         return Some("cache schema version changed".to_string());
@@ -451,7 +456,7 @@ fn runtime_artifact_for_document(
         .map_err(|err| KirError::Model(format!("failed to build runtime artifact: {err}")))
 }
 
-fn artifact_key_digest(key: &ProjectCompileArtifactKey) -> Result<String, KirError> {
+fn artifact_key_digest(key: &WorkspaceCompileArtifactKey) -> Result<String, KirError> {
     digest_json(key)
 }
 
@@ -470,7 +475,7 @@ fn digest_file(path: &Path) -> Result<String, KirError> {
     )]))
 }
 
-fn digest_source_file_fingerprints(files: &[ProjectSourceFileFingerprint]) -> String {
+fn digest_source_file_fingerprints(files: &[WorkspaceSourceFileFingerprint]) -> String {
     digest_labeled_chunks(files.iter().flat_map(|file| {
         [
             ("path".as_bytes(), file.path.as_bytes()),
@@ -559,16 +564,12 @@ fn unique_cache_nonce() -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::path::Path;
 
-    use mercurio_language_contracts::{
-        CompileContext, LanguageRegistry, LanguageService, SemanticCompileReport,
-        SemanticCompileStatus,
-    };
-    use serde_json::{Value, json};
+    use mercurio_language_contracts::LanguageRegistry;
+    use serde_json::Value;
 
     use super::{
-        PersistentCacheStatus, PersistentProjectCache, ProjectCompileCacheManifest,
+        PersistentCacheStatus, PersistentWorkspaceCache, WorkspaceCompileCacheManifest,
         source_file_fingerprints,
     };
     use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
@@ -578,7 +579,7 @@ mod tests {
     #[test]
     fn persistent_compile_cache_reuses_unchanged_artifact() {
         let root = temp_dir("persistent_hit");
-        let cache = PersistentProjectCache::for_workspace_root(&root);
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![SourceDocument::new(
             "demo.model",
@@ -613,15 +614,14 @@ mod tests {
     #[test]
     fn persistent_compile_cache_hit_preserves_runtime_end_state() {
         let root = temp_dir("persistent_runtime_equivalence");
-        let cache = PersistentProjectCache::for_workspace_root(&root);
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![
             SourceDocument::new("domain.model", "package Domain { part def Camera; }"),
             SourceDocument::new(
                 "usage.model",
                 "package Usage {
-                  import Domain::*;
-                  part camera : Camera;
+                  part camera : Domain.Camera;
                 }",
             ),
         ];
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn persistent_compile_cache_invalidates_changed_source() {
         let root = temp_dir("persistent_changed_source");
-        let cache = PersistentProjectCache::for_workspace_root(&root);
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
         let library_context = test_library_context();
 
         let first_sources = vec![SourceDocument::new(
@@ -700,31 +700,31 @@ mod tests {
     }
 
     #[test]
-    fn persistent_compile_cache_invalidates_changed_descriptor() {
-        let root = temp_dir("persistent_changed_descriptor");
-        let cache = PersistentProjectCache::for_workspace_root(&root);
+    fn persistent_compile_cache_invalidates_changed_config() {
+        let root = temp_dir("persistent_changed_config");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
         let library_context = test_library_context();
-        let descriptor_path = root.join(".mercurio-project.json");
+        let config_path = root.join("workspace.json");
         let sources = vec![SourceDocument::new(
             "demo.model",
             "package Demo { part def Thing; }",
         )];
 
-        std::fs::write(&descriptor_path, r#"{"version":1,"name":"A"}"#).unwrap();
+        std::fs::write(&config_path, r#"{"version":1,"name":"A"}"#).unwrap();
         let first = cache
             .compile_source_documents_with_registry(
                 sources.clone(),
                 &library_context,
-                Some(&descriptor_path),
+                Some(&config_path),
                 &test_language_registry(),
             )
             .unwrap();
-        std::fs::write(&descriptor_path, r#"{"version":1,"name":"B"}"#).unwrap();
+        std::fs::write(&config_path, r#"{"version":1,"name":"B"}"#).unwrap();
         let second = cache
             .compile_source_documents_with_registry(
                 sources,
                 &library_context,
-                Some(&descriptor_path),
+                Some(&config_path),
                 &test_language_registry(),
             )
             .unwrap();
@@ -739,7 +739,7 @@ mod tests {
     #[test]
     fn persistent_compile_cache_rejects_corrupt_manifest_and_falls_back() {
         let root = temp_dir("persistent_corrupt_manifest");
-        let cache = PersistentProjectCache::for_workspace_root(&root);
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![SourceDocument::new(
             "demo.model",
@@ -782,7 +782,7 @@ mod tests {
     #[test]
     fn persistent_compile_cache_rejects_corrupt_kir_and_falls_back() {
         let root = temp_dir("persistent_corrupt_kir");
-        let cache = PersistentProjectCache::for_workspace_root(&root);
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
         let library_context = test_library_context();
         let sources = vec![SourceDocument::new(
             "demo.model",
@@ -841,28 +841,28 @@ mod tests {
 
     #[test]
     fn manifest_roundtrip_keeps_required_key_fields() {
-        let manifest = ProjectCompileCacheManifest {
+        let manifest = WorkspaceCompileCacheManifest {
             cache_schema_version: super::CACHE_SCHEMA_VERSION,
             artifact_family: "compile".to_string(),
             artifact_key: "fnv1a64:test".to_string(),
-            key: super::ProjectCompileArtifactKey {
+            key: super::WorkspaceCompileArtifactKey {
                 source_authority: "local_files".to_string(),
                 source_tree_digest: "fnv1a64:source".to_string(),
-                project_descriptor_digest: Some("fnv1a64:descriptor".to_string()),
+                workspace_config_digest: Some("fnv1a64:config".to_string()),
                 compiler_digest: "fnv1a64:compiler".to_string(),
                 kir_schema_version: "0.2".to_string(),
                 library_context_digest: "fnv1a64:library".to_string(),
                 mapping_rules_digest: "fnv1a64:mapping".to_string(),
             },
             files: Vec::new(),
-            outputs: super::ProjectCompileCacheOutputs {
+            outputs: super::WorkspaceCompileCacheOutputs {
                 kir: "document.kir.json".to_string(),
                 runtime_artifact: "runtime-artifact.json".to_string(),
             },
         };
 
         let encoded = serde_json::to_string(&manifest).unwrap();
-        let decoded: ProjectCompileCacheManifest = serde_json::from_str(&encoded).unwrap();
+        let decoded: WorkspaceCompileCacheManifest = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded, manifest);
     }
@@ -897,63 +897,12 @@ mod tests {
     }
 
     fn test_language_registry() -> LanguageRegistry {
-        let mut registry = LanguageRegistry::new();
-        registry.register(FakeModelLanguage);
-        registry
-    }
-
-    struct FakeModelLanguage;
-
-    impl LanguageService for FakeModelLanguage {
-        fn language_id(&self) -> &str {
-            "fake-model"
-        }
-
-        fn extensions(&self) -> &[&str] {
-            &["model"]
-        }
-
-        fn compile(
-            &self,
-            source: &str,
-            context: CompileContext<'_>,
-        ) -> SemanticCompileReport<KirDocument> {
-            let name = source
-                .split_whitespace()
-                .rev()
-                .find(|token| token.chars().any(|ch| ch.is_ascii_alphabetic()))
-                .unwrap_or("Thing")
-                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_');
-            let stem = Path::new(context.source_name)
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("model");
-            let qualified_name = format!("{stem}.{name}");
-            SemanticCompileReport {
-                status: SemanticCompileStatus::Ok,
-                diagnostics: Vec::new(),
-                document: Some(KirDocument {
-                    metadata: BTreeMap::from([(
-                        "kir_schema_version".to_string(),
-                        json!(KIR_SCHEMA_VERSION),
-                    )]),
-                    elements: vec![KirElement {
-                        id: format!("type.{qualified_name}"),
-                        kind: "model.Type".to_string(),
-                        layer: 2,
-                        properties: BTreeMap::from([
-                            ("qualified_name".to_string(), json!(qualified_name)),
-                            ("declared_name".to_string(), json!(name)),
-                        ]),
-                    }],
-                }),
-            }
-        }
+        crate::test_support::toy_language::registry()
     }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "mercurio_project_cache_{label}_{}_{}",
+            "mercurio_workspace_cache_{label}_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

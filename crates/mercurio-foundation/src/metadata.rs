@@ -55,7 +55,7 @@ impl ElementMetadataView {
     pub fn from_element(element: &Element) -> Self {
         Self {
             element_id: element.element_id.clone(),
-            annotations: metadata_annotations(&element.properties),
+            annotations: metadata_annotations(&element.properties.to_btree_map()),
         }
     }
 

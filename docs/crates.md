@@ -28,15 +28,17 @@ This crate defines the boundary. It must not depend on a concrete source languag
 
 ## `mercurio-foundation`
 
-Owns language-neutral semantic services:
+Owns source-language-neutral, KerML-aligned semantic services:
 
 - graph projection from KIR,
 - runtime and derived indexes,
 - query parsing and execution,
-- package and project descriptors,
+- package descriptors and workspace configuration,
 - session overlays and mutation planning,
 - semantic views,
 - plugin/package registry helpers,
 - KIR-backed authoring projections.
 
 This crate consumes KIR and registered language services. It should not contain concrete source-language parsers, metamodel bundles, command-line UI, or product-specific behavior.
+
+Its core concepts intentionally follow a KerML-style modeling vocabulary, but version-specific KerML/SysML libraries and lowering rules should live outside this crate.

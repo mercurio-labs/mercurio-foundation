@@ -5,7 +5,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::graph::{Element, Graph};
+use crate::graph::{Element, ElementProperties, Graph};
 
 #[derive(Debug, Clone, Default)]
 pub struct DerivedFeatureCache {
@@ -688,7 +688,7 @@ fn builtin_core_specs() -> Vec<DerivedFeatureSpec> {
 
 fn spec_matches_element(spec: &DerivedFeatureSpec, element: &Element) -> bool {
     spec.owner == "*"
-        || element.kind == spec.owner
+        || element.kind.as_ref() == spec.owner
         || element.kind.ends_with(&format!("::{}", spec.owner))
         || property_refs(&element.properties, "type")
             .into_iter()
@@ -705,7 +705,7 @@ fn target_matches(
     target_type: &Option<String>,
 ) -> bool {
     let kind_matches = target_kind.as_deref().is_none_or(|target| {
-        element.kind == target || element.kind.ends_with(&format!("::{target}"))
+        element.kind.as_ref() == target || element.kind.ends_with(&format!("::{target}"))
     });
     let type_matches = target_type.as_deref().is_none_or(|target| {
         property_refs(&element.properties, "type")
@@ -997,7 +997,7 @@ fn derived_namespace_membership(graph: &Graph, element: &Element) -> Option<Deri
         .chain(relation_targets(graph, element, "membership"))
         .filter(|id| {
             graph.element_by_element_id(id).is_some_and(|candidate| {
-                candidate.kind == "Core::Root::Membership"
+                candidate.kind.as_ref() == "Core::Root::Membership"
                     || candidate.kind.ends_with("::Membership")
                     || element_specializes(graph, candidate, "Core::Root::Membership")
             })
@@ -1405,25 +1405,25 @@ fn value_for_strings(values: Vec<String>) -> Value {
 }
 
 fn is_namespace_element(element: &Element) -> bool {
-    element.kind == "Core::Root::Namespace"
+    element.kind.as_ref() == "Core::Root::Namespace"
         || element.kind.ends_with("::Namespace")
-        || element.kind == "Namespace"
+        || element.kind.as_ref() == "Namespace"
         || property_refs(&element.properties, "type")
             .into_iter()
             .any(|type_ref| type_ref == "Core::Root::Namespace")
 }
 
 fn is_documentation_element(element: &Element) -> bool {
-    element.kind == "Core::Root::Documentation"
+    element.kind.as_ref() == "Core::Root::Documentation"
         || element.kind.ends_with("::Documentation")
-        || element.kind == "Documentation"
+        || element.kind.as_ref() == "Documentation"
         || property_refs(&element.properties, "type")
             .into_iter()
             .any(|type_ref| type_ref == "Core::Root::Documentation")
 }
 
 fn is_relationship_element(element: &Element) -> bool {
-    element.kind == "Core::Root::Relationship"
+    element.kind.as_ref() == "Core::Root::Relationship"
         || element.kind.ends_with("::Relationship")
         || property_refs(&element.properties, "type")
             .into_iter()
@@ -1431,7 +1431,7 @@ fn is_relationship_element(element: &Element) -> bool {
 }
 
 fn is_feature_membership_element(element: &Element) -> bool {
-    element.kind == "Core::Core::FeatureMembership"
+    element.kind.as_ref() == "Core::Core::FeatureMembership"
         || element.kind.ends_with("::FeatureMembership")
         || property_refs(&element.properties, "type")
             .into_iter()
@@ -1443,15 +1443,15 @@ fn is_owned_element_candidate(element: &Element) -> bool {
 }
 
 fn is_namespace_membership_element(element: &Element) -> bool {
-    element.kind == "Core::Root::Membership"
-        || element.kind == "Membership"
+    element.kind.as_ref() == "Core::Root::Membership"
+        || element.kind.as_ref() == "Membership"
         || property_refs(&element.properties, "type")
             .into_iter()
             .any(|type_ref| type_ref == "Core::Root::Membership")
 }
 
 fn is_import_element(element: &Element) -> bool {
-    element.kind == "Core::Root::Import"
+    element.kind.as_ref() == "Core::Root::Import"
         || element.kind.ends_with("::Import")
         || property_refs(&element.properties, "type")
             .into_iter()
@@ -1459,7 +1459,7 @@ fn is_import_element(element: &Element) -> bool {
 }
 
 fn is_conjugation_element(element: &Element) -> bool {
-    element.kind == "Core::Core::Conjugation"
+    element.kind.as_ref() == "Core::Core::Conjugation"
         || element.kind.ends_with("::Conjugation")
         || property_refs(&element.properties, "type")
             .into_iter()
@@ -1467,7 +1467,7 @@ fn is_conjugation_element(element: &Element) -> bool {
 }
 
 fn relationship_matches(graph: &Graph, element: &Element, target: &str) -> bool {
-    element.kind == target
+    element.kind.as_ref() == target
         || element.kind.ends_with(&format!("::{target}"))
         || property_refs(&element.properties, "type")
             .into_iter()
@@ -1475,7 +1475,7 @@ fn relationship_matches(graph: &Graph, element: &Element, target: &str) -> bool 
         || element_specializes(graph, element, target)
 }
 
-fn property_refs<'a>(properties: &'a BTreeMap<String, Value>, key: &str) -> Vec<&'a str> {
+fn property_refs<'a>(properties: &'a ElementProperties, key: &str) -> Vec<&'a str> {
     match properties.get(key) {
         Some(Value::String(value)) => vec![value.as_str()],
         Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).collect(),

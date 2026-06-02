@@ -1,6 +1,8 @@
 # KIR
 
-KIR is Mercurio's kernel interchange representation. It is the language-neutral semantic format that foundation loads, validates, merges, indexes, queries, packages, and projects into runtime views.
+KIR is Mercurio's kernel interchange representation. It is the source-language-neutral semantic format that foundation loads, validates, merges, indexes, queries, packages, and projects into runtime views.
+
+KIR is currently KerML-aligned: its common element kinds and relationship fields follow a modeling-kernel vocabulary of packages, types, features, definitions, usages, ownership, typing, and specialization. The OMG Kernel Modeling Language specification is the conceptual reference for that vocabulary; version-specific KerML libraries and source syntax remain outside foundation.
 
 ## Document Shape
 
