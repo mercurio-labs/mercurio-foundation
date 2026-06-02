@@ -87,7 +87,7 @@ impl ResolverContext {
         );
 
         let local_index_start = compile_timer_start();
-        let local_definitions = build_local_definition_map(&definitions)?;
+        let local_definitions = build_local_definition_map(&definitions, mappings)?;
         let definition_index = definitions
             .iter()
             .cloned()
@@ -759,9 +759,13 @@ fn resolve_usage(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if usage.construct == "ReferenceUsage" {
+    if let Some((connection_end_policy, parent_construct)) =
+        mappings.usage_connection_end_specialization_policy(&usage.construct)
+        && connection_end_policy == "from_parent_connection_type_member"
+    {
         if let Some(parent_feature) = resolve_connection_end_specialization(
             &usage,
+            parent_construct,
             stdlib_ids,
             stdlib_aliases,
             local_definitions,
@@ -3400,6 +3404,7 @@ fn resolve_allocation_endpoint(
 #[allow(clippy::too_many_arguments)]
 fn resolve_connection_end_specialization(
     usage: &CollectedUsage,
+    parent_construct: Option<&str>,
     stdlib_ids: &[String],
     stdlib_aliases: &BTreeMap<String, String>,
     local_definitions: &BTreeMap<String, String>,
@@ -3408,12 +3413,8 @@ fn resolve_connection_end_specialization(
     definition_index: &BTreeMap<String, CollectedDefinition>,
     local_usage_map: &BTreeMap<String, CollectedUsage>,
 ) -> Option<String> {
-    if usage.construct != "ReferenceUsage" {
-        return None;
-    }
-
     let parent_usage = local_usage_map.get(&usage.owner_qualified_name)?;
-    if parent_usage.construct != "ConnectionUsage" {
+    if parent_construct.is_some_and(|construct| parent_usage.construct != construct) {
         return None;
     }
 
@@ -3971,7 +3972,7 @@ mod tests {
             .expect("expected VehiclePart.m");
         let local_feature_index = build_local_feature_index(&definitions, &[]);
         let local_usage_map = build_local_usage_map(&definitions, &[]);
-        let local_definitions = build_local_definition_map(&definitions).unwrap();
+        let local_definitions = build_local_definition_map(&definitions, &mappings).unwrap();
         assert_eq!(mass_feature.owner_qualified_name, "Demo.VehiclePart");
         assert_eq!(
             local_feature_index

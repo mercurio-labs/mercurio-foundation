@@ -29,7 +29,7 @@ fn audit_reports_semantic_defaults_backed_by_lowering_rules() {
         "missing semantic-default/lowering-rule bridge metric\nstdout:\n{stdout}"
     );
     assert!(
-        stdout.contains("remaining policies: 6"),
+        stdout.contains("remaining policies: 0"),
         "missing hard-coded lowering policy burndown baseline\nstdout:\n{stdout}"
     );
 }

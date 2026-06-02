@@ -39,8 +39,7 @@ pub(crate) fn should_use_implicit_reference_redefinition_target(
     mappings: &MappingBundle,
     usage: &crate::lowering::collect::CollectedUsage,
 ) -> bool {
-    usage.construct == "ReferenceUsage"
-        && has_elaboration_rule(mappings, &usage.construct, "implicit-ref-redefines-target")
+    has_elaboration_rule(mappings, &usage.construct, "implicit-ref-redefines-target")
         && usage.is_implicit_name
         && usage.declared_name == "ref"
         && usage.ty.is_none()

@@ -21,6 +21,7 @@ pub(crate) struct LibraryIndexes {
 
 pub(crate) fn build_local_definition_map(
     definitions: &[CollectedDefinition],
+    mappings: &MappingBundle,
 ) -> Result<BTreeMap<String, String>, Diagnostic> {
     let mut simple_names = BTreeMap::<String, String>::new();
     let mut duplicates = BTreeSet::new();
@@ -29,7 +30,10 @@ pub(crate) fn build_local_definition_map(
     for definition in definitions {
         let id = format!("type.{}", definition.qualified_name);
         resolved.insert(definition.qualified_name.clone(), id.clone());
-        if definition.construct == "PortDefinition" {
+        if mappings
+            .generated_companion_construct_for_definition(&definition.construct)
+            .is_some()
+        {
             let conjugated_name = format!("~{}", definition.declared_name);
             let conjugated_id = format!("type.{}.{}", definition.qualified_name, conjugated_name);
             resolved.insert(conjugated_name.clone(), conjugated_id.clone());

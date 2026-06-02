@@ -226,6 +226,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             unsupported_semantic_default_usage_resolution_policies(semantic_defaults);
         let usage_traversal_policies = semantic_default_usage_traversal_policies(semantic_defaults);
         let usage_id_policies = semantic_default_usage_id_policies(semantic_defaults);
+        let definition_companion_policies =
+            semantic_default_definition_companion_policies(semantic_defaults);
         let usage_subset_defaults = semantic_default_usage_subset_defaults(semantic_defaults);
         let usage_family_defaults = semantic_default_usage_family_defaults(semantic_defaults);
         let unknown_usage_type_defaults = usage_type_defaults
@@ -253,6 +255,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .cloned()
             .collect::<Vec<_>>();
         let unknown_usage_id_policies = usage_id_policies
+            .difference(&construct_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unknown_definition_companion_policies = definition_companion_policies
             .difference(&construct_names)
             .cloned()
             .collect::<Vec<_>>();
@@ -369,6 +375,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  usage id policies without construct mappings: {}",
             unknown_usage_id_policies.len()
         );
+        println!(
+            "  definition companion policies: {}",
+            definition_companion_policies.len()
+        );
+        println!(
+            "  definition companion policies without construct mappings: {}",
+            unknown_definition_companion_policies.len()
+        );
         println!("  usage subset defaults: {}", usage_subset_defaults.len());
         println!(
             "  usage subset defaults without construct mappings: {}",
@@ -478,6 +492,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!();
             println!("Usage id policies without construct mappings:");
             for construct in &unknown_usage_id_policies {
+                println!("  {construct}");
+            }
+        }
+
+        if !unknown_definition_companion_policies.is_empty() {
+            println!();
+            println!("Definition companion policies without construct mappings:");
+            for construct in &unknown_definition_companion_policies {
                 println!("  {construct}");
             }
         }
@@ -1432,6 +1454,16 @@ fn semantic_default_usage_id_policies(document: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+fn semantic_default_definition_companion_policies(document: &Value) -> BTreeSet<String> {
+    document
+        .get("definition_companion_policies")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|policies| policies.keys())
+        .cloned()
+        .collect()
+}
+
 fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
     let mut refs = BTreeSet::new();
     refs.extend(semantic_default_definition_context_construct_refs(document));
@@ -1443,6 +1475,7 @@ fn semantic_default_construct_refs(document: &Value) -> BTreeSet<String> {
     refs.extend(semantic_default_usage_resolution_policies(document));
     refs.extend(semantic_default_usage_traversal_policies(document));
     refs.extend(semantic_default_usage_id_policies(document));
+    refs.extend(semantic_default_definition_companion_policies(document));
     refs.extend(semantic_default_usage_subset_defaults(document));
     refs.extend(semantic_default_usage_family_defaults(document));
     refs.extend(semantic_default_owner_override_refs(document));
@@ -1568,17 +1601,16 @@ fn unsupported_semantic_default_usage_specialization_policies(
         return gaps;
     };
     for (construct, policy) in policies {
-        let Some(policy) = policy
-            .get("materialized_refs_policy")
-            .and_then(Value::as_str)
-        else {
-            continue;
-        };
-        if !is_supported_semantic_default_usage_specialization_policy(policy) {
-            gaps.push(UsageSpecializationPolicyGap {
-                construct: construct.clone(),
-                policy: policy.to_string(),
-            });
+        for key in ["specialization_refs_policy", "materialized_refs_policy"] {
+            let Some(policy) = policy.get(key).and_then(Value::as_str) else {
+                continue;
+            };
+            if !is_supported_semantic_default_usage_specialization_policy(policy) {
+                gaps.push(UsageSpecializationPolicyGap {
+                    construct: construct.clone(),
+                    policy: policy.to_string(),
+                });
+            }
         }
     }
     gaps.sort();
@@ -1588,7 +1620,9 @@ fn unsupported_semantic_default_usage_specialization_policies(
 fn is_supported_semantic_default_usage_specialization_policy(policy: &str) -> bool {
     matches!(
         policy,
-        "prepend_feature_for_specialized_actions_without_multiplicity"
+        "merge_feature_refs_into_semantic_specializations"
+            | "prepend_feature_for_specialized_actions_without_multiplicity"
+            | "suppress_feature_refs_for_explicit_type_specialized_features_without_redefinitions"
     )
 }
 
@@ -1603,17 +1637,19 @@ fn unsupported_semantic_default_usage_resolution_policies(
         return gaps;
     };
     for (construct, policy) in policies {
-        let Some(policy) = policy
-            .get("reference_target_policy")
-            .and_then(Value::as_str)
-        else {
-            continue;
-        };
-        if !is_supported_semantic_default_usage_resolution_policy(policy) {
-            gaps.push(UsageResolutionPolicyGap {
-                construct: construct.clone(),
-                policy: policy.to_string(),
-            });
+        for key in [
+            "reference_target_policy",
+            "connection_end_specialization_policy",
+        ] {
+            let Some(policy) = policy.get(key).and_then(Value::as_str) else {
+                continue;
+            };
+            if !is_supported_semantic_default_usage_resolution_policy(policy) {
+                gaps.push(UsageResolutionPolicyGap {
+                    construct: construct.clone(),
+                    policy: policy.to_string(),
+                });
+            }
         }
     }
     gaps.sort();
@@ -1623,7 +1659,9 @@ fn unsupported_semantic_default_usage_resolution_policies(
 fn is_supported_semantic_default_usage_resolution_policy(policy: &str) -> bool {
     matches!(
         policy,
-        "annotation_target_then_type_then_reference" | "type_then_reference"
+        "annotation_target_then_type_then_reference"
+            | "from_parent_connection_type_member"
+            | "type_then_reference"
     )
 }
 
@@ -1911,44 +1949,7 @@ struct HardcodedLoweringPolicy {
 }
 
 fn hardcoded_lowering_policy_burndown() -> Vec<HardcodedLoweringPolicy> {
-    vec![
-        HardcodedLoweringPolicy {
-            construct: "ReferenceUsage",
-            category: "reference semantics",
-            location: "lowering/emit.rs::reference_usage_semantics",
-            extraction: "already partly profile-backed; remaining type-family branching should stay named algorithmic policy",
-        },
-        HardcodedLoweringPolicy {
-            construct: "ReferenceUsage",
-            category: "specialization refs",
-            location: "lowering/emit.rs::usage_specialization_refs",
-            extraction: "candidate usage_specialization_policies entry for reference refs merge ordering",
-        },
-        HardcodedLoweringPolicy {
-            construct: "ReferenceUsage",
-            category: "subset refs",
-            location: "lowering/emit.rs::usage_subsetted_feature_refs",
-            extraction: "candidate usage_subset_defaults policy for semantic-specialization fallback",
-        },
-        HardcodedLoweringPolicy {
-            construct: "PartUsage",
-            category: "specialization refs",
-            location: "lowering/emit.rs::usage_specialization_refs",
-            extraction: "candidate named policy for explicit-type specialized feature handling",
-        },
-        HardcodedLoweringPolicy {
-            construct: "ConnectionUsage/ReferenceUsage",
-            category: "resolver",
-            location: "lowering/resolve.rs::resolve_connection_end_specialization",
-            extraction: "candidate usage_resolution_policies entry, but algorithm remains resolver code",
-        },
-        HardcodedLoweringPolicy {
-            construct: "PortDefinition/ConjugatedPortDefinition",
-            category: "derived companion element",
-            location: "lowering/emit.rs::transpile_module_with_source",
-            extraction: "candidate definition companion policy for generated conjugated ports",
-        },
-    ]
+    Vec::new()
 }
 
 fn hardcoded_lowering_policy_counts(

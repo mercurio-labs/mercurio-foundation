@@ -448,11 +448,27 @@ impl MappingBundle {
         Some(refs)
     }
 
+    pub(crate) fn usage_appends_semantic_specializations_to_subset_defaults(
+        &self,
+        usage: &ResolvedUsage,
+    ) -> bool {
+        self.semantic_defaults
+            .usage_subset_defaults
+            .get(&usage.construct)
+            .is_some_and(|default| default.append_semantic_specializations_when_no_defaults)
+    }
+
     pub(crate) fn reference_usage_semantics(
         &self,
         usage: &ResolvedUsage,
     ) -> Option<ReferenceUsageSemantics> {
-        if usage.construct != "ReferenceUsage" {
+        if !self
+            .semantic_defaults
+            .reference_usage_semantics
+            .constructs
+            .iter()
+            .any(|construct| construct == &usage.construct)
+        {
             return None;
         }
 
@@ -507,7 +523,11 @@ impl MappingBundle {
         &self,
         usage: &ResolvedUsage,
     ) -> bool {
-        usage.construct == "ReferenceUsage"
+        self.semantic_defaults
+            .reference_usage_semantics
+            .constructs
+            .iter()
+            .any(|construct| construct == &usage.construct)
             && self
                 .semantic_defaults
                 .reference_usage_semantics
@@ -611,11 +631,32 @@ impl MappingBundle {
             .and_then(|policy| policy.materialized_refs_policy.as_deref())
     }
 
+    pub(crate) fn usage_specialization_refs_policy(&self, usage: &ResolvedUsage) -> Option<&str> {
+        self.semantic_defaults
+            .usage_specialization_policies
+            .get(&usage.construct)
+            .and_then(|policy| policy.specialization_refs_policy.as_deref())
+    }
+
     pub(crate) fn usage_reference_target_resolution_policy(&self, construct: &str) -> Option<&str> {
         self.semantic_defaults
             .usage_resolution_policies
             .get(construct)
             .and_then(|policy| policy.reference_target_policy.as_deref())
+    }
+
+    pub(crate) fn usage_connection_end_specialization_policy(
+        &self,
+        construct: &str,
+    ) -> Option<(&str, Option<&str>)> {
+        let policy = self
+            .semantic_defaults
+            .usage_resolution_policies
+            .get(construct)?;
+        Some((
+            policy.connection_end_specialization_policy.as_deref()?,
+            policy.connection_end_parent_construct.as_deref(),
+        ))
     }
 
     pub(crate) fn usage_records_previous_state(&self, usage: &ResolvedUsage) -> bool {
@@ -633,6 +674,16 @@ impl MappingBundle {
             .usage_id_policies
             .get(&usage.construct)
             .is_some_and(|policy| policy.append_source_location_if_missing_start_col)
+    }
+
+    pub(crate) fn generated_companion_construct_for_definition(
+        &self,
+        construct: &str,
+    ) -> Option<&str> {
+        self.semantic_defaults
+            .definition_companion_policies
+            .get(construct)
+            .and_then(|policy| policy.generated_companion_construct.as_deref())
     }
 
     pub fn default_specialization_for_definition(&self, construct: &str) -> Option<&str> {
@@ -1044,7 +1095,11 @@ pub fn transpile_module_with_source(
     let conjugated_port_ids = module
         .definitions
         .iter()
-        .filter(|definition| definition.construct == "PortDefinition")
+        .filter(|definition| {
+            mappings
+                .generated_companion_construct_for_definition(&definition.construct)
+                .is_some()
+        })
         .map(|definition| {
             render_conjugated_port_definition_id(definition, mappings)
                 .map(|id| (definition.qualified_name.clone(), id))
@@ -1469,14 +1524,25 @@ fn transpile_conjugated_port_definition(
     source_language: &str,
     mappings: &MappingBundle,
 ) -> Result<KirElement, Diagnostic> {
-    let metaclass = mappings.metaclass_for("ConjugatedPortDefinition")?;
+    let companion_construct = mappings
+        .generated_companion_construct_for_definition(&definition.construct)
+        .ok_or_else(|| {
+            Diagnostic::new(
+                format!(
+                    "definition `{}` has no generated companion construct",
+                    definition.construct
+                ),
+                Some(definition.span.clone()),
+            )
+        })?;
+    let metaclass = mappings.metaclass_for(companion_construct)?;
     let emission = mappings.emission_for(metaclass)?;
-    let lowering_rule = mappings.lowering_rule_for_construct("ConjugatedPortDefinition");
+    let lowering_rule = mappings.lowering_rule_for_construct(companion_construct);
     if let Some(rule) = lowering_rule {
         validate_rule_emission_compatibility(rule, metaclass, emission)?;
     }
     let metatype_ref = mappings
-        .default_specialization_for_definition("ConjugatedPortDefinition")
+        .default_specialization_for_definition(companion_construct)
         .or(Some(metaclass))
         .map(|value| Value::String(value.to_string()))
         .unwrap_or(Value::Null);
@@ -1537,6 +1603,7 @@ fn transpile_usage(
     let redefined_feature_refs = usage_redefined_feature_refs(usage, reference_semantics.as_ref());
     let specialization_refs = usage_specialization_refs(
         usage,
+        mappings,
         specializes,
         &specialized_feature_refs,
         &subsetted_feature_refs,
@@ -2288,10 +2355,21 @@ fn render_conjugated_port_definition_id(
     definition: &ResolvedDefinition,
     mappings: &MappingBundle,
 ) -> Result<String, Diagnostic> {
-    let metaclass = mappings.metaclass_for("ConjugatedPortDefinition")?;
+    let companion_construct = mappings
+        .generated_companion_construct_for_definition(&definition.construct)
+        .ok_or_else(|| {
+            Diagnostic::new(
+                format!(
+                    "definition `{}` has no generated companion construct",
+                    definition.construct
+                ),
+                Some(definition.span.clone()),
+            )
+        })?;
+    let metaclass = mappings.metaclass_for(companion_construct)?;
     let emission = mappings.emission_for(metaclass)?;
     let id_template =
-        id_template_for_construct("ConjugatedPortDefinition", metaclass, emission, mappings)?;
+        id_template_for_construct(companion_construct, metaclass, emission, mappings)?;
     render_string(
         id_template,
         &BTreeMap::from([
@@ -2392,7 +2470,7 @@ fn semantic_specializations_for_definition(
 
 fn semantic_specializations_for_usage(
     usage: &ResolvedUsage,
-    _mappings: &MappingBundle,
+    mappings: &MappingBundle,
     reference_semantics: Option<&ReferenceUsageSemantics>,
 ) -> Vec<String> {
     if let Some(reference_semantics) = reference_semantics {
@@ -2420,7 +2498,9 @@ fn semantic_specializations_for_usage(
     }
 
     let mut specializes = Vec::new();
-    if usage.construct != "ReferenceUsage" {
+    if mappings.usage_specialization_refs_policy(usage)
+        != Some("merge_feature_refs_into_semantic_specializations")
+    {
         if let Some(type_ref) = usage.type_ref.clone() {
             specializes.push(type_ref);
         } else if usage.construct == "EnumerationUsage"
@@ -2434,19 +2514,25 @@ fn semantic_specializations_for_usage(
 
 fn usage_specialization_refs(
     usage: &ResolvedUsage,
+    mappings: &MappingBundle,
     mut semantic_specializations: Vec<String>,
     specialized_feature_refs: &[String],
     subsetted_feature_refs: &[String],
     redefined_feature_refs: &[String],
 ) -> Vec<String> {
-    if usage.construct == "ReferenceUsage" {
+    if mappings.usage_specialization_refs_policy(usage)
+        == Some("merge_feature_refs_into_semantic_specializations")
+    {
         semantic_specializations.extend(specialized_feature_refs.iter().cloned());
         semantic_specializations.extend(subsetted_feature_refs.iter().cloned());
         semantic_specializations.extend(redefined_feature_refs.iter().cloned());
         return dedupe_refs(semantic_specializations);
     }
 
-    if usage.construct == "PartUsage"
+    if mappings.usage_specialization_refs_policy(usage)
+        == Some(
+            "suppress_feature_refs_for_explicit_type_specialized_features_without_redefinitions",
+        )
         && usage.has_explicit_type
         && !usage.specialized_features.is_empty()
         && redefined_feature_refs.is_empty()
@@ -2638,7 +2724,7 @@ fn usage_subsetted_feature_refs(
         return dedupe_refs(default_refs);
     }
 
-    if usage.construct == "ReferenceUsage" {
+    if mappings.usage_appends_semantic_specializations_to_subset_defaults(usage) {
         subsetted_feature_refs.extend(
             mappings.semantic_specializations_for_usage(&usage.construct, &usage.modifiers),
         );

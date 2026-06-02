@@ -29,6 +29,8 @@ pub struct SemanticDefaultsSeed {
     pub usage_traversal_policies: BTreeMap<String, UsageTraversalPolicySeed>,
     #[serde(default)]
     pub usage_id_policies: BTreeMap<String, UsageIdPolicySeed>,
+    #[serde(default)]
+    pub definition_companion_policies: BTreeMap<String, DefinitionCompanionPolicySeed>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -75,12 +77,15 @@ pub struct UsageActionSeed {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageSpecializationPolicySeed {
+    pub specialization_refs_policy: Option<String>,
     pub materialized_refs_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UsageResolutionPolicySeed {
     pub reference_target_policy: Option<String>,
+    pub connection_end_specialization_policy: Option<String>,
+    pub connection_end_parent_construct: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -96,7 +101,14 @@ pub struct UsageIdPolicySeed {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct DefinitionCompanionPolicySeed {
+    pub generated_companion_construct: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReferenceUsageSemanticsSeed {
+    #[serde(default)]
+    pub constructs: Vec<String>,
     #[serde(default)]
     pub modifier_rules: Vec<ReferenceModifierSemanticsSeed>,
     #[serde(default)]
@@ -143,6 +155,8 @@ pub struct UsageSubsetDefaultSeed {
     pub subsetted_feature_refs: Vec<String>,
     #[serde(default)]
     pub suppress_default_for_modifiers: Vec<String>,
+    #[serde(default)]
+    pub append_semantic_specializations_when_no_defaults: bool,
     #[serde(default)]
     pub owner_subsetted_feature_refs: BTreeMap<String, Vec<String>>,
     #[serde(default)]

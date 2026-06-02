@@ -46,6 +46,8 @@ data for behavior that used to live directly in Rust:
   such as which constructs update the previous-state cursor used by actions.
 - `usage_id_policies` names construct-specific ID normalization policies that
   supplement the KIR emission `id_template`.
+- `definition_companion_policies` declares generated companion elements such as
+  generated conjugated port definitions.
 
 `usage_property_defaults.property_values` supports a deliberately small
 placeholder vocabulary. Missing optional placeholders skip the property:
@@ -60,15 +62,23 @@ placeholder vocabulary. Missing optional placeholders skip the property:
 
 `usage_specialization_policies.materialized_refs_policy` currently supports
 `prepend_feature_for_specialized_actions_without_multiplicity`.
+`usage_specialization_policies.specialization_refs_policy` currently supports
+`merge_feature_refs_into_semantic_specializations` and
+`suppress_feature_refs_for_explicit_type_specialized_features_without_redefinitions`.
 
 `usage_resolution_policies.reference_target_policy` currently supports
 `annotation_target_then_type_then_reference` and `type_then_reference`.
+`usage_resolution_policies.connection_end_specialization_policy` currently
+supports `from_parent_connection_type_member`.
 
 `usage_traversal_policies.records_previous_state` marks constructs that update
 the previous-state cursor used by `source_from_previous_sibling_state`.
 
 `usage_id_policies.append_source_location_if_missing_start_col` keeps generated
 IDs unique for constructs whose rendered template needs source-location suffixes.
+
+`definition_companion_policies.generated_companion_construct` declares the
+construct emitted as a generated companion for an input definition construct.
 
 The lowering path is intentionally split into three profile-backed stages:
 

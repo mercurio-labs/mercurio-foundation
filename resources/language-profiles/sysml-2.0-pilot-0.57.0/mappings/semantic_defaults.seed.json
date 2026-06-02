@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "reference_usage_semantics": {
+    "constructs": [
+      "ReferenceUsage"
+    ],
     "modifier_rules": [
       {
         "modifier": "payload",
@@ -201,6 +204,12 @@
     ]
   },
   "usage_specialization_policies": {
+    "ReferenceUsage": {
+      "specialization_refs_policy": "merge_feature_refs_into_semantic_specializations"
+    },
+    "PartUsage": {
+      "specialization_refs_policy": "suppress_feature_refs_for_explicit_type_specialized_features_without_redefinitions"
+    },
     "PerformActionUsage": {
       "materialized_refs_policy": "prepend_feature_for_specialized_actions_without_multiplicity"
     }
@@ -214,6 +223,10 @@
     },
     "VerifyUsage": {
       "reference_target_policy": "type_then_reference"
+    },
+    "ReferenceUsage": {
+      "connection_end_specialization_policy": "from_parent_connection_type_member",
+      "connection_end_parent_construct": "ConnectionUsage"
     }
   },
   "usage_traversal_policies": {
@@ -224,6 +237,11 @@
   "usage_id_policies": {
     "EndUsage": {
       "append_source_location_if_missing_start_col": true
+    }
+  },
+  "definition_companion_policies": {
+    "PortDefinition": {
+      "generated_companion_construct": "ConjugatedPortDefinition"
     }
   },
   "usage_subset_defaults": {
@@ -242,6 +260,9 @@
         "require_feature_ref": true,
         "include_specialized_features": true
       }
+    },
+    "ReferenceUsage": {
+      "append_semantic_specializations_when_no_defaults": true
     },
     "PartUsage": {
       "suppress_default_for_modifiers": [

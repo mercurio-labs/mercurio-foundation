@@ -7,8 +7,7 @@ use crate::lowering::ir::ResolvedUsage;
 use crate::lowering::semantic_defaults::UsageActionSeed;
 
 pub(crate) fn usage_action_applies(action: &UsageActionSeed, usage: &ResolvedUsage) -> bool {
-    (!action.requires_metadata_properties || !usage.metadata_properties.is_empty())
-        && (!action.requires_previous_state || usage.construct == "AcceptActionUsage")
+    !action.requires_metadata_properties || !usage.metadata_properties.is_empty()
 }
 
 pub(crate) fn apply_usage_actions(
