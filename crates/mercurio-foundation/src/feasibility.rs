@@ -427,6 +427,11 @@ where
                 metadata_type: metadata_type.clone(),
                 properties: properties.clone(),
             }),
+            SemanticMutation::RemoveDeclaration { element }
+            | SemanticMutation::RemoveUsage { element } => Some(Mutation::RemoveDeclaration {
+                qualified_name: element.as_qualified_name(),
+            }),
+            SemanticMutation::RemoveRelationship { .. } => None,
             SemanticMutation::SetAttribute { .. } => None,
         }
     }
@@ -572,6 +577,28 @@ where
                         message: "metadata annotation type must not be empty".to_string(),
                     });
                 }
+            }
+            SemanticMutation::RemoveDeclaration { element } => {
+                self.require_existing(project, element, index, "element", blocking_reasons);
+            }
+            SemanticMutation::RemoveUsage { element } => {
+                self.require_existing(project, element, index, "usage", blocking_reasons);
+            }
+            SemanticMutation::RemoveRelationship { source, target, .. } => {
+                self.require_existing(
+                    project,
+                    source,
+                    index,
+                    "relationship source",
+                    blocking_reasons,
+                );
+                self.require_existing(
+                    project,
+                    target,
+                    index,
+                    "relationship target",
+                    blocking_reasons,
+                );
             }
             SemanticMutation::SetExpression { element, .. } => {
                 self.require_existing(project, element, index, "element", blocking_reasons);

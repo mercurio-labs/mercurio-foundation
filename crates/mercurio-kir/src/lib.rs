@@ -7,6 +7,8 @@ use serde_json::Value;
 
 pub const KIR_SCHEMA_VERSION: &str = "0.2";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
+pub const REPRESENTATIVE_KIR_JSON: &str =
+    include_str!("../../../resources/foundation/representative.kir.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KirDocument {
@@ -91,6 +93,7 @@ impl KirFieldRegistry {
             | "text"
             | "requirement_id"
             | "body"
+            | "locale"
             | "language"
             | "source_file"
             | "source_language" => KirFieldKind::Scalar,
@@ -280,6 +283,10 @@ impl From<serde_json::Error> for KirError {
 }
 
 impl KirDocument {
+    pub fn representative_example() -> Result<Self, KirError> {
+        Self::from_str(REPRESENTATIVE_KIR_JSON)
+    }
+
     pub fn from_str(input: &str) -> Result<Self, KirError> {
         let document: Self = serde_json::from_str(input)?;
         document.validate_persisted()?;
@@ -990,6 +997,26 @@ mod tests {
         .normalized_for_persistence();
 
         assert_eq!(document.schema_version(), Some(super::KIR_SCHEMA_VERSION));
+        document.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn representative_example_is_valid_persisted_kir() {
+        let document = KirDocument::representative_example().unwrap();
+
+        assert_eq!(document.schema_version(), Some(super::KIR_SCHEMA_VERSION));
+        assert!(
+            document
+                .elements
+                .iter()
+                .any(|element| element.id == "pkg.Example")
+        );
+        assert!(
+            document
+                .elements
+                .iter()
+                .any(|element| element.id == "activity.Example.Startup")
+        );
         document.validate_persisted().unwrap();
     }
 

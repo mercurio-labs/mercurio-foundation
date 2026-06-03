@@ -1631,209 +1631,14 @@ fn default_layout_direction() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
-
-    use serde_json::json;
-
     use super::*;
-    use mercurio_core::graph::{Edge, Element, ElementProperties, GraphArtifact};
 
     fn sample_graph() -> (Graph, MetamodelAttributeRegistry) {
-        let artifact = GraphArtifact {
-            elements: vec![
-                element(0, "SysML::Systems::PartDefinition", "SysML::Metaclass", 1),
-                element(1, "pkg.Vehicle", "SysML::Package", 2),
-                element(2, "type.Vehicle.Car", "SysML::Systems::PartDefinition", 2),
-                element(
-                    3,
-                    "type.Vehicle.Engine",
-                    "SysML::Systems::PartDefinition",
-                    2,
-                ),
-                element(
-                    4,
-                    "req.Vehicle.SafeStart",
-                    "SysML::Requirements::RequirementUsage",
-                    2,
-                ),
-                element(
-                    5,
-                    "state.Vehicle.DriveMode",
-                    "SysML::States::StateDefinition",
-                    2,
-                ),
-                element(
-                    6,
-                    "state.Vehicle.DriveMode.Off",
-                    "SysML::States::StateUsage",
-                    2,
-                ),
-                element(
-                    7,
-                    "state.Vehicle.DriveMode.Starting",
-                    "SysML::States::StateUsage",
-                    2,
-                ),
-                element(
-                    8,
-                    "state.Vehicle.DriveMode.Running",
-                    "SysML::States::StateUsage",
-                    2,
-                ),
-                element(
-                    9,
-                    "state.Vehicle.DriveMode.Fault",
-                    "SysML::States::StateUsage",
-                    2,
-                ),
-                element(
-                    10,
-                    "transition.Vehicle.DriveMode.start",
-                    "SysML::States::TransitionUsage",
-                    2,
-                ),
-                element(
-                    11,
-                    "transition.Vehicle.DriveMode.ready",
-                    "SysML::States::TransitionUsage",
-                    2,
-                ),
-                element(
-                    12,
-                    "transition.Vehicle.DriveMode.fail",
-                    "SysML::States::TransitionUsage",
-                    2,
-                ),
-                element(
-                    13,
-                    "activity.Vehicle.ProvidePower",
-                    "SysML::Actions::ActivityDefinition",
-                    2,
-                ),
-                element(
-                    14,
-                    "action.Vehicle.ProvidePower.ProportionPower",
-                    "SysML::Actions::ActionUsage",
-                    2,
-                ),
-                element(
-                    15,
-                    "action.Vehicle.ProvidePower.ProvideGasPower",
-                    "SysML::Actions::ActionUsage",
-                    2,
-                ),
-                element(
-                    16,
-                    "object.Vehicle.ProvidePower.battCond",
-                    "SysML::Actions::ObjectNode",
-                    2,
-                ),
-                element(17, "KerML::Root::Comment", "KerML::Metaclass", 1),
-                element(18, "KerML::Root::Comment::body", "KerML::Feature", 1),
-                element(19, "KerML::Root::Comment::locale", "KerML::Feature", 1),
-                element(20, "comment.Vehicle.Note", "KerML::Root::Comment", 2),
-                element(
-                    21,
-                    "comment.Vehicle.LocalizedNote",
-                    "KerML::Root::TextualRepresentation",
-                    2,
-                ),
-            ],
-            edges: vec![
-                edge(2, 0, "specializes"),
-                edge(3, 0, "specializes"),
-                edge(2, 3, "part"),
-                edge(2, 1, "owner"),
-                edge(3, 1, "owner"),
-                edge(4, 1, "owner"),
-                edge(5, 1, "owner"),
-                edge(6, 5, "owner"),
-                edge(7, 5, "owner"),
-                edge(8, 5, "owner"),
-                edge(9, 5, "owner"),
-                edge(10, 5, "owner"),
-                edge(11, 5, "owner"),
-                edge(12, 5, "owner"),
-                edge(10, 6, "source"),
-                edge(10, 7, "target"),
-                edge(11, 7, "source"),
-                edge(11, 8, "target"),
-                edge(12, 8, "source"),
-                edge(12, 9, "target"),
-                edge(13, 1, "owner"),
-                edge(14, 13, "owner"),
-                edge(15, 13, "owner"),
-                edge(16, 13, "owner"),
-                edge(16, 14, "object_flow"),
-                edge(14, 15, "control_flow"),
-                edge(17, 18, "features"),
-                edge(17, 19, "features"),
-                edge(21, 17, "specializes"),
-            ],
-        };
-        let graph = Graph::from_artifact(artifact).expect("sample graph should be valid");
+        let document =
+            mercurio_core::KirDocument::representative_example().expect("fixture should parse");
+        let graph = Graph::from_document(document).expect("sample graph should be valid");
         let registry = MetamodelAttributeRegistry::build(&graph);
         (graph, registry)
-    }
-
-    fn element(id: u32, element_id: &str, kind: &str, layer: u8) -> Element {
-        let mut properties = BTreeMap::new();
-        properties.insert("declared_name".to_string(), json!(label_for_id(element_id)));
-        if element_id == "KerML::Root::Comment" {
-            properties.insert(
-                "features".to_string(),
-                json!(["KerML::Root::Comment::body", "KerML::Root::Comment::locale"]),
-            );
-        }
-        if element_id == "comment.Vehicle.Note" {
-            properties.insert("body".to_string(), json!("Package-level review note."));
-            properties.insert("locale".to_string(), json!("en-US"));
-        }
-        if element_id == "comment.Vehicle.LocalizedNote" {
-            properties.insert("body".to_string(), json!("Localized package note."));
-            properties.insert("locale".to_string(), json!("fr-FR"));
-        }
-        if kind.contains("Requirement") {
-            properties.insert("requirement_id".to_string(), json!("REQ-001"));
-            properties.insert(
-                "text".to_string(),
-                json!("Vehicle shall prevent unsafe starts."),
-            );
-            properties.insert(
-                "metadata".to_string(),
-                json!({
-                    "RequirementLifecycle": {
-                        "properties": {
-                            "status": "approved",
-                            "owner": "Safety Team",
-                            "reviewDate": "2026-05-27"
-                        }
-                    }
-                }),
-            );
-        }
-        Element {
-            id,
-            element_id: element_id.to_string(),
-            kind: Arc::from(kind),
-            layer,
-            properties: ElementProperties::from_declared_arc_for_artifact(
-                element_id.to_string(),
-                properties
-                    .into_iter()
-                    .map(|(key, value)| (Arc::from(key), value))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn edge(source: u32, target: u32, relation: &str) -> Edge {
-        Edge {
-            source,
-            target,
-            relation: Arc::from(relation),
-        }
     }
 
     fn render_sample(spec: DiagramSpecDto) -> DiagramViewDto {
@@ -1869,80 +1674,83 @@ mod tests {
 
     #[test]
     fn structure_diagram_renders_sample_package_containment() {
-        let view = render_sample(structure_spec(Some("pkg.Vehicle"), vec!["owner"]));
+        let view = render_sample(structure_spec(Some("pkg.Example"), vec!["owner"]));
 
-        assert!(view.nodes.iter().any(|node| node.id == "pkg.Vehicle"));
-        assert!(view.nodes.iter().any(|node| node.id == "type.Vehicle.Car"));
+        assert!(view.nodes.iter().any(|node| node.id == "pkg.Example"));
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "type.Example.Vehicle")
+        );
         assert!(
             view.symbols
                 .iter()
-                .any(|symbol| symbol.element == "type.Vehicle.Car"
-                    && symbol.id == "symbol.type_Vehicle_Car")
+                .any(|symbol| symbol.element == "type.Example.Vehicle"
+                    && symbol.id == "symbol.type_Example_Vehicle")
         );
         assert!(
             view.nodes
                 .iter()
-                .any(|node| node.id == "state.Vehicle.DriveMode")
+                .any(|node| node.id == "state.Example.DriveMode")
         );
         assert!(view.edges.iter().any(|edge| {
-            edge.source == "type.Vehicle.Car"
-                && edge.target == "pkg.Vehicle"
+            edge.source == "type.Example.Vehicle"
+                && edge.target == "pkg.Example"
                 && edge.relation == "owner"
         }));
         assert!(view.warnings.is_empty());
     }
 
     #[test]
-    fn structure_diagram_preserves_part_relationship() {
-        let view = render_sample(structure_spec(Some("type.Vehicle.Car"), vec!["part"]));
+    fn structure_diagram_preserves_feature_relationship() {
+        let view = render_sample(structure_spec(
+            Some("type.Example.Vehicle"),
+            vec!["owning_type"],
+        ));
 
-        assert!(view.nodes.iter().any(|node| node.id == "type.Vehicle.Car"));
         assert!(
             view.nodes
                 .iter()
-                .any(|node| node.id == "type.Vehicle.Engine")
+                .any(|node| node.id == "type.Example.Vehicle")
         );
-        assert!(view.edges.iter().any(|edge| {
-            edge.source == "type.Vehicle.Car"
-                && edge.target == "type.Vehicle.Engine"
-                && edge.relation == "part"
-        }));
-        let part_edge = view
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "feature.Example.Vehicle.controller")
+        );
+        let feature_edge = view
             .edges
             .iter()
-            .find(|edge| edge.relation == "part")
-            .expect("part edge should render");
-        let part_symbol = view
+            .find(|edge| {
+                edge.source == "feature.Example.Vehicle.controller"
+                    && edge.target == "type.Example.Vehicle"
+                    && edge.relation == "owning_type"
+            })
+            .expect("feature edge should render");
+        let feature_symbol = view
             .symbols
             .iter()
-            .find(|symbol| symbol.id == part_edge.symbol)
-            .expect("part edge should have a symbol");
-        assert_eq!(part_symbol.role, "edge");
+            .find(|symbol| symbol.id == feature_edge.symbol)
+            .expect("feature edge should have a symbol");
+        assert_eq!(feature_symbol.role, "edge");
         assert_eq!(
-            part_symbol.source.as_deref(),
-            Some("symbol.type_Vehicle_Car")
+            feature_symbol.source.as_deref(),
+            Some("symbol.feature_Example_Vehicle_controller")
         );
         assert_eq!(
-            part_symbol.target.as_deref(),
-            Some("symbol.type_Vehicle_Engine")
+            feature_symbol.target.as_deref(),
+            Some("symbol.type_Example_Vehicle")
         );
-        assert_eq!(part_symbol.relation.as_deref(), Some("part"));
+        assert_eq!(feature_symbol.relation.as_deref(), Some("owning_type"));
         assert_eq!(
-            part_symbol
+            feature_symbol
                 .properties
                 .get("route")
                 .and_then(|value| value.as_str()),
-            Some("orthogonal")
+            Some("straight")
         );
         assert_eq!(
-            part_symbol
-                .properties
-                .get("source_decoration")
-                .and_then(|value| value.as_str()),
-            Some("filled_diamond")
-        );
-        assert_eq!(
-            part_symbol
+            feature_symbol
                 .properties
                 .get("target_decoration")
                 .and_then(|value| value.as_str()),
@@ -1968,7 +1776,10 @@ mod tests {
 
     #[test]
     fn structure_diagram_honors_include_library_filter() {
-        let mut spec = structure_spec(Some("SysML::Systems::PartDefinition"), vec!["specializes"]);
+        let mut spec = structure_spec(
+            Some("Model::Kernel::ComponentDefinition"),
+            vec!["specializes"],
+        );
         spec.query.include_libraries = true;
         spec.query.include_user_model = true;
         let with_libraries = render_sample(spec.clone());
@@ -1976,7 +1787,7 @@ mod tests {
             with_libraries
                 .nodes
                 .iter()
-                .any(|node| node.id == "SysML::Systems::PartDefinition")
+                .any(|node| node.id == "Model::Kernel::ComponentDefinition")
         );
 
         spec.query.include_libraries = false;
@@ -1985,14 +1796,14 @@ mod tests {
             without_libraries
                 .nodes
                 .iter()
-                .all(|node| node.id != "SysML::Systems::PartDefinition")
+                .all(|node| node.id != "Model::Kernel::ComponentDefinition")
         );
     }
 
     #[test]
     fn structure_diagram_reports_edge_limit() {
         let mut spec = structure_spec(
-            Some("state.Vehicle.DriveMode"),
+            Some("state.Example.DriveMode"),
             vec!["owner", "source", "target"],
         );
         spec.query.max_edges = 2;
@@ -2011,11 +1822,15 @@ mod tests {
         let view = render_sample(DiagramSpecDto {
             version: 1,
             kind: DiagramKindDto::Activity,
-            title: "Provide Power Activity".to_string(),
+            title: "Startup Activity".to_string(),
             description: None,
-            root: Some("activity.Vehicle.ProvidePower".to_string()),
+            root: Some("activity.Example.Startup".to_string()),
             query: DiagramQueryOptionsDto {
-                relations: Vec::new(),
+                relations: vec![
+                    "owner".to_string(),
+                    "source".to_string(),
+                    "target".to_string(),
+                ],
                 direction: DiagramDirectionDto::Children,
                 depth: 3,
                 include_libraries: false,
@@ -2030,7 +1845,7 @@ mod tests {
         let action = view
             .symbols
             .iter()
-            .find(|symbol| symbol.element == "action.Vehicle.ProvidePower.ProportionPower")
+            .find(|symbol| symbol.element == "action.Example.Startup.Validate")
             .expect("activity action should have a symbol");
         assert_eq!(action.role, "action");
         assert_eq!(
@@ -2044,14 +1859,14 @@ mod tests {
         let flow = view
             .symbols
             .iter()
-            .find(|symbol| symbol.relation.as_deref() == Some("object_flow"))
-            .expect("activity object flow should have a symbol");
+            .find(|symbol| symbol.relation.as_deref() == Some("source"))
+            .expect("activity source flow should have a symbol");
         assert_eq!(flow.role, "edge");
         assert_eq!(
             flow.properties
                 .get("route")
                 .and_then(|value| value.as_str()),
-            Some("orthogonal")
+            Some("straight")
         );
         assert_eq!(
             flow.properties
@@ -2068,7 +1883,7 @@ mod tests {
             kind: TableKindDto::Requirements,
             title: "Requirements".to_string(),
             description: None,
-            root: Some("pkg.Vehicle".to_string()),
+            root: Some("pkg.Example".to_string()),
             target_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
@@ -2086,7 +1901,7 @@ mod tests {
         let row = view
             .rows
             .iter()
-            .find(|row| row.element == "req.Vehicle.SafeStart")
+            .find(|row| row.element == "req.Example.SafeStart")
             .expect("requirement row should render");
         assert!(
             row.cells
@@ -2102,7 +1917,7 @@ mod tests {
 
     #[test]
     fn view_document_round_trips_diagram_spec() {
-        let document = ViewDocumentDto::diagram(structure_spec(Some("pkg.Vehicle"), vec!["owner"]));
+        let document = ViewDocumentDto::diagram(structure_spec(Some("pkg.Example"), vec!["owner"]));
 
         validate_view_document(&document).expect("document should validate");
         let json = serde_json::to_string_pretty(&document).unwrap();
@@ -2123,7 +1938,7 @@ mod tests {
             kind: TableKindDto::Requirements,
             title: "Requirements".to_string(),
             description: None,
-            root: Some("pkg.Vehicle".to_string()),
+            root: Some("pkg.Example".to_string()),
             target_type: None,
             query: DiagramQueryOptionsDto::default(),
             columns: vec![TableColumnSpecDto {
@@ -2146,7 +1961,7 @@ mod tests {
     #[test]
     fn view_document_validation_rejects_mismatched_payload() {
         let mut document =
-            ViewDocumentDto::diagram(structure_spec(Some("pkg.Vehicle"), vec!["owner"]));
+            ViewDocumentDto::diagram(structure_spec(Some("pkg.Example"), vec!["owner"]));
         document.kind = "table".to_string();
 
         let diagnostics =
@@ -2205,7 +2020,7 @@ mod tests {
             kind: TableKindDto::Requirements,
             title: "Requirements".to_string(),
             description: None,
-            root: Some("pkg.Vehicle".to_string()),
+            root: Some("pkg.Example".to_string()),
             target_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
@@ -2239,7 +2054,7 @@ mod tests {
         assert!(
             row.cells
                 .iter()
-                .any(|cell| { cell.key == "owner_name" && cell.value == "Vehicle" })
+                .any(|cell| { cell.key == "owner_name" && cell.value == "Example" })
         );
     }
 
@@ -2250,7 +2065,7 @@ mod tests {
             kind: TableKindDto::Requirements,
             title: "Requirement Lifecycle".to_string(),
             description: None,
-            root: Some("pkg.Vehicle".to_string()),
+            root: Some("pkg.Example".to_string()),
             target_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
@@ -2265,17 +2080,17 @@ mod tests {
                 TableColumnSpecDto {
                     key: "status".to_string(),
                     label: "Status".to_string(),
-                    path: Some("metadata[RequirementLifecycle].status".to_string()),
+                    path: Some("metadata[Review].status".to_string()),
                 },
                 TableColumnSpecDto {
                     key: "owner".to_string(),
                     label: "Owner".to_string(),
-                    path: Some("metadata[RequirementLifecycle].owner".to_string()),
+                    path: Some("metadata[Review].owner".to_string()),
                 },
                 TableColumnSpecDto {
                     key: "review_date".to_string(),
                     label: "Review Date".to_string(),
-                    path: Some("metadata[RequirementLifecycle].reviewDate".to_string()),
+                    path: Some("metadata[Review].reviewDate".to_string()),
                 },
             ],
         });
@@ -2289,12 +2104,12 @@ mod tests {
         assert!(
             row.cells
                 .iter()
-                .any(|cell| cell.key == "owner" && cell.value == "Safety Team")
+                .any(|cell| cell.key == "owner" && cell.value == "Foundation Team")
         );
         assert!(
             row.cells
                 .iter()
-                .any(|cell| cell.key == "review_date" && cell.value == "2026-05-27")
+                .any(|cell| cell.key == "review_date" && cell.value == "2026-06-03")
         );
     }
 
@@ -2330,12 +2145,12 @@ mod tests {
         assert!(
             view.rows
                 .iter()
-                .any(|row| row.element == "comment.Vehicle.Note")
+                .any(|row| row.element == "comment.Example.Note")
         );
         assert!(
             view.rows
                 .iter()
-                .any(|row| row.element == "comment.Vehicle.LocalizedNote")
+                .any(|row| row.element == "comment.Example.LocalizedNote")
         );
         assert!(
             view.rows

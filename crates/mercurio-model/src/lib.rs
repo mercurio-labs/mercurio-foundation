@@ -19,7 +19,7 @@ pub use expression::{
 pub use graph::{Edge, Element, ElementProperties, Graph, GraphArtifact, GraphError, NodeId};
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, KirValidationDiagnostic,
+    KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON,
 };
 pub use metadata::{
     ElementMetadataView, KirMetadataAnnotation, MetadataView, metadata_annotations,

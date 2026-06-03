@@ -1,6 +1,6 @@
 pub use mercurio_kir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, KirValidationDiagnostic,
+    KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON,
 };
 
 use std::path::Path;

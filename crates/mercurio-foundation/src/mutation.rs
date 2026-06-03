@@ -93,6 +93,17 @@ pub enum SemanticMutation {
         metadata_type: String,
         properties: BTreeMap<String, String>,
     },
+    RemoveDeclaration {
+        element: ElementRef,
+    },
+    RemoveUsage {
+        element: ElementRef,
+    },
+    RemoveRelationship {
+        kind: String,
+        source: ElementRef,
+        target: ElementRef,
+    },
     RenameDeclaration {
         element: ElementRef,
         new_name: String,
@@ -196,8 +207,9 @@ pub fn semantic_reasoning_context_from_authoring_project_with_oracle(
     max_elements: usize,
     oracle: &impl SemanticCapabilityOracle,
 ) -> SemanticReasoningContext {
-    let mut elements = Vec::new();
-    let mut relationships = Vec::new();
+    let mut all_elements = Vec::new();
+    let mut all_relationships = Vec::new();
+    let mut facts = Vec::new();
     let mut source_files = Vec::new();
     let mut truncated = false;
 
@@ -207,13 +219,17 @@ pub fn semantic_reasoning_context_from_authoring_project_with_oracle(
             module,
             path,
             None,
-            max_elements,
-            &mut elements,
-            &mut relationships,
+            usize::MAX,
+            &mut all_elements,
+            &mut all_relationships,
             &mut truncated,
             oracle,
         );
+        collect_module_semantic_facts(module, None, &mut facts);
     }
+    truncated = all_elements.len() > max_elements;
+    let (elements, relationships) =
+        select_reasoning_context_elements(all_elements, all_relationships, &focus, max_elements);
 
     SemanticReasoningContext {
         metamodel_version: "model-v2-authoring-context-v1".to_string(),
@@ -221,10 +237,26 @@ pub fn semantic_reasoning_context_from_authoring_project_with_oracle(
         focus,
         elements,
         relationships,
-        facts: Vec::new(),
+        facts,
         affordances: Vec::new(),
         source_files,
         truncated,
+    }
+}
+
+pub fn enrich_semantic_reasoning_context_with_facts(
+    context: &mut SemanticReasoningContext,
+    facts: impl IntoIterator<Item = SemanticFactContext>,
+    max_facts: usize,
+) {
+    for fact in facts {
+        if context.facts.len() >= max_facts {
+            context.truncated = true;
+            return;
+        }
+        if !context.facts.contains(&fact) {
+            context.facts.push(fact);
+        }
     }
 }
 
@@ -675,6 +707,209 @@ fn push_semantic_element(
     elements.push(element);
 }
 
+fn collect_module_semantic_facts(
+    module: &AuthoringModule,
+    owner: Option<String>,
+    facts: &mut Vec<SemanticFactContext>,
+) {
+    if let Some(package) = &module.package {
+        let package_name = qualify_context_name(owner.as_deref(), &package.name.as_dot_string());
+        push_fact(facts, "package", [package_name.clone()]);
+        push_fact(
+            facts,
+            "name",
+            [package_name.clone(), package.name.as_dot_string()],
+        );
+        if let Some(owner) = &owner {
+            push_fact(facts, "owns", [owner.clone(), package_name.clone()]);
+        } else {
+            push_fact(facts, "top_level_package", [package_name.clone()]);
+        }
+        for member in &package.members {
+            collect_declaration_semantic_facts(member, Some(package_name.clone()), facts);
+        }
+    }
+    for member in &module.members {
+        collect_declaration_semantic_facts(member, owner.clone(), facts);
+    }
+}
+
+fn collect_declaration_semantic_facts(
+    declaration: &Declaration,
+    owner: Option<String>,
+    facts: &mut Vec<SemanticFactContext>,
+) {
+    match declaration {
+        Declaration::Package(package) => {
+            let id = qualify_context_name(owner.as_deref(), &package.name.as_dot_string());
+            push_fact(facts, "package", [id.clone()]);
+            push_fact(facts, "name", [id.clone(), package.name.as_dot_string()]);
+            if let Some(owner) = &owner {
+                push_fact(facts, "owns", [owner.clone(), id.clone()]);
+            } else {
+                push_fact(facts, "top_level_package", [id.clone()]);
+            }
+            for member in &package.members {
+                collect_declaration_semantic_facts(member, Some(id.clone()), facts);
+            }
+        }
+        Declaration::Definition(definition) => {
+            let id = qualify_context_name(owner.as_deref(), &definition.name);
+            push_fact(facts, "definition", [id.clone()]);
+            push_fact(
+                facts,
+                "definition_keyword",
+                [id.clone(), definition.keyword.clone()],
+            );
+            push_fact(facts, "name", [id.clone(), definition.name.clone()]);
+            if let Some(owner) = &owner {
+                push_fact(facts, "owns", [owner.clone(), id.clone()]);
+            }
+            for target in &definition.specializes {
+                push_fact(facts, "specializes", [id.clone(), target.as_dot_string()]);
+            }
+            for member in &definition.members {
+                collect_declaration_semantic_facts(member, Some(id.clone()), facts);
+            }
+        }
+        Declaration::Usage(usage) => {
+            let id = qualify_context_name(owner.as_deref(), &usage.name);
+            push_fact(facts, "usage", [id.clone()]);
+            push_fact(facts, "usage_keyword", [id.clone(), usage.keyword.clone()]);
+            push_fact(facts, "name", [id.clone(), usage.name.clone()]);
+            if let Some(owner) = &owner {
+                push_fact(facts, "owns", [owner.clone(), id.clone()]);
+            }
+            for modifier in &usage.modifiers {
+                push_fact(facts, "modifier", [id.clone(), modifier.clone()]);
+            }
+            if matches!(
+                usage.keyword.as_str(),
+                "connect" | "connection" | "interface"
+            ) {
+                push_fact(facts, "connection_usage", [id.clone()]);
+            }
+            if usage.keyword == "interface" {
+                push_fact(facts, "interface_usage", [id.clone()]);
+            }
+            if let Some(ty) = &usage.ty {
+                push_fact(facts, "type", [id.clone(), ty.as_dot_string()]);
+            }
+            if let Some(target) = &usage.reference_target {
+                push_fact(
+                    facts,
+                    "reference_target",
+                    [id.clone(), target.as_dot_string()],
+                );
+            }
+            for target in &usage.specializes {
+                push_fact(facts, "specializes", [id.clone(), target.as_dot_string()]);
+            }
+            for member in &usage.members {
+                collect_declaration_semantic_facts(member, Some(id.clone()), facts);
+            }
+        }
+        Declaration::Import(import) => {
+            if let Some(owner) = &owner {
+                push_fact(
+                    facts,
+                    "imports",
+                    [owner.clone(), import.path.as_dot_string()],
+                );
+            }
+        }
+        Declaration::Alias(alias) => {
+            let id = qualify_context_name(owner.as_deref(), &alias.name);
+            push_fact(facts, "alias", [id.clone()]);
+            push_fact(facts, "aliases", [id.clone(), alias.target.as_dot_string()]);
+            if let Some(owner) = &owner {
+                push_fact(facts, "owns", [owner.clone(), id]);
+            }
+        }
+    }
+}
+
+fn push_fact<const N: usize>(
+    facts: &mut Vec<SemanticFactContext>,
+    predicate: &str,
+    terms: [String; N],
+) {
+    facts.push(SemanticFactContext {
+        predicate: predicate.to_string(),
+        terms: terms.into_iter().collect(),
+    });
+}
+
+fn select_reasoning_context_elements(
+    mut elements: Vec<SemanticElementContext>,
+    relationships: Vec<SemanticRelationshipContext>,
+    focus: &[ElementRef],
+    max_elements: usize,
+) -> (
+    Vec<SemanticElementContext>,
+    Vec<SemanticRelationshipContext>,
+) {
+    if max_elements == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    if !focus.is_empty() {
+        let focus_names = focus
+            .iter()
+            .map(|item| item.qualified_name.clone())
+            .collect::<BTreeSet<_>>();
+        elements.sort_by_key(|element| focus_selection_rank(element, &relationships, &focus_names));
+    }
+    elements.truncate(max_elements);
+    let selected = elements
+        .iter()
+        .map(|element| element.element.qualified_name.clone())
+        .collect::<BTreeSet<_>>();
+    let relationships = relationships
+        .into_iter()
+        .filter(|relationship| {
+            selected.contains(&relationship.source.qualified_name)
+                || selected.contains(&relationship.target.qualified_name)
+        })
+        .collect();
+    (elements, relationships)
+}
+
+fn focus_selection_rank(
+    element: &SemanticElementContext,
+    relationships: &[SemanticRelationshipContext],
+    focus_names: &BTreeSet<String>,
+) -> (usize, String) {
+    let name = &element.element.qualified_name;
+    if focus_names.contains(name) {
+        return (0, name.clone());
+    }
+    if element
+        .owner
+        .as_ref()
+        .is_some_and(|owner| focus_names.contains(&owner.qualified_name))
+        || focus_names
+            .iter()
+            .any(|focus| name.starts_with(&format!("{focus}.")))
+    {
+        return (1, name.clone());
+    }
+    if relationships.iter().any(|relationship| {
+        (relationship.source.qualified_name == *name
+            && focus_names.contains(&relationship.target.qualified_name))
+            || (relationship.target.qualified_name == *name
+                && focus_names.contains(&relationship.source.qualified_name))
+    }) {
+        return (2, name.clone());
+    }
+    if focus_names
+        .iter()
+        .any(|focus| focus.starts_with(&format!("{name}.")))
+    {
+        return (3, name.clone());
+    }
+    (10, name.clone())
+}
+
 fn context_attributes(
     attributes: impl IntoIterator<Item = (&'static str, Value)>,
 ) -> BTreeMap<String, Value> {
@@ -742,6 +977,9 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
             "AddUsage".to_string(),
             "AddRelationship".to_string(),
             "AddMetadataAnnotation".to_string(),
+            "RemoveDeclaration".to_string(),
+            "RemoveUsage".to_string(),
+            "RemoveRelationship".to_string(),
             "RenameDeclaration".to_string(),
             "UpdateUsageType".to_string(),
             "SetExpression".to_string(),
@@ -959,6 +1197,19 @@ pub(crate) fn diff_for_operation(
                 attribute: "metadata".to_string(),
             });
         }
+        SemanticMutation::RemoveDeclaration { element }
+        | SemanticMutation::RemoveUsage { element } => {
+            diff.removed_elements.push(element.clone());
+        }
+        SemanticMutation::RemoveRelationship {
+            kind,
+            source,
+            target,
+        } => diff.removed_relationships.push(RelationshipChange {
+            kind: kind.clone(),
+            source: source.clone(),
+            target: target.clone(),
+        }),
         SemanticMutation::RenameDeclaration { element, new_name } => {
             let parent = element
                 .qualified_name
@@ -1200,6 +1451,65 @@ package HybridVehicle {
                 && relationship.source.qualified_name == "HybridVehicle.HybridVehicle.battery"
                 && relationship.target.qualified_name == "BatteryPack"
         }));
+        assert!(context.facts.iter().any(|fact| {
+            fact.predicate == "usage" && fact.terms == vec!["HybridVehicle.BatteryPack".to_string()]
+        }));
+        assert!(context.facts.iter().any(|fact| {
+            fact.predicate == "type"
+                && fact.terms
+                    == vec![
+                        "HybridVehicle.HybridVehicle.battery".to_string(),
+                        "BatteryPack".to_string(),
+                    ]
+        }));
+        assert!(context.facts.iter().any(|fact| {
+            fact.predicate == "owns"
+                && fact.terms
+                    == vec![
+                        "HybridVehicle.HybridVehicle".to_string(),
+                        "HybridVehicle.HybridVehicle.battery".to_string(),
+                    ]
+        }));
+    }
+
+    #[test]
+    fn semantic_reasoning_context_truncates_with_focus_bias() {
+        let files = BTreeMap::from([(
+            "large.model".to_string(),
+            r#"
+package Demo {
+    part unrelatedA;
+    part unrelatedB;
+    part focus {
+        part child;
+    }
+    part unrelatedC;
+}
+"#
+            .to_string(),
+        )]);
+        let project = AuthoringProject::from_model_files(files).expect("project parses");
+
+        let context = semantic_reasoning_context_from_authoring_project(
+            &project,
+            WorkspaceRevision::unchecked(),
+            vec![ElementRef::new("Demo.focus")],
+            2,
+        );
+
+        assert!(context.truncated);
+        assert!(
+            context
+                .elements
+                .iter()
+                .any(|item| item.element.qualified_name == "Demo.focus")
+        );
+        assert!(
+            context
+                .elements
+                .iter()
+                .any(|item| item.element.qualified_name == "Demo.focus.child")
+        );
     }
 
     #[test]

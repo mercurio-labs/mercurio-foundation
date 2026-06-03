@@ -937,6 +937,29 @@ mod tests {
     }
 
     #[test]
+    fn representative_example_builds_runtime_indexes() {
+        let runtime =
+            Runtime::from_document(KirDocument::representative_example().unwrap()).unwrap();
+
+        let subtypes = runtime
+            .get_subtypes("Model::Kernel::ComponentDefinition")
+            .unwrap();
+        assert!(subtypes.value.contains(&"type.Example.Vehicle".to_string()));
+        assert!(
+            subtypes
+                .value
+                .contains(&"type.Example.Controller".to_string())
+        );
+
+        let features = runtime.get_features("type.Example.Vehicle").unwrap();
+        assert!(
+            features
+                .value
+                .contains(&"feature.Example.Vehicle.controller".to_string())
+        );
+    }
+
+    #[test]
     fn inherits_features_across_specialization() {
         let runtime = sample_runtime();
 

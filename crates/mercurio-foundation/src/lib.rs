@@ -117,7 +117,7 @@ pub use identity::{
 };
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, load_model_stack, load_model_stack_with_registry,
+    KirFieldSpec, REPRESENTATIVE_KIR_JSON, load_model_stack, load_model_stack_with_registry,
 };
 pub use language::{
     BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
@@ -126,9 +126,12 @@ pub use language::{
 };
 pub use library::{
     BaselineLibraryConfig, KparLocator, KparPackageBuild, KparPackageSource, LibraryCacheMetadata,
-    LibraryProviderConfig, LocalPackageManifest, LocalPackageRepository, LocalPackageSource,
-    PackageKirCache, PackageKirCacheManifest, ResolvedLibraryArtifact,
-    load_baseline_library_document, write_kpar_package,
+    LibraryProviderConfig, LocalPackageManifest, LocalPackageRecord, LocalPackageRepository,
+    LocalPackageSource, MercurioLockFile, MercurioLockedPackage, MercurioPackageBuildProvenance,
+    MercurioPackageDependency, MercurioPackageManifest, MercurioPackageSourceProvenance,
+    PackageKirCache, PackageKirCacheManifest, PackageReference, ResolvedLibraryArtifact,
+    load_baseline_library_document, package_bytes_digest, parse_package_reference,
+    write_kpar_package,
 };
 pub use mercurio_language_contracts::{CompileContext, LanguageRegistry, LanguageService};
 pub use metadata::{

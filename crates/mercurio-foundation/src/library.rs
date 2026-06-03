@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ir::{KirDocument, KirError};
+use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::paths::{
     bundled_package_repo_path, bundled_stdlib_package_set_path, default_model_library_path,
     default_package_kir_cache_path, default_package_repo_path, default_user_config_path,
@@ -15,6 +15,7 @@ pub const DEFAULT_MODEL_LIBRARY_LOCATOR: &str = DEFAULT_STDLIB_LOCATOR;
 const DEFAULT_STDLIB_PACKAGE_SET_ENTRY: &str =
     "https://www.omg.org/spec/Model/20250201/Systems-Library.kpar";
 const KPAR_PRECOMPILED_KIR_ENTRY: &str = "document.kir.json";
+const MERCURIO_PACKAGE_MANIFEST_ENTRY: &str = "mercurio.package.json";
 use crate::source_set::{SourceDocument, compile_source_documents};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,11 +106,86 @@ pub struct LocalPackageManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPackageRecord {
+    pub repository_path: String,
+    pub manifest_path: String,
+    pub package_path: String,
+    pub manifest: LocalPackageManifest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<PackageVerification>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MercurioPackageManifest {
+    pub schema: String,
+    pub name: String,
+    pub version: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<MercurioPackageDependency>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kir_schema_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<MercurioPackageSourceProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<MercurioPackageBuildProvenance>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MercurioPackageDependency {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    pub locator: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MercurioPackageSourceProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MercurioPackageBuildProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MercurioLockFile {
+    pub schema: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<MercurioLockedPackage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MercurioLockedPackage {
+    pub name: String,
+    pub version: String,
+    pub locator: String,
+    pub digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PackageVerification {
     pub name: String,
     pub version: String,
     pub file: String,
     pub digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_manifest: Option<MercurioPackageManifest>,
     pub project_name: Option<String>,
     pub project_version: Option<String>,
     pub source_count: usize,
@@ -155,6 +231,15 @@ pub struct PackageKirCacheManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KparLocator {
     raw: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageReference {
+    pub scheme: String,
+    pub name: String,
+    pub version: Option<String>,
+    pub digest: Option<String>,
+    pub raw: String,
 }
 
 impl Default for BaselineLibraryConfig {
@@ -304,12 +389,19 @@ impl LibraryProviderConfig {
                     );
                 }
 
-                let Some((name, version)) = locator.resolve_package_coordinate() else {
+                let Some(package_ref) = locator.package_reference() else {
                     return Err(KirError::Model(format!(
                         "unsupported KPAR locator '{}'",
                         locator.as_str()
                     )));
                 };
+                let Some(version) = package_ref.version.as_deref() else {
+                    return Err(KirError::Model(format!(
+                        "KPAR locator '{}' must include a version for local repository resolution",
+                        locator.as_str()
+                    )));
+                };
+                let name = package_ref.name.as_str();
 
                 for repo in LocalPackageRepository::resolution_repositories() {
                     if let Some(source_path) = repo.find_package(name, version)? {
@@ -317,6 +409,14 @@ impl LibraryProviderConfig {
                             KirDocument::from_path(&default_model_library_path())?;
                         let context_document = library_context.unwrap_or(&fallback_context);
                         let source_digest = digest_file(&source_path)?;
+                        if let Some(expected_digest) = package_ref.digest.as_deref()
+                            && source_digest != expected_digest
+                        {
+                            return Err(KirError::Model(format!(
+                                "KPAR package digest mismatch for {}:{}: expected {}, got {}",
+                                name, version, expected_digest, source_digest
+                            )));
+                        }
                         let (document, package_metadata) = PackageKirCache::default_user()
                             .load_or_compile(
                                 name,
@@ -461,15 +561,31 @@ impl LibraryProviderConfig {
                     .source_fingerprint(library_id, base_dir);
                 }
 
-                let Some((name, version)) = locator.resolve_package_coordinate() else {
+                let Some(package_ref) = locator.package_reference() else {
                     return Err(KirError::Model(format!(
                         "unsupported KPAR locator '{}'",
                         locator.as_str()
                     )));
                 };
+                let Some(version) = package_ref.version.as_deref() else {
+                    return Err(KirError::Model(format!(
+                        "KPAR locator '{}' must include a version for local repository resolution",
+                        locator.as_str()
+                    )));
+                };
+                let name = package_ref.name.as_str();
 
                 for repo in LocalPackageRepository::resolution_repositories() {
                     if let Some(source_path) = repo.find_package(name, version)? {
+                        let source_digest = digest_file(&source_path)?;
+                        if let Some(expected_digest) = package_ref.digest.as_deref()
+                            && source_digest != expected_digest
+                        {
+                            return Err(KirError::Model(format!(
+                                "KPAR package digest mismatch for {}:{}: expected {}, got {}",
+                                name, version, expected_digest, source_digest
+                            )));
+                        }
                         return Ok(LibrarySourceFingerprint {
                             library_id: library_id.to_string(),
                             source_kind: "kpar_locator".to_string(),
@@ -478,7 +594,7 @@ impl LibraryProviderConfig {
                                 source_kind: "kpar_locator".to_string(),
                                 source_identity: locator.as_str().to_string(),
                                 source_version: Some(version.to_string()),
-                                source_digest: Some(digest_file(&source_path)?),
+                                source_digest: Some(source_digest),
                                 importer_version,
                             },
                         });
@@ -699,6 +815,41 @@ impl LocalPackageRepository {
         serde_json::from_str(&input).map_err(KirError::Json)
     }
 
+    pub fn list_packages(&self) -> Result<Vec<LocalPackageRecord>, KirError> {
+        let mut records = Vec::new();
+        if !self.root.is_dir() {
+            return Ok(records);
+        }
+
+        for manifest_path in collect_local_manifest_paths(&self.root)? {
+            let input = std::fs::read_to_string(&manifest_path)?;
+            let manifest: LocalPackageManifest = serde_json::from_str(&input)?;
+            let package_path = manifest_path
+                .parent()
+                .unwrap_or(self.root.as_path())
+                .join(&manifest.file);
+            let verification = self
+                .verify_package(&manifest.name, &manifest.version)
+                .ok();
+            records.push(LocalPackageRecord {
+                repository_path: self.root.to_string_lossy().to_string(),
+                manifest_path: manifest_path.to_string_lossy().to_string(),
+                package_path: package_path.to_string_lossy().to_string(),
+                manifest,
+                verification,
+            });
+        }
+
+        records.sort_by(|left, right| {
+            left.manifest
+                .name
+                .cmp(&right.manifest.name)
+                .then_with(|| left.manifest.version.cmp(&right.manifest.version))
+                .then_with(|| left.repository_path.cmp(&right.repository_path))
+        });
+        Ok(records)
+    }
+
     pub fn verify_package(
         &self,
         name: &str,
@@ -743,6 +894,7 @@ impl LocalPackageRepository {
             version: manifest.version,
             file: manifest.file,
             digest: manifest.digest,
+            package_manifest: archive.package_manifest,
             project_name: archive.project_name,
             project_version: archive.project_version,
             source_count: archive.source_count,
@@ -831,6 +983,27 @@ impl LocalPackageRepository {
         )?;
         Ok(manifest)
     }
+}
+
+fn collect_local_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, KirError> {
+    let mut manifests = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(path) = stack.pop() {
+        for entry in std::fs::read_dir(&path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                stack.push(entry_path);
+            } else if entry.file_name().to_string_lossy() == "manifest.json" {
+                manifests.push(entry_path);
+            }
+        }
+    }
+
+    manifests.sort();
+    Ok(manifests)
 }
 
 impl PackageKirCache {
@@ -997,17 +1170,48 @@ impl KparLocator {
         &self.raw
     }
 
-    fn resolve_package_coordinate(&self) -> Option<(&str, &str)> {
-        let value = self.raw.strip_prefix("kpar:")?;
-        if value.contains("@sha") {
-            return None;
-        }
-        let (name, version) = value.rsplit_once(':')?;
-        if name.trim().is_empty() || version.trim().is_empty() {
-            return None;
-        }
-        Some((name, version))
+    pub fn package_reference(&self) -> Option<PackageReference> {
+        parse_package_reference(&self.raw)
     }
+}
+
+pub fn parse_package_reference(locator: &str) -> Option<PackageReference> {
+    let (scheme, remainder) = if let Some(value) = locator.strip_prefix("kpar:") {
+        ("kpar", value)
+    } else if let Some(value) = locator.strip_prefix("oci://") {
+        ("oci", value)
+    } else {
+        return None;
+    };
+
+    let (coordinate, digest) = match remainder.split_once('@') {
+        Some((coordinate, digest)) => {
+            if !is_sha256_digest(digest) {
+                return None;
+            }
+            (coordinate, Some(digest.to_string()))
+        }
+        None => (remainder, None),
+    };
+    let (name, version) = coordinate
+        .rsplit_once(':')
+        .map(|(name, version)| (name, Some(version.to_string())))
+        .unwrap_or((coordinate, None));
+    if name.trim().is_empty()
+        || version
+            .as_deref()
+            .is_some_and(|version| version.trim().is_empty())
+    {
+        return None;
+    }
+
+    Some(PackageReference {
+        scheme: scheme.to_string(),
+        name: name.to_string(),
+        version,
+        digest,
+        raw: locator.to_string(),
+    })
 }
 
 pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(), KirError> {
@@ -1064,6 +1268,24 @@ pub fn write_kpar_package(path: &Path, package: &KparPackageBuild) -> Result<(),
         .map_err(zip_error_to_kir_error)?;
     writer.write_all(br#"{"files":[]}"#)?;
 
+    writer
+        .start_file(MERCURIO_PACKAGE_MANIFEST_ENTRY, options)
+        .map_err(zip_error_to_kir_error)?;
+    let manifest = MercurioPackageManifest {
+        schema: "dev.mercurio.package.v1".to_string(),
+        name: package.name.clone(),
+        version: package
+            .version
+            .clone()
+            .unwrap_or_else(|| "0.0.0".to_string()),
+        kind: "kpar".to_string(),
+        dependencies: Vec::new(),
+        kir_schema_version: Some(KIR_SCHEMA_VERSION.to_string()),
+        source: None,
+        build: None,
+    };
+    writer.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
+
     if let Some(document) = &package.precompiled_kir {
         writer
             .start_file(KPAR_PRECOMPILED_KIR_ENTRY, options)
@@ -1097,6 +1319,7 @@ fn compile_kpar_file(
     let KparArchiveContent {
         source_files,
         package_metadata,
+        package_manifest: _,
         precompiled_kir,
     } = collect_kpar_archive_content(path)?;
     if let Some(document) = precompiled_kir {
@@ -1199,10 +1422,11 @@ fn digest_file(path: &Path) -> Result<String, KirError> {
     let mut file = std::fs::File::open(path)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
-    Ok(format_stable_digest([(
-        "file".as_bytes(),
-        bytes.as_slice(),
-    )]))
+    Ok(package_bytes_digest(&bytes))
+}
+
+pub fn package_bytes_digest(bytes: &[u8]) -> String {
+    format_sha256_digest(bytes)
 }
 
 fn digest_kir_document(document: &KirDocument) -> Result<String, KirError> {
@@ -1302,9 +1526,118 @@ where
     format!("fnv1a64:{hash:016x}")
 }
 
+fn format_sha256_digest(bytes: &[u8]) -> String {
+    let digest = sha256(bytes);
+    let mut output = String::from("sha256:");
+    for byte in digest {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+fn sha256(input: &[u8]) -> [u8; 32] {
+    const H0: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+
+    let bit_len = (input.len() as u64).wrapping_mul(8);
+    let mut message = input.to_vec();
+    message.push(0x80);
+    while (message.len() + 8) % 64 != 0 {
+        message.push(0);
+    }
+    message.extend_from_slice(&bit_len.to_be_bytes());
+
+    let mut hash = H0;
+    for chunk in message.chunks_exact(64) {
+        let mut words = [0u32; 64];
+        for (index, bytes) in chunk.chunks_exact(4).enumerate().take(16) {
+            words[index] = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        }
+        for index in 16..64 {
+            let s0 = words[index - 15].rotate_right(7)
+                ^ words[index - 15].rotate_right(18)
+                ^ (words[index - 15] >> 3);
+            let s1 = words[index - 2].rotate_right(17)
+                ^ words[index - 2].rotate_right(19)
+                ^ (words[index - 2] >> 10);
+            words[index] = words[index - 16]
+                .wrapping_add(s0)
+                .wrapping_add(words[index - 7])
+                .wrapping_add(s1);
+        }
+
+        let mut a = hash[0];
+        let mut b = hash[1];
+        let mut c = hash[2];
+        let mut d = hash[3];
+        let mut e = hash[4];
+        let mut f = hash[5];
+        let mut g = hash[6];
+        let mut h = hash[7];
+
+        for index in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[index])
+                .wrapping_add(words[index]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        hash[0] = hash[0].wrapping_add(a);
+        hash[1] = hash[1].wrapping_add(b);
+        hash[2] = hash[2].wrapping_add(c);
+        hash[3] = hash[3].wrapping_add(d);
+        hash[4] = hash[4].wrapping_add(e);
+        hash[5] = hash[5].wrapping_add(f);
+        hash[6] = hash[6].wrapping_add(g);
+        hash[7] = hash[7].wrapping_add(h);
+    }
+
+    let mut output = [0u8; 32];
+    for (index, word) in hash.into_iter().enumerate() {
+        output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    output
+}
+
 struct KparArchiveContent {
     source_files: Vec<SourceDocument>,
     package_metadata: Option<KparProjectMetadata>,
+    package_manifest: Option<MercurioPackageManifest>,
     precompiled_kir: Option<KirDocument>,
 }
 
@@ -1313,6 +1646,7 @@ fn collect_kpar_archive_content(path: &Path) -> Result<KparArchiveContent, KirEr
     let mut archive = zip::ZipArchive::new(file).map_err(zip_error_to_kir_error)?;
     let mut files = Vec::new();
     let mut package_metadata = None;
+    let mut package_manifest = None;
     let mut precompiled_kir = None;
 
     for index in 0..archive.len() {
@@ -1326,6 +1660,13 @@ fn collect_kpar_archive_content(path: &Path) -> Result<KparArchiveContent, KirEr
             let mut content = String::new();
             entry.read_to_string(&mut content)?;
             package_metadata = serde_json::from_str(&content).ok();
+            continue;
+        }
+
+        if entry_name == MERCURIO_PACKAGE_MANIFEST_ENTRY {
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            package_manifest = Some(serde_json::from_str(&content)?);
             continue;
         }
 
@@ -1349,6 +1690,7 @@ fn collect_kpar_archive_content(path: &Path) -> Result<KparArchiveContent, KirEr
     Ok(KparArchiveContent {
         source_files: files,
         package_metadata,
+        package_manifest,
         precompiled_kir,
     })
 }
@@ -1357,12 +1699,14 @@ fn collect_kpar_source_files(
     path: &Path,
 ) -> Result<(Vec<SourceDocument>, Option<KparProjectMetadata>), KirError> {
     let content = collect_kpar_archive_content(path)?;
+    let _package_manifest = content.package_manifest;
     Ok((content.source_files, content.package_metadata))
 }
 
 struct KparArchiveVerification {
     project_name: Option<String>,
     project_version: Option<String>,
+    package_manifest: Option<MercurioPackageManifest>,
     source_count: usize,
     has_precompiled_kir: bool,
     precompiled_kir_element_count: Option<usize>,
@@ -1372,6 +1716,7 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
     let file = std::fs::File::open(path)?;
     let mut archive = zip::ZipArchive::new(file).map_err(zip_error_to_kir_error)?;
     let mut package_metadata = None;
+    let mut package_manifest = None;
     let mut source_count = 0usize;
     let mut precompiled_kir_element_count = None;
 
@@ -1386,6 +1731,13 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
             let mut content = String::new();
             entry.read_to_string(&mut content)?;
             package_metadata = Some(serde_json::from_str::<KparProjectMetadata>(&content)?);
+            continue;
+        }
+
+        if entry_name == MERCURIO_PACKAGE_MANIFEST_ENTRY {
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            package_manifest = Some(serde_json::from_str::<MercurioPackageManifest>(&content)?);
             continue;
         }
 
@@ -1418,6 +1770,7 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
     Ok(KparArchiveVerification {
         project_name: package_metadata.name,
         project_version: package_metadata.version,
+        package_manifest,
         source_count,
         has_precompiled_kir: precompiled_kir_element_count.is_some(),
         precompiled_kir_element_count,
@@ -2034,7 +2387,7 @@ mod tests {
         let source_path = temp_root.join("source.kpar");
         write_test_kpar(
             &source_path,
-            "Domain Library",
+            "domain-lib",
             "1.2.3",
             &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
@@ -2238,7 +2591,7 @@ mod tests {
         let source_path = temp_root.join("source.kpar");
         write_test_kpar(
             &source_path,
-            "Domain Library",
+            "domain-lib",
             "1.2.3",
             &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
         );
@@ -2265,6 +2618,127 @@ mod tests {
                 .iter()
                 .any(|element| element.id == "type.Domain.Thing")
         );
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn package_reference_parses_kpar_and_oci_digest_locators() {
+        let kpar = super::parse_package_reference(
+            "kpar:org.example/domain-lib:1.2.3@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        assert_eq!(kpar.scheme, "kpar");
+        assert_eq!(kpar.name, "org.example/domain-lib");
+        assert_eq!(kpar.version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            kpar.digest.as_deref(),
+            Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+
+        let oci = super::parse_package_reference(
+            "oci://ghcr.io/org.example/domain-lib@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .unwrap();
+        assert_eq!(oci.scheme, "oci");
+        assert_eq!(oci.name, "ghcr.io/org.example/domain-lib");
+        assert_eq!(oci.version, None);
+        assert_eq!(
+            oci.digest.as_deref(),
+            Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+    }
+
+    #[test]
+    fn package_file_digest_uses_sha256() {
+        assert_eq!(
+            super::format_sha256_digest(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn staged_package_manifest_uses_sha256_digest() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-local-package-sha256-{}",
+            std::process::id()
+        ));
+        let repo = super::LocalPackageRepository::new(&temp_root);
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source_path = temp_root.join("source.kpar");
+        write_test_kpar(
+            &source_path,
+            "domain-lib",
+            "1.2.3",
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
+        );
+
+        let manifest = repo
+            .stage_kpar(&source_path, "domain-lib", "1.2.3", None)
+            .unwrap();
+
+        assert!(manifest.digest.starts_with("sha256:"));
+        assert_eq!(manifest.digest.len(), "sha256:".len() + 64);
+        let verification = repo.verify_package("domain-lib", "1.2.3").unwrap();
+        let package_manifest = verification.package_manifest.unwrap();
+        assert_eq!(package_manifest.schema, "dev.mercurio.package.v1");
+        assert_eq!(package_manifest.name, "domain-lib");
+        assert_eq!(package_manifest.version, "1.2.3");
+        assert_eq!(package_manifest.kind, "kpar");
+        assert_eq!(
+            package_manifest.kir_schema_version.as_deref(),
+            Some(KIR_SCHEMA_VERSION)
+        );
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn kpar_locator_digest_pin_must_match_package_bytes() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-kpar-locator-digest-pin-{}",
+            std::process::id()
+        ));
+        let repo = super::LocalPackageRepository::new(&temp_root);
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source_path = temp_root.join("source.kpar");
+        write_test_kpar(
+            &source_path,
+            "Domain Library",
+            "1.2.3",
+            &[("domain.model", "package Domain {\n  part def Thing;\n}\n")],
+        );
+        let manifest = repo
+            .stage_kpar(&source_path, "domain-lib", "1.2.3", None)
+            .unwrap();
+
+        unsafe {
+            std::env::set_var("MERCURIO_PACKAGE_REPO", &temp_root);
+        }
+        let artifact = LibraryProviderConfig::KparLocator {
+            locator: format!("kpar:domain-lib:1.2.3@{}", manifest.digest),
+        }
+        .resolve("domain-lib")
+        .unwrap();
+        let err = LibraryProviderConfig::KparLocator {
+            locator: "kpar:domain-lib:1.2.3@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+        }
+        .resolve("domain-lib")
+        .unwrap_err();
+        unsafe {
+            std::env::remove_var("MERCURIO_PACKAGE_REPO");
+        }
+
+        assert!(
+            artifact
+                .document
+                .elements
+                .iter()
+                .any(|element| element.id == "type.Domain.Thing")
+        );
+        assert!(err.to_string().contains("digest mismatch"));
 
         std::fs::remove_dir_all(temp_root).unwrap();
     }
@@ -2769,6 +3243,26 @@ mod tests {
 
         writer.start_file(".meta.json", options).unwrap();
         writer.write_all(br#"{"files":[]}"#).unwrap();
+
+        writer
+            .start_file(super::MERCURIO_PACKAGE_MANIFEST_ENTRY, options)
+            .unwrap();
+        writer
+            .write_all(
+                serde_json::to_string_pretty(&super::MercurioPackageManifest {
+                    schema: "dev.mercurio.package.v1".to_string(),
+                    name: name.to_string(),
+                    version: version.to_string(),
+                    kind: "kpar".to_string(),
+                    dependencies: Vec::new(),
+                    kir_schema_version: Some(KIR_SCHEMA_VERSION.to_string()),
+                    source: None,
+                    build: None,
+                })
+                .unwrap()
+                .as_bytes(),
+            )
+            .unwrap();
 
         for (entry_name, content) in entries {
             writer.start_file(*entry_name, options).unwrap();

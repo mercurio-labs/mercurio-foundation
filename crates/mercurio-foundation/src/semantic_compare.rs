@@ -1256,14 +1256,6 @@ fn canonical_compare_identifier_for_key(key: &str, value: &str) -> String {
     if key == "owner" && canonical == "Parts" {
         return "Namespace".to_string();
     }
-    if key == "featuring_type"
-        && (canonical == "AcceptActionUsage"
-            || canonical == "SuccessionFlowUsage"
-            || canonical.contains("AcceptActionUsage")
-            || canonical.contains("SuccessionFlowUsage"))
-    {
-        return "?".to_string();
-    }
     if key == "featuring_type" && canonical.contains('_') {
         if let Some((_, tail)) = canonical.rsplit_once('_') {
             return tail.to_string();
