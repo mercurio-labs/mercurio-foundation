@@ -1,3 +1,9 @@
+//! Contracts implemented by Mercurio source-language frontends.
+//!
+//! This crate exposes the shared AST, diagnostic, expression, report, and
+//! service traits used by language plugins. Prefer the root-level re-exports
+//! for common integration code.
+
 use std::fmt;
 use std::path::Path;
 
@@ -17,6 +23,7 @@ pub use expression::{
     ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
     UnaryExpressionOp,
 };
+pub use lexer::{Token, TokenKind, lex};
 pub use reports::{ParseReport, SemanticCompileReport, SemanticCompileStatus};
 pub use service::{CompileContext, LanguageRegistry, LanguageService};
 

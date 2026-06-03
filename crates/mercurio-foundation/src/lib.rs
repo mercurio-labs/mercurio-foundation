@@ -1,58 +1,136 @@
+//! Curated facade for Mercurio foundation APIs.
+//!
+//! This crate is the primary integration surface for tools that need to load
+//! KIR, build model graphs, run semantic/runtime queries, produce view DTOs,
+//! and work with workspace/library configuration. Prefer the root-level
+//! re-exports in this crate over depending on implementation modules directly.
+//!
+//! Module paths are kept public for existing callers, but most implementation
+//! modules are hidden from generated documentation so the rustdoc surface
+//! reflects the intended API contract.
+
+#[doc(hidden)]
 pub mod assessment;
+#[doc(hidden)]
 pub mod authoring;
+#[doc(hidden)]
 pub mod capability;
+#[doc(hidden)]
 pub mod datalog {
-    pub use mercurio_runtime::datalog::*;
+    pub use mercurio_runtime::{
+        Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
+        Explanation, Fact, Rule, RulePack, Term, evaluate, extract_graph_facts,
+        load_default_rulepacks, materialize_core_indexes,
+    };
 }
+#[doc(hidden)]
 pub mod derived {
-    pub use mercurio_model::derived::*;
+    pub use mercurio_model::{
+        DerivedFeatureCache, DerivedFeatureManifest, DerivedFeatureManifestError,
+        DerivedFeatureRegistry, DerivedFeatureRule, DerivedFeatureSpec, DerivedPropertySource,
+        DerivedPropertyValue, builtin_core_derived_feature_manifest, derived_properties,
+        derived_property, manifest_from_metadata,
+    };
 }
+#[doc(hidden)]
 pub mod element_view;
+#[doc(hidden)]
 pub mod expression {
-    pub use mercurio_model::expression::*;
+    pub use mercurio_model::{
+        BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
+        ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
+        UnaryExpressionOp,
+    };
 }
+#[doc(hidden)]
 pub mod feasibility;
+#[doc(hidden)]
+#[allow(dead_code, unused_imports)]
 pub mod frontend;
 #[allow(deprecated)]
+#[doc(hidden)]
 pub mod goal;
+#[doc(hidden)]
 pub mod graph {
-    pub use mercurio_model::graph::*;
+    pub use mercurio_model::{
+        Edge, Element, ElementProperties, Graph, GraphArtifact, GraphError, NodeId,
+    };
 }
+#[doc(hidden)]
 pub mod identity;
+#[doc(hidden)]
 pub mod ir;
+#[doc(hidden)]
 pub mod language;
+#[doc(hidden)]
 pub mod library;
+#[doc(hidden)]
+#[allow(dead_code)]
 pub mod logging;
+#[doc(hidden)]
 pub mod metadata {
-    pub use mercurio_model::metadata::*;
+    pub use mercurio_model::{
+        ElementMetadataView, KirMetadataAnnotation, MetadataView, metadata_annotations,
+        metadata_annotations_named, metadata_string_property,
+    };
 }
+#[doc(hidden)]
 pub mod metamodel {
-    pub use mercurio_model::metamodel::*;
+    pub use mercurio_model::{
+        AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
+        MetamodelAttributeRegistry, MetamodelClassView, MetamodelFeatureRegistry,
+        MetamodelFeatureView, MetatypeQueryOverride, collect_specialization_ancestors,
+        effective_element_properties_with_derived, effective_properties,
+        effective_properties_with_derived, element_metatype, query_element_attributes,
+    };
 }
+#[doc(hidden)]
 pub mod mpack;
+#[doc(hidden)]
+#[allow(dead_code)]
 pub mod mutation;
+#[doc(hidden)]
 pub mod outline;
+#[doc(hidden)]
 pub mod paths;
+#[doc(hidden)]
 pub mod performance;
+#[doc(hidden)]
 pub mod plugin_registry;
+#[doc(hidden)]
 pub mod proposal;
+#[doc(hidden)]
 pub mod python_codegen;
 #[allow(deprecated)]
+#[doc(hidden)]
 pub mod query;
+#[doc(hidden)]
 pub mod runtime {
-    pub use mercurio_runtime::runtime::*;
+    pub use mercurio_runtime::{
+        ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+        RuntimeProfileTimings,
+    };
 }
+#[doc(hidden)]
 pub mod semantic_compare;
+#[doc(hidden)]
 pub mod semantic_profile;
+#[doc(hidden)]
 pub mod semantic_target;
+#[doc(hidden)]
 pub mod session;
+#[doc(hidden)]
 pub mod source_set;
+#[doc(hidden)]
 pub mod syntax_compare;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[allow(deprecated)]
+#[doc(hidden)]
 pub mod views;
+#[doc(hidden)]
 pub mod workspace;
+#[doc(hidden)]
 pub mod workspace_cache;
 
 pub use assessment::{
@@ -110,14 +188,15 @@ pub use goal::{
     SemanticGoalProfile, SemanticGoalProfileKind, SemanticGoalSpec, default_model_quality_profile,
     evaluate_semantic_goal, explain_semantic_goal,
 };
-pub use graph::{Edge, Graph, GraphError, NodeId};
+pub use graph::{Edge, Element, Graph, GraphError, NodeId};
 pub use identity::{
     ConceptId, ElementId, PackageId, ProfileId, RelationshipId, SourceSpanRef, StdlibVersion,
     stable_digest, workspace_revision_for_kir_document,
 };
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, REPRESENTATIVE_KIR_JSON, load_model_stack, load_model_stack_with_registry,
+    KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON, load_model_stack,
+    load_model_stack_with_registry,
 };
 pub use language::{
     BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
