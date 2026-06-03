@@ -78,10 +78,11 @@ pub mod metadata {
 pub mod metamodel {
     pub use mercurio_model::{
         AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-        MetamodelAttributeRegistry, MetamodelClassView, MetamodelFeatureRegistry,
-        MetamodelFeatureView, MetatypeQueryOverride, collect_specialization_ancestors,
-        effective_element_properties_with_derived, effective_properties,
-        effective_properties_with_derived, element_metatype, query_element_attributes,
+        MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
+        MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
+        collect_specialization_ancestors, effective_element_properties_with_derived,
+        effective_properties, effective_properties_with_derived, element_metatype,
+        query_element_attributes,
     };
 }
 #[doc(hidden)]
@@ -151,10 +152,10 @@ pub use capability::{
     CapabilityReadinessReport, CapabilityReadinessStatus, CapabilityRegistry, CapabilityRunReport,
     CapabilityRunRequest, CapabilityRunStatus, CapabilityTarget, DecisionAssessment,
     DecisionContext, EvidenceEdge, EvidenceGraph, EvidenceNode, EvidenceNodeKind, EvidenceRelation,
-    GenericImpactCapability, InsightConfidence, InsightKind, InsightPolarity, InsightScope,
-    InsightSeverity, SemanticArtifact, SemanticCapability, SemanticDiagnostic,
-    SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight, SemanticWorkspaceSnapshot,
-    assess_decision_context,
+    GenericImpactCapability, GenericModelInspectionCapability, InsightConfidence, InsightKind,
+    InsightPolarity, InsightScope, InsightSeverity, SemanticArtifact, SemanticCapability,
+    SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight,
+    SemanticWorkspaceSnapshot, assess_decision_context,
 };
 pub use datalog::{
     Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
@@ -219,9 +220,10 @@ pub use metadata::{
 };
 pub use metamodel::{
     AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-    MetamodelAttributeRegistry, MetamodelClassView, MetamodelFeatureRegistry, MetamodelFeatureView,
-    MetatypeQueryOverride, collect_specialization_ancestors, effective_properties,
-    effective_properties_with_derived, element_metatype, query_element_attributes,
+    MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
+    MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
+    collect_specialization_ancestors, effective_properties, effective_properties_with_derived,
+    element_metatype, query_element_attributes,
 };
 pub use mpack::{
     MpackLanguageProfile, MpackLibrary, MpackManifest, MpackPythonPackage,

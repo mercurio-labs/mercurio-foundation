@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 use crate::graph::{Edge, Graph};
 use crate::identity::{SourceSpanRef, workspace_revision_for_kir_document};
 use crate::ir::{KirDocument, KirElement, KirError};
-use crate::metamodel::MetamodelAttributeRegistry;
+use crate::metamodel::{
+    MetamodelAttributeDeclaration, MetamodelAttributeRegistry, collect_specialization_ancestors,
+};
 use crate::mutation::WorkspaceRevision;
 
 #[derive(Debug, Clone)]
@@ -431,6 +433,9 @@ pub struct CapabilityRegistry {
 #[derive(Debug, Clone, Default)]
 pub struct GenericImpactCapability;
 
+#[derive(Debug, Clone, Default)]
+pub struct GenericModelInspectionCapability;
+
 impl SemanticWorkspaceSnapshot {
     pub fn from_document(kir: KirDocument) -> Result<Self, CapabilityError> {
         Self::from_document_with_profile(kir, None)
@@ -514,6 +519,9 @@ impl CapabilityRegistry {
         registry
             .register(GenericImpactCapability)
             .expect("foundation impact capability id is unique");
+        registry
+            .register(GenericModelInspectionCapability)
+            .expect("foundation inspection capability id is unique");
         registry
     }
 
@@ -855,6 +863,127 @@ fn push_unique(values: &mut Vec<String>, value: impl Into<String>) {
     }
 }
 
+impl SemanticCapability for GenericModelInspectionCapability {
+    fn descriptor(&self) -> CapabilityDescriptor {
+        CapabilityDescriptor {
+            id: "foundation.inspect.model".to_string(),
+            name: "Generic Model and Metamodel Inspection".to_string(),
+            kind: CapabilityKind::Custom,
+            profile_id: None,
+            target_kinds: Vec::new(),
+            relationship_kinds: Vec::new(),
+            input_artifact_kinds: Vec::new(),
+            produced_insight_kinds: vec![
+                InsightKind::AffectedElement,
+                InsightKind::TraceCompleteness,
+            ],
+            produced_artifact_kinds: vec![
+                "model_inspection_summary".to_string(),
+                "model_inspection_result".to_string(),
+            ],
+            deterministic: true,
+            cost_class: CapabilityCostClass::Cheap,
+            maturity: CapabilityMaturity::Prototype,
+        }
+    }
+
+    fn readiness(
+        &self,
+        workspace: &SemanticWorkspaceSnapshot,
+        target: &CapabilityTarget,
+    ) -> CapabilityReadinessReport {
+        if workspace.graph.elements().is_empty() {
+            return readiness(
+                self.descriptor().id,
+                target.clone(),
+                CapabilityReadinessStatus::NotApplicable,
+                "workspace has no semantic elements",
+            );
+        }
+        match target {
+            CapabilityTarget::Element { element_id } if workspace.element(element_id).is_none() => {
+                readiness(
+                    self.descriptor().id,
+                    target.clone(),
+                    CapabilityReadinessStatus::Blocked,
+                    format!("target element `{element_id}` does not exist"),
+                )
+            }
+            _ => readiness(
+                self.descriptor().id,
+                target.clone(),
+                CapabilityReadinessStatus::Ready,
+                "model and metamodel inspection can run over the selected scope",
+            ),
+        }
+    }
+
+    fn run(
+        &self,
+        workspace: &SemanticWorkspaceSnapshot,
+        request: CapabilityRunRequest,
+    ) -> Result<CapabilityRunReport, CapabilityError> {
+        let readiness = self.readiness(workspace, &request.target);
+        if readiness.status == CapabilityReadinessStatus::Blocked
+            || readiness.status == CapabilityReadinessStatus::NotApplicable
+        {
+            return Ok(CapabilityRunReport {
+                run_id: request.run_id,
+                capability_id: request.capability_id,
+                status: match readiness.status {
+                    CapabilityReadinessStatus::NotApplicable => CapabilityRunStatus::NotApplicable,
+                    _ => CapabilityRunStatus::Error,
+                },
+                target: request.target,
+                insights: Vec::new(),
+                artifacts: Vec::new(),
+                evidence: EvidenceGraph::default(),
+                diagnostics: Vec::new(),
+                limitations: vec![readiness.message],
+            });
+        }
+
+        let query = parameter_string(&request, "query");
+        let limit = parameter_usize(&request, "limit", 8);
+        let (insights, payload, evidence) = match &request.target {
+            CapabilityTarget::Element { element_id } => {
+                inspect_element(workspace, element_id, &request.run_id)?
+            }
+            _ => match query.as_deref().filter(|value| !value.trim().is_empty()) {
+                Some(query) => inspect_query(workspace, query, limit, &request.run_id),
+                None => inspect_workspace_summary(workspace, limit, &request.run_id),
+            },
+        };
+        let artifact = SemanticArtifact {
+            id: format!("artifact.{}.inspection", request.run_id),
+            kind: if query.is_some() || matches!(request.target, CapabilityTarget::Element { .. }) {
+                "model_inspection_result".to_string()
+            } else {
+                "model_inspection_summary".to_string()
+            },
+            schema: "mercurio.capability.model_inspection.v1".to_string(),
+            digest: value_digest(&payload),
+            element_refs: insights
+                .iter()
+                .map(|insight| insight.subject.clone())
+                .collect(),
+            payload,
+        };
+
+        Ok(CapabilityRunReport {
+            run_id: request.run_id,
+            capability_id: request.capability_id,
+            status: CapabilityRunStatus::Passed,
+            target: request.target,
+            insights,
+            artifacts: vec![artifact],
+            evidence,
+            diagnostics: Vec::new(),
+            limitations: Vec::new(),
+        })
+    }
+}
+
 impl SemanticCapability for GenericImpactCapability {
     fn descriptor(&self) -> CapabilityDescriptor {
         CapabilityDescriptor {
@@ -998,6 +1127,9 @@ fn graph_impact_for_workspace(
         .into_iter()
         .filter_map(|(node_id, degree)| {
             let element = workspace.graph.element(node_id)?;
+            if !is_authored_model_element(element) {
+                return None;
+            }
             Some((element.element_id.clone(), degree))
         })
         .collect::<Vec<_>>();
@@ -1047,6 +1179,13 @@ fn graph_impact_for_workspace(
     let payload = json!({
         "schema": "mercurio.capability.graph_impact.v1",
         "scope": "workspace",
+        "analysisScope": "authored_model",
+        "filteredLibraryElementCount": workspace
+            .graph
+            .elements()
+            .iter()
+            .filter(|element| !is_authored_model_element(element))
+            .count(),
         "hotspots": ranked
             .iter()
             .map(|(element_id, degree)| json!({ "elementId": element_id, "degree": degree }))
@@ -1118,6 +1257,336 @@ fn graph_impact_for_element(
     Ok((vec![insight], payload, evidence))
 }
 
+fn inspect_workspace_summary(
+    workspace: &SemanticWorkspaceSnapshot,
+    limit: usize,
+    run_id: &str,
+) -> (Vec<SemanticInsight>, Value, EvidenceGraph) {
+    let authored_count = workspace
+        .graph
+        .elements()
+        .iter()
+        .filter(|element| is_authored_model_element(element))
+        .count();
+    let library_count = workspace
+        .graph
+        .elements()
+        .len()
+        .saturating_sub(authored_count);
+    let metamodel_count = workspace
+        .graph
+        .elements()
+        .iter()
+        .filter(|element| {
+            string_property(element, "metamodel_layer").is_some()
+                || string_property(element, "metamodel_language").is_some()
+                || matches!(element.kind.as_ref(), "Metaclass" | "MetamodelFeature")
+        })
+        .count();
+    let mut kind_counts = BTreeMap::<String, usize>::new();
+    for element in workspace.graph.elements() {
+        if is_authored_model_element(element) {
+            *kind_counts.entry(element.kind.to_string()).or_default() += 1;
+        }
+    }
+    let top_kinds = kind_counts
+        .into_iter()
+        .map(|(kind, count)| json!({ "kind": kind, "count": count }))
+        .take(limit)
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "schema": "mercurio.capability.model_inspection.v1",
+        "scope": "workspace",
+        "elementCount": workspace.graph.elements().len(),
+        "authoredElementCount": authored_count,
+        "libraryElementCount": library_count,
+        "metamodelElementCount": metamodel_count,
+        "relationshipCount": workspace.graph.edges().len(),
+        "topAuthoredKinds": top_kinds,
+    });
+    let evidence_id = format!("evidence.{run_id}.inspection.workspace");
+    let evidence = EvidenceGraph {
+        nodes: vec![EvidenceNode {
+            id: evidence_id.clone(),
+            kind: EvidenceNodeKind::Fact,
+            label: "Workspace model inspection inventory".to_string(),
+            element_refs: Vec::new(),
+            source_spans: Vec::new(),
+            properties: BTreeMap::from([
+                (
+                    "elementCount".to_string(),
+                    Value::from(workspace.graph.elements().len()),
+                ),
+                (
+                    "authoredElementCount".to_string(),
+                    Value::from(authored_count),
+                ),
+                (
+                    "libraryElementCount".to_string(),
+                    Value::from(library_count),
+                ),
+                (
+                    "metamodelElementCount".to_string(),
+                    Value::from(metamodel_count),
+                ),
+            ]),
+        }],
+        edges: Vec::new(),
+    };
+    let insight = SemanticInsight {
+        id: format!("insight.{run_id}.inspection.workspace"),
+        kind: InsightKind::TraceCompleteness,
+        subject: SemanticElementRef {
+            element_id: "workspace".to_string(),
+            qualified_name: None,
+            label: Some("Workspace".to_string()),
+        },
+        claim: format!(
+            "Workspace inspection found {authored_count} authored elements, {library_count} library elements, and {metamodel_count} metamodel elements."
+        ),
+        polarity: InsightPolarity::Neutral,
+        severity: InsightSeverity::Info,
+        confidence: InsightConfidence::High,
+        scope: InsightScope::Workspace,
+        evidence_ids: vec![evidence_id],
+        source_spans: Vec::new(),
+        metrics: BTreeMap::from([
+            (
+                "authored_element_count".to_string(),
+                Value::from(authored_count),
+            ),
+            (
+                "library_element_count".to_string(),
+                Value::from(library_count),
+            ),
+            (
+                "metamodel_element_count".to_string(),
+                Value::from(metamodel_count),
+            ),
+        ]),
+        assumptions: Vec::new(),
+        limitations: Vec::new(),
+    };
+    (vec![insight], payload, evidence)
+}
+
+fn inspect_query(
+    workspace: &SemanticWorkspaceSnapshot,
+    query: &str,
+    limit: usize,
+    run_id: &str,
+) -> (Vec<SemanticInsight>, Value, EvidenceGraph) {
+    let terms = inspection_query_terms(query);
+    let mut matches = Vec::new();
+    for term in &terms {
+        matches.extend(inspection_name_matches(workspace, term));
+    }
+    matches.sort_by(|left, right| {
+        inspection_match_rank(left, &terms)
+            .cmp(&inspection_match_rank(right, &terms))
+            .then_with(|| left.element_id.cmp(&right.element_id))
+    });
+    matches.dedup_by(|left, right| left.element_id == right.element_id);
+    matches.truncate(limit);
+
+    let mut evidence = EvidenceGraph::default();
+    let mut insights = Vec::new();
+    let mut result_payloads = Vec::new();
+    for (index, element) in matches.iter().enumerate() {
+        let evidence_id = format!("evidence.{run_id}.inspection.match.{}", index + 1);
+        let subject = element_ref(element);
+        let inspection = element_inspection_payload(workspace, element);
+        evidence.nodes.push(EvidenceNode {
+            id: evidence_id.clone(),
+            kind: EvidenceNodeKind::KirElement,
+            label: format!("Inspection match {}", element.element_id),
+            element_refs: vec![subject.clone()],
+            source_spans: workspace.source_spans(&element.element_id),
+            properties: BTreeMap::from([
+                ("query".to_string(), Value::String(query.to_string())),
+                (
+                    "elementId".to_string(),
+                    Value::String(element.element_id.clone()),
+                ),
+            ]),
+        });
+        insights.push(SemanticInsight {
+            id: format!("insight.{run_id}.inspection.match.{}", index + 1),
+            kind: InsightKind::AffectedElement,
+            subject,
+            claim: format!(
+                "Inspection query `{query}` matched `{}` from the compiled KIR graph.",
+                element.element_id
+            ),
+            polarity: InsightPolarity::Neutral,
+            severity: InsightSeverity::Info,
+            confidence: InsightConfidence::High,
+            scope: InsightScope::Workspace,
+            evidence_ids: vec![evidence_id],
+            source_spans: workspace.source_spans(&element.element_id),
+            metrics: BTreeMap::new(),
+            assumptions: Vec::new(),
+            limitations: Vec::new(),
+        });
+        result_payloads.push(inspection);
+    }
+
+    if insights.is_empty() {
+        let evidence_id = format!("evidence.{run_id}.inspection.no_match");
+        evidence.nodes.push(EvidenceNode {
+            id: evidence_id.clone(),
+            kind: EvidenceNodeKind::Fact,
+            label: format!("Inspection query `{query}` matched no elements"),
+            element_refs: Vec::new(),
+            source_spans: Vec::new(),
+            properties: BTreeMap::from([("query".to_string(), Value::String(query.to_string()))]),
+        });
+        insights.push(SemanticInsight {
+            id: format!("insight.{run_id}.inspection.no_match"),
+            kind: InsightKind::MissingEvidence,
+            subject: SemanticElementRef {
+                element_id: "workspace".to_string(),
+                qualified_name: None,
+                label: Some("Workspace".to_string()),
+            },
+            claim: format!("Inspection query `{query}` matched no compiled KIR elements."),
+            polarity: InsightPolarity::Neutral,
+            severity: InsightSeverity::Info,
+            confidence: InsightConfidence::High,
+            scope: InsightScope::Workspace,
+            evidence_ids: vec![evidence_id],
+            source_spans: Vec::new(),
+            metrics: BTreeMap::new(),
+            assumptions: Vec::new(),
+            limitations: Vec::new(),
+        });
+    }
+
+    let payload = json!({
+        "schema": "mercurio.capability.model_inspection.v1",
+        "scope": "query",
+        "query": query,
+        "terms": terms,
+        "matchCount": result_payloads.len(),
+        "matches": result_payloads,
+    });
+    (insights, payload, evidence)
+}
+
+fn inspect_element(
+    workspace: &SemanticWorkspaceSnapshot,
+    element_id: &str,
+    run_id: &str,
+) -> Result<(Vec<SemanticInsight>, Value, EvidenceGraph), CapabilityError> {
+    let element = workspace.element(element_id).ok_or_else(|| {
+        CapabilityError::InvalidRequest(format!("unknown element `{element_id}`"))
+    })?;
+    let payload = json!({
+        "schema": "mercurio.capability.model_inspection.v1",
+        "scope": "element",
+        "element": element_inspection_payload(workspace, element),
+    });
+    let subject = element_ref(element);
+    let evidence_id = format!("evidence.{run_id}.inspection.element.{element_id}");
+    let evidence = EvidenceGraph {
+        nodes: vec![EvidenceNode {
+            id: evidence_id.clone(),
+            kind: EvidenceNodeKind::KirElement,
+            label: format!("Inspection for {element_id}"),
+            element_refs: vec![subject.clone()],
+            source_spans: workspace.source_spans(element_id),
+            properties: BTreeMap::from([(
+                "elementId".to_string(),
+                Value::String(element_id.to_string()),
+            )]),
+        }],
+        edges: Vec::new(),
+    };
+    let insight = SemanticInsight {
+        id: format!("insight.{run_id}.inspection.element.{element_id}"),
+        kind: InsightKind::AffectedElement,
+        subject,
+        claim: format!("Inspection resolved `{element_id}` in the compiled KIR graph."),
+        polarity: InsightPolarity::Neutral,
+        severity: InsightSeverity::Info,
+        confidence: InsightConfidence::High,
+        scope: InsightScope::Element {
+            element_id: element_id.to_string(),
+        },
+        evidence_ids: vec![evidence_id],
+        source_spans: workspace.source_spans(element_id),
+        metrics: BTreeMap::new(),
+        assumptions: Vec::new(),
+        limitations: Vec::new(),
+    };
+    Ok((vec![insight], payload, evidence))
+}
+
+fn element_inspection_payload(
+    workspace: &SemanticWorkspaceSnapshot,
+    element: &crate::graph::Element,
+) -> Value {
+    let ancestors = collect_specialization_ancestors(&workspace.graph, element.id);
+    let declared_attributes = workspace
+        .metamodel_registry
+        .declared_attributes_for(&element.element_id)
+        .iter()
+        .map(metamodel_attribute_payload)
+        .collect::<Vec<_>>();
+    let inherited_attributes = ancestors
+        .iter()
+        .flat_map(|ancestor| {
+            workspace
+                .metamodel_registry
+                .declared_attributes_for(&ancestor.element_id)
+                .iter()
+                .map(metamodel_attribute_payload)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let incoming = workspace
+        .graph
+        .incoming_edges(element.id)
+        .take(12)
+        .collect::<Vec<_>>();
+    let outgoing = workspace
+        .graph
+        .outgoing_edges(element.id)
+        .take(12)
+        .collect::<Vec<_>>();
+    json!({
+        "id": element.element_id,
+        "label": element_ref(element).label,
+        "qualifiedName": string_property(element, "qualified_name"),
+        "kind": element.kind.as_ref(),
+        "layer": element.layer,
+        "scope": if is_authored_model_element(element) { "authored_model" } else { "library_or_metamodel" },
+        "declaredAttributes": declared_attributes,
+        "inheritedAttributes": inherited_attributes,
+        "specializationAncestors": ancestors
+            .iter()
+            .map(|ancestor| json!({
+                "id": ancestor.element_id,
+                "label": element_ref(ancestor).label,
+                "kind": ancestor.kind.as_ref(),
+            }))
+            .collect::<Vec<_>>(),
+        "incoming": edge_payload(workspace, &incoming),
+        "outgoing": edge_payload(workspace, &outgoing),
+    })
+}
+
+fn metamodel_attribute_payload(attribute: &MetamodelAttributeDeclaration) -> Value {
+    json!({
+        "name": attribute.name,
+        "declaredBy": attribute.declared_by.id,
+        "typeLabel": attribute.type_label,
+        "featureKind": attribute.feature_kind,
+        "multiplicityLower": attribute.multiplicity_lower,
+        "multiplicityUpper": attribute.multiplicity_upper,
+    })
+}
+
 fn edge_payload(workspace: &SemanticWorkspaceSnapshot, edges: &[&Edge]) -> Vec<Value> {
     edges
         .iter()
@@ -1138,6 +1607,85 @@ fn parameter_usize(request: &CapabilityRunRequest, key: &str, default: usize) ->
         .and_then(Value::as_u64)
         .map(|value| value as usize)
         .unwrap_or(default)
+}
+
+fn parameter_string(request: &CapabilityRunRequest, key: &str) -> Option<String> {
+    request
+        .parameters
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn inspection_query_terms(query: &str) -> Vec<String> {
+    let mut terms = query
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != ':' && ch != '.' && ch != '_')
+        .map(str::trim)
+        .filter(|term| term.len() >= 3)
+        .filter(|term| {
+            term.chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+                || term.contains("::")
+                || term.contains('.')
+                || term.contains('_')
+        })
+        .map(|term| term.trim_matches('.').to_string())
+        .collect::<Vec<_>>();
+    if query.to_ascii_lowercase().contains("element") && !terms.iter().any(|term| term == "Element")
+    {
+        terms.push("Element".to_string());
+    }
+    terms.sort();
+    terms.dedup();
+    terms.truncate(12);
+    terms
+}
+
+fn inspection_name_matches<'a>(
+    workspace: &'a SemanticWorkspaceSnapshot,
+    term: &str,
+) -> Vec<&'a crate::graph::Element> {
+    let normalized = normalize_inspection_name(term);
+    workspace
+        .graph
+        .elements()
+        .iter()
+        .filter(|element| {
+            let id = normalize_inspection_name(&element.element_id);
+            let label = element_ref(element).label.unwrap_or_default();
+            id == normalized
+                || id.ends_with(&format!(".{normalized}"))
+                || label == term
+                || string_property(element, "qualified_name").is_some_and(|qualified_name| {
+                    let qualified = normalize_inspection_name(&qualified_name);
+                    qualified == normalized || qualified.ends_with(&format!(".{normalized}"))
+                })
+        })
+        .collect()
+}
+
+fn inspection_match_rank(element: &crate::graph::Element, terms: &[String]) -> u8 {
+    if terms
+        .iter()
+        .any(|term| element.element_id == format!("KerML::Root::{term}"))
+    {
+        0
+    } else if terms.iter().any(|term| element.element_id == *term) {
+        1
+    } else if element.element_id.contains("::Root::") {
+        2
+    } else if !is_authored_model_element(element) {
+        3
+    } else {
+        4
+    }
+}
+
+fn normalize_inspection_name(value: &str) -> String {
+    value.trim().replace("::", ".")
 }
 
 fn element_ref(element: &crate::graph::Element) -> SemanticElementRef {
@@ -1196,6 +1744,57 @@ fn string_property(element: &crate::graph::Element, key: &str) -> Option<String>
         .get(key)
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+        .or_else(|| {
+            element
+                .properties
+                .get("metadata")
+                .and_then(|metadata| metadata.get(key))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn bool_property(element: &crate::graph::Element, key: &str) -> Option<bool> {
+    element
+        .properties
+        .get(key)
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            element
+                .properties
+                .get("metadata")
+                .and_then(|metadata| metadata.get(key))
+                .and_then(Value::as_bool)
+        })
+}
+
+fn is_authored_model_element(element: &crate::graph::Element) -> bool {
+    if bool_property(element, "is_library_element")
+        .or_else(|| bool_property(element, "isLibraryElement"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if string_property(element, "pilot_library_group").is_some()
+        || string_property(element, "library_group").is_some()
+        || string_property(element, "metamodel_layer").is_some()
+        || string_property(element, "metamodel_language").is_some()
+    {
+        return false;
+    }
+
+    if let Some(source_file) = string_property(element, "source_file") {
+        let normalized = source_file.replace('\\', "/");
+        if normalized.starts_with("Kernel Libraries/")
+            || normalized.starts_with("System Libraries/")
+            || normalized.starts_with("Domain Libraries/")
+        {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn value_digest(value: &Value) -> String {
@@ -1244,6 +1843,12 @@ mod tests {
                 .iter()
                 .any(|descriptor| descriptor.id == "foundation.impact.graph")
         );
+        assert!(
+            registry
+                .list()
+                .iter()
+                .any(|descriptor| descriptor.id == "foundation.inspect.model")
+        );
 
         let report = registry
             .run(
@@ -1260,6 +1865,138 @@ mod tests {
 
         assert!(!report.insights.is_empty());
         assert_eq!(report.artifacts[0].kind, "graph_impact_summary");
+    }
+
+    #[test]
+    fn model_inspection_resolves_metamodel_element_attributes() {
+        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "KerML::Root::Element".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "declared_name".to_string(),
+                        Value::String("Element".to_string()),
+                    )]),
+                },
+                metamodel_feature(
+                    "KerML::Root::Element::declaredName",
+                    "KerML::Root::Element",
+                    "declaredName",
+                    "declared_name",
+                    Some("String"),
+                ),
+                metamodel_feature(
+                    "KerML::Root::Element::ownedElement",
+                    "KerML::Root::Element",
+                    "ownedElement",
+                    "ownedElement",
+                    None,
+                ),
+            ],
+        })
+        .unwrap();
+        let registry = CapabilityRegistry::with_foundation_builtins();
+
+        let report = registry
+            .run(
+                &workspace,
+                CapabilityRunRequest {
+                    run_id: "run.inspect".to_string(),
+                    capability_id: "foundation.inspect.model".to_string(),
+                    target: CapabilityTarget::Workspace,
+                    parameters: BTreeMap::from([
+                        (
+                            "query".to_string(),
+                            Value::String("What are Element's attributes?".to_string()),
+                        ),
+                        ("limit".to_string(), Value::from(4)),
+                    ]),
+                    input_artifacts: Vec::new(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(report.status, CapabilityRunStatus::Passed);
+        assert_eq!(
+            report.artifacts[0].schema,
+            "mercurio.capability.model_inspection.v1"
+        );
+        assert_eq!(
+            report.artifacts[0].payload["matches"][0]["id"],
+            "KerML::Root::Element"
+        );
+        let attributes = report.artifacts[0].payload["matches"][0]["declaredAttributes"]
+            .as_array()
+            .unwrap();
+        assert!(
+            attributes
+                .iter()
+                .any(|attribute| attribute["name"] == "declared_name")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attribute| attribute["name"] == "ownedElement")
+        );
+    }
+
+    #[test]
+    fn graph_impact_workspace_hotspots_ignore_library_elements() {
+        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "ScalarValues::Real".to_string(),
+                    kind: "DataType".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "declared_name".to_string(),
+                            Value::String("Real".to_string()),
+                        ),
+                        ("is_library_element".to_string(), Value::Bool(true)),
+                        (
+                            "pilot_library_group".to_string(),
+                            Value::String("Kernel Libraries".to_string()),
+                        ),
+                    ]),
+                },
+                typed_usage("part.engine.power", "ScalarValues::Real"),
+                typed_usage("part.engine.torque", "ScalarValues::Real"),
+                typed_usage("part.engine.speed", "ScalarValues::Real"),
+                typed_usage("part.engine.temperature", "ScalarValues::Real"),
+                typed_usage("part.engine.efficiency", "ScalarValues::Real"),
+            ],
+        })
+        .unwrap();
+        let registry = CapabilityRegistry::with_foundation_builtins();
+
+        let report = registry
+            .run(
+                &workspace,
+                CapabilityRunRequest {
+                    run_id: "run.impact".to_string(),
+                    capability_id: "foundation.impact.graph".to_string(),
+                    target: CapabilityTarget::Workspace,
+                    parameters: BTreeMap::from([("limit".to_string(), Value::from(3))]),
+                    input_artifacts: Vec::new(),
+                },
+            )
+            .unwrap();
+
+        assert!(
+            report
+                .insights
+                .iter()
+                .all(|insight| insight.subject.element_id != "ScalarValues::Real")
+        );
+        assert_eq!(
+            report.artifacts[0].payload["filteredLibraryElementCount"],
+            Value::from(1)
+        );
     }
 
     #[test]
@@ -1416,6 +2153,50 @@ mod tests {
             metrics: BTreeMap::new(),
             assumptions: Vec::new(),
             limitations: Vec::new(),
+        }
+    }
+
+    fn typed_usage(id: &str, type_id: &str) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "PartUsage".to_string(),
+            layer: 2,
+            properties: BTreeMap::from([
+                ("declared_name".to_string(), Value::String(id.to_string())),
+                ("type".to_string(), Value::String(type_id.to_string())),
+            ]),
+        }
+    }
+
+    fn metamodel_feature(
+        id: &str,
+        owner: &str,
+        declared_name: &str,
+        kir_property: &str,
+        type_label: Option<&str>,
+    ) -> KirElement {
+        let mut properties = BTreeMap::from([
+            ("owner".to_string(), Value::String(owner.to_string())),
+            (
+                "declared_name".to_string(),
+                Value::String(declared_name.to_string()),
+            ),
+            (
+                "kir_property".to_string(),
+                Value::String(kir_property.to_string()),
+            ),
+        ]);
+        if let Some(type_label) = type_label {
+            properties.insert(
+                "type_label".to_string(),
+                Value::String(type_label.to_string()),
+            );
+        }
+        KirElement {
+            id: id.to_string(),
+            kind: "MetamodelFeature".to_string(),
+            layer: 1,
+            properties,
         }
     }
 }

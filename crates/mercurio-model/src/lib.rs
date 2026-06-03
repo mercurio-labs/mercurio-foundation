@@ -1,9 +1,21 @@
-pub mod derived;
-pub mod expression;
-pub mod graph;
-pub mod ir;
-pub mod metadata;
-pub mod metamodel;
+//! Model-layer data structures and semantic helpers.
+//!
+//! Prefer the root-level re-exports as the supported API. The module tree is
+//! public for compatibility with existing callers, but hidden from rustdoc so
+//! generated documentation focuses on the intentional contract.
+
+#[doc(hidden)]
+mod derived;
+#[doc(hidden)]
+mod expression;
+#[doc(hidden)]
+mod graph;
+#[doc(hidden)]
+mod ir;
+#[doc(hidden)]
+mod metadata;
+#[doc(hidden)]
+mod metamodel;
 
 pub use derived::{
     DerivedFeatureCache, DerivedFeatureManifest, DerivedFeatureManifestError,
@@ -27,7 +39,9 @@ pub use metadata::{
 };
 pub use metamodel::{
     AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-    MetamodelAttributeRegistry, MetamodelClassView, MetamodelFeatureRegistry, MetamodelFeatureView,
-    MetatypeQueryOverride, collect_specialization_ancestors, effective_properties,
-    effective_properties_with_derived, element_metatype, query_element_attributes,
+    MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
+    MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
+    collect_specialization_ancestors, effective_element_properties_with_derived,
+    effective_properties, effective_properties_with_derived, element_metatype,
+    query_element_attributes,
 };
