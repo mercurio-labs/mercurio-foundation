@@ -15,11 +15,43 @@ use crate::ir::KIR_SCHEMA_VERSION;
 use crate::ir::{KirDocument, KirElement, KirError};
 
 pub type SourceCompiler = fn(&BTreeMap<String, String>) -> Result<KirDocument, AuthoringError>;
+pub type ModuleRenderer = fn(&AuthoringModule) -> String;
+pub type PackageRenderer = fn(&Package, usize) -> String;
+pub type DeclarationRenderer = fn(&Declaration, usize) -> String;
+
+#[derive(Clone, Copy)]
+pub struct AuthoringRenderProfile {
+    pub render_module: ModuleRenderer,
+    pub render_package: PackageRenderer,
+    pub render_declaration: DeclarationRenderer,
+}
+
+impl Default for AuthoringRenderProfile {
+    fn default() -> Self {
+        textual_model_authoring_render_profile()
+    }
+}
+
+impl fmt::Debug for AuthoringRenderProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthoringRenderProfile")
+            .finish_non_exhaustive()
+    }
+}
+
+pub fn textual_model_authoring_render_profile() -> AuthoringRenderProfile {
+    AuthoringRenderProfile {
+        render_module: render_textual_module,
+        render_package: render_textual_package,
+        render_declaration: render_textual_declaration,
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct AuthoringProject {
     files: BTreeMap<String, FileModel>,
     source_compiler: Option<SourceCompiler>,
+    render_profile: AuthoringRenderProfile,
 }
 
 impl PartialEq for AuthoringProject {
@@ -452,6 +484,11 @@ impl AuthoringProject {
         self
     }
 
+    pub fn with_render_profile(mut self, render_profile: AuthoringRenderProfile) -> Self {
+        self.render_profile = render_profile;
+        self
+    }
+
     pub fn from_model_files(files: BTreeMap<String, String>) -> Result<Self, AuthoringError> {
         load_authoring_project_from_model(files)
     }
@@ -487,7 +524,7 @@ impl AuthoringProject {
             .files
             .get(path)
             .ok_or_else(|| AuthoringError::MissingFile(path.to_string()))?;
-        Ok(file.module.render())
+        Ok(self.render_module(&file.module))
     }
 
     pub fn semantic_attributes(
@@ -1157,6 +1194,7 @@ impl AuthoringProject {
                         let declaration = render_declaration_at_qname(
                             &file.module,
                             &QualifiedName::parse(&render_qname),
+                            self.render_profile,
                         )
                         .ok_or_else(|| AuthoringError::MissingDeclaration(render_qname.clone()))?;
                         (
@@ -1196,17 +1234,16 @@ impl AuthoringProject {
                                     package_model.name.as_dot_string() == render_qname
                                 }) {
                                     render_with_indent(
-                                        &file
-                                            .module
-                                            .package
-                                            .as_ref()
-                                            .expect("package exists")
-                                            .render(0),
+                                        &(self.render_profile.render_package)(
+                                            file.module.package.as_ref().expect("package exists"),
+                                            0,
+                                        ),
                                         node.indent,
                                     )
                                 } else if let Some(declaration) = render_declaration_at_qname(
                                     &file.module,
                                     &QualifiedName::parse(&render_qname),
+                                    self.render_profile,
                                 ) {
                                     render_with_indent(&declaration, node.indent)
                                 } else {
@@ -1263,7 +1300,7 @@ impl AuthoringProject {
                 .files
                 .get(file_path)
                 .ok_or_else(|| AuthoringError::MissingFile(file_path.clone()))?;
-            let rendered = file.module.render();
+            let rendered = self.render_module(&file.module);
             let span = rendered_span_for_text(&rendered);
             edited.insert(file_path.clone(), rendered);
             spans.insert(file_path.clone(), vec![span]);
@@ -1311,7 +1348,7 @@ impl AuthoringProject {
     fn render_all_files(&self) -> BTreeMap<String, String> {
         self.files
             .iter()
-            .map(|(path, file)| (path.clone(), file.module.render()))
+            .map(|(path, file)| (path.clone(), self.render_module(&file.module)))
             .collect()
     }
 
@@ -1323,10 +1360,14 @@ impl AuthoringProject {
                     path.clone(),
                     file.original_text
                         .clone()
-                        .unwrap_or_else(|| file.module.render()),
+                        .unwrap_or_else(|| self.render_module(&file.module)),
                 )
             })
             .collect()
+    }
+
+    fn render_module(&self, module: &AuthoringModule) -> String {
+        (self.render_profile.render_module)(module)
     }
 
     fn ensure_file_mut(&mut self, path: &str) -> &mut FileModel {
@@ -1871,6 +1912,15 @@ impl Usage {
                 ));
             }
             lines.push(format!("{prefix}}}"));
+            return lines.join("\n");
+        }
+        if self.keyword == "satisfy"
+            && let Some(reference_target) = &self.reference_target
+        {
+            header.push_str("satisfy requirement ");
+            header.push_str(reference_target.tail().unwrap_or("target"));
+            header.push(';');
+            lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
         }
         header.push_str(&self.keyword);
@@ -3469,30 +3519,36 @@ fn extract_from_members(
 fn render_declaration_at_qname(
     module: &AuthoringModule,
     qualified_name: &QualifiedName,
+    render_profile: AuthoringRenderProfile,
 ) -> Option<String> {
     if module
         .package
         .as_ref()
         .is_some_and(|package| package.name == *qualified_name)
     {
-        return module.package.as_ref().map(|package| package.render(0));
+        return module
+            .package
+            .as_ref()
+            .map(|package| (render_profile.render_package)(package, 0));
     }
     if let Some(package) = &module.package
         && let Some(rendered) = render_decl_in_members(
             &package.members,
             &package.name.as_dot_string(),
             qualified_name,
+            render_profile,
         )
     {
         return Some(rendered);
     }
-    render_decl_in_members(&module.members, "", qualified_name)
+    render_decl_in_members(&module.members, "", qualified_name, render_profile)
 }
 
 fn render_decl_in_members(
     declarations: &[Declaration],
     owner: &str,
     qualified_name: &QualifiedName,
+    render_profile: AuthoringRenderProfile,
 ) -> Option<String> {
     for declaration in declarations {
         let qname = match declaration {
@@ -3503,17 +3559,17 @@ fn render_decl_in_members(
             Declaration::Import(_) => continue,
         };
         if qname == qualified_name.as_dot_string() {
-            return Some(declaration.render(0));
+            return Some((render_profile.render_declaration)(declaration, 0));
         }
         let nested = match declaration {
             Declaration::Package(package) => {
-                render_decl_in_members(&package.members, &qname, qualified_name)
+                render_decl_in_members(&package.members, &qname, qualified_name, render_profile)
             }
             Declaration::Definition(definition) => {
-                render_decl_in_members(&definition.members, &qname, qualified_name)
+                render_decl_in_members(&definition.members, &qname, qualified_name, render_profile)
             }
             Declaration::Usage(usage) => {
-                render_decl_in_members(&usage.members, &qname, qualified_name)
+                render_decl_in_members(&usage.members, &qname, qualified_name, render_profile)
             }
             Declaration::Alias(_) | Declaration::Import(_) => None,
         };
@@ -3522,6 +3578,18 @@ fn render_decl_in_members(
         }
     }
     None
+}
+
+fn render_textual_module(module: &AuthoringModule) -> String {
+    module.render()
+}
+
+fn render_textual_package(package: &Package, indent: usize) -> String {
+    package.render(indent)
+}
+
+fn render_textual_declaration(declaration: &Declaration, indent: usize) -> String {
+    declaration.render(indent)
 }
 
 fn render_docs(docs: &[String], indent: usize) -> Vec<String> {

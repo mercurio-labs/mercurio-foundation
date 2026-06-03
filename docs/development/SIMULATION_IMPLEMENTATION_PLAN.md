@@ -9,7 +9,7 @@ Implement the first Mercurio-native simulation slice as an event-based dynamic a
 The first implementation should prove this loop:
 
 ```text
-SysML / KerML source
+source language or generated model data
         |
         v
       KIR
@@ -26,12 +26,20 @@ SysML / KerML source
 
 This plan is the implementation companion to [SIMULATION_ARCHITECTURE.md](SIMULATION_ARCHITECTURE.md).
 
+## Foundation Boundary
+
+Simulation can live in foundation only while it remains a KIR-native runtime service. The engine should consume executable facts projected from KIR and produce deterministic traces, diagnostics, and evidence. It should not parse SysML, depend on a SysML metamodel bundle, or require SysML-specific element names.
+
+SysML and KerML support belongs at the projection boundary: language repositories lower source behavior into canonical KIR behavior properties or adapter-normalized simulation facts. Foundation may recognize broadly modeled state/transition shapes when they are already present in KIR, but source-language-specific lowering rules, library semantics, and syntax recovery stay outside foundation.
+
+Product workflows may expose "SysML simulation" or "hybrid simulation" UX, but those labels should wrap the foundation service instead of shaping its core API.
+
 ## Scope
 
 ### In Scope
 
 - Native event-step simulation engine.
-- Simulation module in `mercurio-core`.
+- Simulation module in `mercurio-runtime`.
 - Hand-authored KIR fixture for the first state-machine slice.
 - Optional source-to-KIR integration only after KIR shape is clear.
 - Guard evaluation through runtime `expression_ir`.
@@ -56,10 +64,10 @@ This plan is the implementation companion to [SIMULATION_ARCHITECTURE.md](SIMULA
 
 ## Module Layout
 
-Add a dedicated module:
+Add or evolve a dedicated module:
 
 ```text
-crates/mercurio-core/src/simulation/
+crates/mercurio-runtime/src/simulation/
   mod.rs
   model.rs
   scenario.rs
@@ -69,7 +77,7 @@ crates/mercurio-core/src/simulation/
   assertions.rs
 ```
 
-Expose it from `crates/mercurio-core/src/lib.rs`:
+Expose it from `crates/mercurio-runtime/src/lib.rs`:
 
 ```rust
 pub mod simulation;
@@ -267,7 +275,7 @@ Guard example:
 }
 ```
 
-This `Mercurio::Simulation::*` fixture vocabulary is an internal bootstrap shape. Later source-derived SysML/KerML behavior should lower into canonical KIR behavior properties or adapter-normalized simulation facts.
+This `Mercurio::Simulation::*` fixture vocabulary is an internal bootstrap shape. Later source-derived behavior should lower into canonical KIR behavior properties or adapter-normalized simulation facts. Any SysML/KerML-specific interpretation belongs in language packages before the data reaches this engine.
 
 ## Expression Evaluation Work
 

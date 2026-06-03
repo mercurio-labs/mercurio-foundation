@@ -1,11 +1,6 @@
 pub mod assessment;
 pub mod authoring;
-pub mod behavior {
-    pub use mercurio_runtime::behavior::*;
-}
-pub mod constraints {
-    pub use mercurio_runtime::constraints::*;
-}
+pub mod capability;
 pub mod datalog {
     pub use mercurio_runtime::datalog::*;
 }
@@ -51,9 +46,6 @@ pub mod semantic_compare;
 pub mod semantic_profile;
 pub mod semantic_target;
 pub mod session;
-pub mod simulation {
-    pub use mercurio_runtime::simulation::*;
-}
 pub mod source_set;
 pub mod syntax_compare;
 #[cfg(test)]
@@ -66,28 +58,25 @@ pub mod workspace_cache;
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
     AssessmentQuery, AssessmentReport, AssessmentSpec, AssessmentStatus, RuntimeAssessmentRequest,
-    RuntimeAssessmentResult, parsed_module_assessment_facts, query_evaluation,
-    run_evaluation_assessment, run_graph_assessment, run_runtime_assessment,
+    RuntimeAssessmentResult, query_evaluation, run_evaluation_assessment, run_graph_assessment,
+    run_runtime_assessment,
 };
 pub use authoring::{
     Alias, AttributeWritePolicy, AuthoringError, AuthoringModule, AuthoringProject,
-    ContainerSelector, Declaration, Definition, Import, Mutation, MutationResult, Package,
-    QualifiedName, RenderedSpan, SemanticAttribute, SemanticEdit, Usage, ValidationReport,
-    WriteBackMode, WriteBackResult, create_empty_model, load_authoring_project_from_kir,
+    AuthoringRenderProfile, ContainerSelector, Declaration, Definition, Import, Mutation,
+    MutationResult, Package, QualifiedName, RenderedSpan, SemanticAttribute, SemanticEdit, Usage,
+    ValidationReport, WriteBackMode, WriteBackResult, create_empty_model,
+    load_authoring_project_from_kir, textual_model_authoring_render_profile,
 };
-pub use behavior::{
-    StateMachineExecutionReport, StateMachineExecutionStatus, StateMachineModel,
-    StateMachineScenario, StateMachineScenarioEvent, StateMachineTraceStep,
-    StateMachineValidationFinding, StateMachineValidationSeverity, StateNode,
-    StateTransitionTriggerKind, TransitionNode, project_state_machines,
-    project_state_machines_from_graph,
-};
-pub use constraints::{
-    ConstraintDiagnosticDto, ConstraintExplanationDto, ConstraintGraphEdgeDto,
-    ConstraintGraphRequestDto, ConstraintGraphViewDto, ConstraintRecordDto,
-    ConstraintSolveRequestDto, ConstraintSolveResultDto, ConstraintStatusDto,
-    ConstraintVariableDto, ConstraintVariableStatusDto, RequirementCheckDto, RequirementStatusDto,
-    execution_context_from_nested_values, render_constraint_graph, solve_constraints,
+pub use capability::{
+    CapabilityCostClass, CapabilityDescriptor, CapabilityError, CapabilityKind, CapabilityMaturity,
+    CapabilityReadinessReport, CapabilityReadinessStatus, CapabilityRegistry, CapabilityRunReport,
+    CapabilityRunRequest, CapabilityRunStatus, CapabilityTarget, DecisionAssessment,
+    DecisionContext, EvidenceEdge, EvidenceGraph, EvidenceNode, EvidenceNodeKind, EvidenceRelation,
+    GenericImpactCapability, InsightConfidence, InsightKind, InsightPolarity, InsightScope,
+    InsightSeverity, SemanticArtifact, SemanticCapability, SemanticDiagnostic,
+    SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight, SemanticWorkspaceSnapshot,
+    assess_decision_context,
 };
 pub use datalog::{
     Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
@@ -165,8 +154,10 @@ pub use mutation::{
     SemanticReasoningContext, SemanticRelationshipContext, WorkspaceRevision,
     default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
+    enrich_semantic_reasoning_context_with_child_affordances_for_capability,
     enrich_semantic_reasoning_context_with_graph,
     semantic_reasoning_context_from_authoring_project,
+    semantic_reasoning_context_from_authoring_project_with_oracle,
 };
 pub use outline::{
     EditorOutlineKey, EditorOutlineNodeDto, build_editor_outline,

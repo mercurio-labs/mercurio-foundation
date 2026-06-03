@@ -2,11 +2,88 @@
   "allowed_core_crates": [
     "mercurio-foundation",
     "mercurio-kir",
-    "mercurio-language-contracts"
+    "mercurio-language-contracts",
+    "mercurio-model",
+    "mercurio-runtime"
   ],
   "known_migration_crates": [],
-  "forbidden_dependencies": {},
+  "forbidden_dependencies": {
+    "mercurio-foundation": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
+      "mercurio-views",
+      "mercurio-wasm"
+    ],
+    "mercurio-kir": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
+      "mercurio-views",
+      "mercurio-wasm"
+    ],
+    "mercurio-language-contracts": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
+      "mercurio-views",
+      "mercurio-wasm"
+    ],
+    "mercurio-model": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
+      "mercurio-views",
+      "mercurio-wasm"
+    ],
+    "mercurio-runtime": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
+      "mercurio-views",
+      "mercurio-wasm"
+    ]
+  },
   "temporary_dependency_exceptions": {},
+  "reasoning_ai_boundary": {
+    "workspace_root": "../mercurio-reasoning",
+    "ai_crate": "mercurio-ai",
+    "deterministic_crates": [
+      "mercurio-plugin-api",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host"
+    ]
+  },
   "forbidden_root_dirs": [
     "apps",
     "services",

@@ -12,7 +12,6 @@ use crate::mutation::{
     ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, RelationshipChange,
     SemanticDiff, SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
 };
-use crate::semantic_profile::normalize_definition_keyword;
 pub use crate::semantic_profile::{
     AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
     SemanticCapabilityOracle,
@@ -352,7 +351,7 @@ where
                 specializes,
             } => Some(Mutation::AddDefinition {
                 container: container_selector_for(project, container),
-                keyword: normalize_definition_keyword(keyword),
+                keyword: self.oracle.normalize_definition_keyword(keyword),
                 name: name.clone(),
                 specializes: specializes
                     .iter()
@@ -489,18 +488,24 @@ where
                 );
                 if let Some(ty) = ty {
                     if !exists(project, ty) {
-                        *requires_supporting_changes = true;
-                        suggested_supporting_changes.push(SemanticMutation::AddDefinition {
-                            container: parent_ref(ty).unwrap_or_else(|| container.clone()),
-                            keyword: "part".to_string(),
-                            name: ty
-                                .qualified_name
-                                .rsplit('.')
-                                .next()
-                                .unwrap_or(&ty.qualified_name)
-                                .to_string(),
-                            specializes: Vec::new(),
-                        });
+                        if let Some(definition_keyword) =
+                            self.oracle.supporting_definition_keyword_for_usage(keyword)
+                        {
+                            *requires_supporting_changes = true;
+                            suggested_supporting_changes.push(SemanticMutation::AddDefinition {
+                                container: parent_ref(ty).unwrap_or_else(|| container.clone()),
+                                keyword: definition_keyword,
+                                name: ty
+                                    .qualified_name
+                                    .rsplit('.')
+                                    .next()
+                                    .unwrap_or(&ty.qualified_name)
+                                    .to_string(),
+                                specializes: Vec::new(),
+                            });
+                        } else {
+                            self.require_existing(project, ty, index, "type", blocking_reasons);
+                        }
                     } else {
                         let definition_kind = declaration_kind_label(project, ty)
                             .unwrap_or_else(|| "definition".to_string());
@@ -832,42 +837,42 @@ mod tests {
     use crate::authoring::load_authoring_project_from_model;
     use crate::mutation::{MutationEvidence, MutationProposal, SemanticExpression};
 
-    fn hybrid_vehicle_project() -> AuthoringProject {
+    fn neutral_model_project() -> AuthoringProject {
         load_authoring_project_from_model(BTreeMap::from([(
-            "hybrid.model".to_string(),
+            "system.model".to_string(),
             r#"
-package HybridVehicle {
-    part def HybridVehicle {
-        part engine : InternalCombustionEngine;
-        part motor : ElectricMotor;
-        part battery : BatteryPack;
-        part transmission : Transmission;
-        part controlSystem : EnergyManagementController;
+package SystemModel {
+    component def System {
+        component processor : Processor;
+        component actuator : Actuator;
+        component sensor : Sensor;
+        component dataStore : DataStore;
+        component controller : Controller;
     }
 
-    part def InternalCombustionEngine {
-        attribute efficiency : Real;
-        attribute fuelConsumption : Real;
+    component def Processor {
+        value throughput : Real;
+        value latency : Real;
     }
 
-    part def ElectricMotor {
-        attribute efficiency : Real;
-        attribute maxPower : Real;
+    component def Actuator {
+        value responseTime : Real;
+        value maxLoad : Real;
     }
 
-    part def BatteryPack {
-        attribute capacity : Real;
-        attribute mass : Real;
+    component def Sensor {
+        value sampleRate : Real;
+        value mass : Real;
     }
 
-    part def Transmission;
+    component def DataStore;
 
-    part def EnergyManagementController {
-        attribute strategy : String;
+    component def Controller {
+        value strategy : String;
     }
 
-    requirement def ImproveEfficiency {
-        attribute targetEfficiencyGain : Real;
+    objective def ReliabilityObjective {
+        value targetAvailability : Real;
     }
 }
 "#
@@ -877,33 +882,31 @@ package HybridVehicle {
     }
 
     #[test]
-    fn hybrid_vehicle_efficiency_proposal_is_feasible_for_supported_operations() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+    fn component_update_proposal_is_feasible_for_supported_operations() {
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
-            intent: "Improve hybrid vehicle efficiency through regenerative braking".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            intent: "Add diagnostics to the system model".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![
                 SemanticMutation::AddDefinition {
-                    container: ElementRef::new("HybridVehicle"),
-                    keyword: "part def".to_string(),
-                    name: "RegenerativeBrakingSystem".to_string(),
+                    container: ElementRef::new("SystemModel"),
+                    keyword: "component".to_string(),
+                    name: "DiagnosticsModule".to_string(),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddUsage {
-                    container: ElementRef::new("HybridVehicle.HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "regenerativeBraking".to_string(),
-                    ty: Some(ElementRef::new("HybridVehicle.RegenerativeBrakingSystem")),
+                    container: ElementRef::new("SystemModel.System"),
+                    keyword: "component".to_string(),
+                    name: "diagnostics".to_string(),
+                    ty: Some(ElementRef::new("SystemModel.DiagnosticsModule")),
                     specializes: Vec::new(),
                 },
             ],
             evidence: vec![MutationEvidence {
-                element: Some(ElementRef::new("HybridVehicle.BatteryPack")),
-                summary: "Battery storage exists and can receive recovered energy.".to_string(),
+                element: Some(ElementRef::new("SystemModel.Sensor")),
+                summary: "Existing sensors can provide diagnostics data.".to_string(),
             }],
-            rationale: Some(
-                "Recovering braking energy can improve vehicle efficiency.".to_string(),
-            ),
+            rationale: Some("Diagnostics improve model observability.".to_string()),
             workspace_revision: context.workspace_revision.clone(),
         };
 
@@ -915,11 +918,12 @@ package HybridVehicle {
         let diff = report.resulting_diff.unwrap();
         assert!(
             diff.added_elements
-                .contains(&ElementRef::new("HybridVehicle.RegenerativeBrakingSystem"))
+                .contains(&ElementRef::new("SystemModel.DiagnosticsModule"))
         );
-        assert!(diff.added_elements.contains(&ElementRef::new(
-            "HybridVehicle.HybridVehicle.regenerativeBraking"
-        )));
+        assert!(
+            diff.added_elements
+                .contains(&ElementRef::new("SystemModel.System.diagnostics"))
+        );
 
         let application = service
             .apply_checked_plan(&context, &report.normalized_plan.unwrap())
@@ -927,26 +931,26 @@ package HybridVehicle {
         assert!(
             application
                 .changed_declarations
-                .contains("HybridVehicle.RegenerativeBrakingSystem")
+                .contains("SystemModel.DiagnosticsModule")
         );
         assert!(
             application
                 .changed_declarations
-                .contains("HybridVehicle.HybridVehicle.regenerativeBraking")
+                .contains("SystemModel.System.diagnostics")
         );
     }
 
     #[test]
-    fn missing_usage_type_suggests_supporting_definition() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+    fn neutral_feasibility_blocks_missing_usage_type_without_language_profile() {
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
-            intent: "Add regenerative braking usage before its definition exists".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            intent: "Add diagnostics usage before its definition exists".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
-                container: ElementRef::new("HybridVehicle.HybridVehicle"),
-                keyword: "part".to_string(),
-                name: "regenerativeBraking".to_string(),
-                ty: Some(ElementRef::new("HybridVehicle.RegenerativeBrakingSystem")),
+                container: ElementRef::new("SystemModel.System"),
+                keyword: "component".to_string(),
+                name: "diagnostics".to_string(),
+                ty: Some(ElementRef::new("SystemModel.DiagnosticsModule")),
                 specializes: Vec::new(),
             }],
             evidence: Vec::new(),
@@ -956,28 +960,26 @@ package HybridVehicle {
 
         let report = CoreMutationFeasibilityService::new().check(&context, &proposal);
 
-        assert_eq!(
-            report.status,
-            FeasibilityStatus::RequiresSupportingChanges,
-            "{report:#?}"
-        );
-        assert_eq!(report.suggested_supporting_changes.len(), 1);
-        assert!(matches!(
-            &report.suggested_supporting_changes[0],
-            SemanticMutation::AddDefinition { name, .. } if name == "RegenerativeBrakingSystem"
-        ));
+        assert_eq!(report.status, FeasibilityStatus::Blocked, "{report:#?}");
+        assert!(report.suggested_supporting_changes.is_empty());
+        assert!(report.blocking_reasons.iter().any(|issue| {
+            issue.kind == FeasibilityIssueKind::ResolutionFailure
+                && issue
+                    .message
+                    .contains("missing type: SystemModel.DiagnosticsModule")
+        }));
     }
 
     #[test]
     fn relationship_candidate_is_semantically_checked_and_writable() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
-            intent: "Trace regenerative braking to efficiency requirement".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            intent: "Relate the system to its objective".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddRelationship {
-                kind: "satisfy".to_string(),
-                source: ElementRef::new("HybridVehicle.HybridVehicle"),
-                target: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                kind: "relate".to_string(),
+                source: ElementRef::new("SystemModel.System"),
+                target: ElementRef::new("SystemModel.ReliabilityObjective"),
             }],
             evidence: Vec::new(),
             rationale: None,
@@ -994,9 +996,9 @@ package HybridVehicle {
                 .unwrap()
                 .added_relationships
                 .contains(&RelationshipChange {
-                    kind: "satisfy".to_string(),
-                    source: ElementRef::new("HybridVehicle.HybridVehicle"),
-                    target: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                    kind: "relate".to_string(),
+                    source: ElementRef::new("SystemModel.System"),
+                    target: ElementRef::new("SystemModel.ReliabilityObjective"),
                 })
         );
 
@@ -1006,37 +1008,38 @@ package HybridVehicle {
         assert!(
             application
                 .changed_declarations
-                .contains("HybridVehicle.HybridVehicle.ImproveEfficiency")
+                .contains("SystemModel.System.ReliabilityObjective")
         );
         let mut project = context.project.clone();
         let result = project
             .apply_mutation(crate::authoring::Mutation::AddRelationship {
                 container: crate::authoring::ContainerSelector::Declaration {
-                    qualified_name: QualifiedName::parse("HybridVehicle.HybridVehicle"),
+                    qualified_name: QualifiedName::parse("SystemModel.System"),
                 },
-                kind: "satisfy".to_string(),
-                source: QualifiedName::parse("HybridVehicle.HybridVehicle"),
-                target: QualifiedName::parse("HybridVehicle.ImproveEfficiency"),
+                kind: "relate".to_string(),
+                source: QualifiedName::parse("SystemModel.System"),
+                target: QualifiedName::parse("SystemModel.ReliabilityObjective"),
             })
             .unwrap();
         let edited = project.write_back_mutation(&result).unwrap();
-        let source = edited.edited_files.get("hybrid.model").unwrap();
+        let source = edited.edited_files.get("system.model").unwrap();
         assert!(
-            source
-                .contains("satisfy ImproveEfficiency references HybridVehicle.ImproveEfficiency;")
+            source.contains(
+                "relate ReliabilityObjective references SystemModel.ReliabilityObjective;"
+            )
         );
     }
 
     #[test]
     fn stale_workspace_revision_blocks_feasibility() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Stale proposal".to_string(),
             affected_elements: Vec::new(),
             operations: vec![SemanticMutation::AddDefinition {
-                container: ElementRef::new("HybridVehicle"),
-                keyword: "part def".to_string(),
-                name: "LowRollingResistanceTire".to_string(),
+                container: ElementRef::new("SystemModel"),
+                keyword: "component".to_string(),
+                name: "AuditModule".to_string(),
                 specializes: Vec::new(),
             }],
             evidence: Vec::new(),
@@ -1061,68 +1064,68 @@ package HybridVehicle {
     fn mutation_plan_can_generate_model_from_empty_project() {
         let context = MutationContext::from_project(AuthoringProject::default());
         let proposal = MutationProposal {
-            intent: "Generate a minimal hybrid vehicle model".to_string(),
+            intent: "Generate a minimal system model".to_string(),
             affected_elements: Vec::new(),
             operations: vec![
                 SemanticMutation::AddPackage {
-                    target_file: "hybrid.model".to_string(),
-                    name: "HybridVehicle".to_string(),
+                    target_file: "system.model".to_string(),
+                    name: "SystemModel".to_string(),
                 },
                 SemanticMutation::AddDefinition {
-                    container: ElementRef::new("HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "HybridVehicle".to_string(),
+                    container: ElementRef::new("SystemModel"),
+                    keyword: "component".to_string(),
+                    name: "System".to_string(),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddDefinition {
-                    container: ElementRef::new("HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "InternalCombustionEngine".to_string(),
+                    container: ElementRef::new("SystemModel"),
+                    keyword: "component".to_string(),
+                    name: "Processor".to_string(),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddDefinition {
-                    container: ElementRef::new("HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "ElectricMotor".to_string(),
+                    container: ElementRef::new("SystemModel"),
+                    keyword: "component".to_string(),
+                    name: "Actuator".to_string(),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddDefinition {
-                    container: ElementRef::new("HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "BatteryPack".to_string(),
+                    container: ElementRef::new("SystemModel"),
+                    keyword: "component".to_string(),
+                    name: "Sensor".to_string(),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddDefinition {
-                    container: ElementRef::new("HybridVehicle"),
-                    keyword: "requirement".to_string(),
-                    name: "ImproveEfficiency".to_string(),
+                    container: ElementRef::new("SystemModel"),
+                    keyword: "objective".to_string(),
+                    name: "ReliabilityObjective".to_string(),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddUsage {
-                    container: ElementRef::new("HybridVehicle.HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "engine".to_string(),
-                    ty: Some(ElementRef::new("HybridVehicle.InternalCombustionEngine")),
+                    container: ElementRef::new("SystemModel.System"),
+                    keyword: "component".to_string(),
+                    name: "processor".to_string(),
+                    ty: Some(ElementRef::new("SystemModel.Processor")),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddUsage {
-                    container: ElementRef::new("HybridVehicle.HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "motor".to_string(),
-                    ty: Some(ElementRef::new("HybridVehicle.ElectricMotor")),
+                    container: ElementRef::new("SystemModel.System"),
+                    keyword: "component".to_string(),
+                    name: "actuator".to_string(),
+                    ty: Some(ElementRef::new("SystemModel.Actuator")),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddUsage {
-                    container: ElementRef::new("HybridVehicle.HybridVehicle"),
-                    keyword: "part".to_string(),
-                    name: "battery".to_string(),
-                    ty: Some(ElementRef::new("HybridVehicle.BatteryPack")),
+                    container: ElementRef::new("SystemModel.System"),
+                    keyword: "component".to_string(),
+                    name: "sensor".to_string(),
+                    ty: Some(ElementRef::new("SystemModel.Sensor")),
                     specializes: Vec::new(),
                 },
                 SemanticMutation::AddRelationship {
-                    kind: "satisfy".to_string(),
-                    source: ElementRef::new("HybridVehicle.HybridVehicle"),
-                    target: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                    kind: "relate".to_string(),
+                    source: ElementRef::new("SystemModel.System"),
+                    target: ElementRef::new("SystemModel.ReliabilityObjective"),
                 },
             ],
             evidence: Vec::new(),
@@ -1139,27 +1142,27 @@ package HybridVehicle {
         let application = service
             .apply_checked_plan(&context, &report.normalized_plan.unwrap())
             .unwrap();
-        assert!(application.changed_files.contains("hybrid.model"));
+        assert!(application.changed_files.contains("system.model"));
         assert!(
             application
                 .changed_declarations
-                .contains("HybridVehicle.HybridVehicle.engine")
+                .contains("SystemModel.System.processor")
         );
         assert!(
             application
                 .changed_declarations
-                .contains("HybridVehicle.HybridVehicle.ImproveEfficiency")
+                .contains("SystemModel.System.ReliabilityObjective")
         );
     }
 
     #[test]
     fn mutation_plan_can_set_expression_and_emit_expression_ir() {
         let project = load_authoring_project_from_model(BTreeMap::from([(
-            "vehicle.model".to_string(),
+            "score.model".to_string(),
             r#"
 package Demo {
-    part vehicle {
-        attribute efficiency : Real;
+    component element {
+        value score : Real;
     }
 }
 "#
@@ -1168,10 +1171,10 @@ package Demo {
         .unwrap();
         let context = MutationContext::from_project(project);
         let proposal = MutationProposal {
-            intent: "Set vehicle efficiency expression".to_string(),
-            affected_elements: vec![ElementRef::new("Demo.vehicle.efficiency")],
+            intent: "Set element score expression".to_string(),
+            affected_elements: vec![ElementRef::new("Demo.element.score")],
             operations: vec![SemanticMutation::SetExpression {
-                element: ElementRef::new("Demo.vehicle.efficiency"),
+                element: ElementRef::new("Demo.element.score"),
                 expression: Some(SemanticExpression::Text("0.42".to_string())),
             }],
             evidence: Vec::new(),
@@ -1189,7 +1192,7 @@ package Demo {
                 .changed_attributes
                 .iter()
                 .any(
-                    |change| change.element == ElementRef::new("Demo.vehicle.efficiency")
+                    |change| change.element == ElementRef::new("Demo.element.score")
                         && change.attribute == "expression"
                 )
         );
@@ -1197,27 +1200,27 @@ package Demo {
         let mut project = context.project.clone();
         let result = project
             .apply_mutation(crate::authoring::Mutation::SetExpression {
-                qualified_name: QualifiedName::parse("Demo.vehicle.efficiency"),
+                qualified_name: QualifiedName::parse("Demo.element.score"),
                 expression: Some("0.42".to_string()),
             })
             .unwrap();
         let edited = project.write_back_mutation(&result).unwrap();
-        let source = edited.edited_files.get("vehicle.model").unwrap();
-        assert!(source.contains("attribute efficiency: Real = 0.42;"));
+        let source = edited.edited_files.get("score.model").unwrap();
+        assert!(source.contains("value score: Real = 0.42;"));
 
-        assert!(source.contains("attribute efficiency: Real = 0.42;"));
+        assert!(source.contains("value score: Real = 0.42;"));
     }
 
     #[test]
-    fn neutral_feasibility_allows_satisfy_relationship_without_language_profile() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+    fn neutral_feasibility_allows_profile_specific_relationship_without_language_profile() {
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
-            intent: "Invalid satisfy target".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            intent: "Profile-specific relationship target".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddRelationship {
-                kind: "satisfy".to_string(),
-                source: ElementRef::new("HybridVehicle.HybridVehicle"),
-                target: ElementRef::new("HybridVehicle.BatteryPack"),
+                kind: "profile-link".to_string(),
+                source: ElementRef::new("SystemModel.System"),
+                target: ElementRef::new("SystemModel.Sensor"),
             }],
             evidence: Vec::new(),
             rationale: None,
@@ -1231,16 +1234,16 @@ package Demo {
     }
 
     #[test]
-    fn neutral_feasibility_allows_part_usage_typing_without_language_profile() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+    fn neutral_feasibility_allows_profile_specific_usage_typing_without_language_profile() {
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
-            intent: "Invalid part typing".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            intent: "Profile-specific usage typing".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
-                container: ElementRef::new("HybridVehicle.HybridVehicle"),
-                keyword: "part".to_string(),
-                name: "invalidRequirementPart".to_string(),
-                ty: Some(ElementRef::new("HybridVehicle.ImproveEfficiency")),
+                container: ElementRef::new("SystemModel.System"),
+                keyword: "component".to_string(),
+                name: "objectiveComponent".to_string(),
+                ty: Some(ElementRef::new("SystemModel.ReliabilityObjective")),
                 specializes: Vec::new(),
             }],
             evidence: Vec::new(),
@@ -1256,12 +1259,12 @@ package Demo {
 
     #[test]
     fn feasibility_blocks_unwritable_semantic_attribute() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Invalid attribute write".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.HybridVehicle")],
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::SetAttribute {
-                element: ElementRef::new("HybridVehicle.HybridVehicle"),
+                element: ElementRef::new("SystemModel.System"),
                 attribute: "owner".to_string(),
                 value: serde_json::json!("pkg.Other"),
             }],
@@ -1280,23 +1283,21 @@ package Demo {
     }
 
     #[test]
-    fn neutral_feasibility_blocks_requirement_specific_attributes_without_language_profile() {
-        let context = MutationContext::from_project(hybrid_vehicle_project());
+    fn neutral_feasibility_blocks_profile_specific_attributes_without_language_profile() {
+        let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
-            intent: "Fill requirement metadata".to_string(),
-            affected_elements: vec![ElementRef::new("HybridVehicle.ImproveEfficiency")],
+            intent: "Fill objective metadata".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.ReliabilityObjective")],
             operations: vec![
                 SemanticMutation::SetAttribute {
-                    element: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                    element: ElementRef::new("SystemModel.ReliabilityObjective"),
                     attribute: "id".to_string(),
-                    value: serde_json::json!("REQ-EFF-001"),
+                    value: serde_json::json!("OBJ-REL-001"),
                 },
                 SemanticMutation::SetAttribute {
-                    element: ElementRef::new("HybridVehicle.ImproveEfficiency"),
+                    element: ElementRef::new("SystemModel.ReliabilityObjective"),
                     attribute: "text".to_string(),
-                    value: serde_json::json!(
-                        "The hybrid vehicle shall improve efficiency through energy recovery."
-                    ),
+                    value: serde_json::json!("The system model should improve observability."),
                 },
             ],
             evidence: Vec::new(),

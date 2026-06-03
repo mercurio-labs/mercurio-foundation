@@ -4,6 +4,10 @@ Mercurio Foundation is the KerML-aligned, source-language-neutral modeling subst
 
 It stores models as KIR, projects them into graphs, runs deterministic semantic services, and exposes contracts that source-language repositories can implement. It does not own concrete source syntax, versioned KerML/SysML metamodel bundles, command-line host behavior, UI adapters, or product workflows.
 
+Mercurio is also a semantic operations framework for AI-assisted systems engineering. Rather than treating models as static files or editor-only artifacts, Mercurio represents engineering systems as source-linked semantic workspaces: queryable, explainable, validated, transactional, and auditable. This lets humans, tools, and AI agents operate over the same model substrate.
+
+In that centaur-style workflow, Foundation provides the generic workspace services: stable model identity and source spans, semantic graph and derived features, validation and diagnostics, semantic diff and workspace revisioning, transactional mutation previews, and evidence-producing reasoning services. Domain repositories declare their own semantic capabilities on top of this substrate, with SysML as the first rich profile.
+
 ## Philosophy
 
 Foundation is meant to work like a small reflective modeling core:
@@ -34,9 +38,22 @@ See [KIR](docs/kir.md), [Language Services](docs/language-services.md), and the 
 
 - `mercurio-kir`: KIR schema, validation, merge, and IO.
 - `mercurio-language-contracts`: diagnostics, reports, expression IR, and language-service contracts.
-- `mercurio-foundation`: graph, runtime, query, package, workspace, session, mutation, and view APIs built on KIR.
+- `mercurio-model`: graph, metamodel, metadata, expression, and derived-model primitives.
+- `mercurio-runtime`: deterministic runtime queries, derived indexes, expression evaluation, and rulepacks.
+- `mercurio-foundation`: public substrate facade plus package, workspace, session, mutation, and view APIs built on KIR.
 
 See [Crates](docs/crates.md).
+
+## Boundary Check
+
+The repository boundary manifest lives at [repo-boundaries.json](repo-boundaries.json). The checker is
+hosted in the SysML tooling workspace so it can audit foundation policy while remaining outside the
+foundation crate set:
+
+```powershell
+cargo run --manifest-path ..\mercurio-sysml\Cargo.toml -p mercurio-tools --bin check_repo_boundaries -- --manifest repo-boundaries.json
+cargo run --manifest-path ..\mercurio-sysml\Cargo.toml -p mercurio-tools --bin check_repo_boundaries -- --manifest repo-boundaries.json --strict
+```
 
 ## Quick Example
 

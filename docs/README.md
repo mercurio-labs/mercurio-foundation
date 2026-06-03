@@ -11,6 +11,7 @@ Mercurio Foundation is a KerML-aligned, source-language-neutral modeling substra
 - [Sample Language](sample-language.md): a small source-language service that compiles custom syntax into KIR.
 - [Examples](examples.md): small Rust snippets for KIR, graph, runtime, and language-service usage.
 - [Performance](performance.md): large-model KIR timing and memory harness.
+- [Semantic Capability Architecture Plan](development/SEMANTIC_CAPABILITY_ARCHITECTURE_PLAN.md): plan for additive evidence-producing capabilities, SysML profile ownership, and centaur decision workflows.
 
 ## Boundary
 

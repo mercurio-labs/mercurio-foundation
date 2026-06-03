@@ -30,6 +30,14 @@ pub trait SemanticCapabilityOracle {
     fn doc_id_attribute_aliases(&self) -> &'static [&'static str] {
         &["id"]
     }
+
+    fn supporting_definition_keyword_for_usage(&self, _usage_kind: &str) -> Option<String> {
+        None
+    }
+
+    fn normalize_definition_keyword(&self, keyword: &str) -> String {
+        keyword.trim().to_string()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -116,12 +124,4 @@ impl SemanticCapabilityOracle for ConservativeSemanticCapabilityOracle {
             }),
         }
     }
-}
-
-pub fn normalize_definition_keyword(keyword: &str) -> String {
-    keyword
-        .strip_suffix(" def")
-        .unwrap_or(keyword)
-        .trim()
-        .to_string()
 }

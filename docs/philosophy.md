@@ -16,6 +16,24 @@ Foundation treats a model as structured semantic data:
 
 This keeps the substrate reusable. A language repository can provide parsing and metamodel-specific compilation. A product can provide persistence, collaboration, UI, and authorization. Foundation remains the common semantic core.
 
+## AI-Assisted Semantic Operations
+
+Mercurio is designed around a different assumption than classic modeling frameworks: modern engineering tools will not only render and edit models, they will collaborate with humans over model intent.
+
+An AI assistant cannot safely work from raw text alone. It needs a semantic workspace that can answer:
+
+- What does this element mean?
+- Where is it defined?
+- What depends on it?
+- What can be changed safely?
+- What would this mutation affect?
+- Is the result valid?
+- What evidence supports this conclusion?
+
+Mercurio's core role is to provide that workspace. KIR, graph indexes, source spans, semantic diffs, mutation proposals, validation reports, reasoning artifacts, and evidence graphs are not auxiliary features; they are the substrate for AI-assisted systems engineering.
+
+In this model, domain languages plug in declarative semantic capabilities. Foundation owns workspace identity, graph traversal, transactions, diagnostics, evidence, and interface orchestration. A language profile owns domain meaning, such as SysML definition and usage semantics, feature typing, specialization, subsetting, redefinition, allocation, requirement traceability, behavior, and simulation readiness.
+
 ## KerML Alignment
 
 Foundation should be honest about the shape of that core:
@@ -44,6 +62,8 @@ Foundation follows that separation, but it does not require a specific code gene
 - `Graph` is the navigable relationship view.
 - `Runtime` is the deterministic evaluation layer.
 - `LanguageService` is the contract for plugging in source-language compilers.
+
+The AI-facing distinction is that Foundation also exposes semantic operations, not just reflective access. The same substrate can support a CLI, language server, workbench UI, MCP server, or AI agent because each interface can ask the same validated questions and receive the same source-linked evidence.
 
 ## Contract Compared To EMF
 

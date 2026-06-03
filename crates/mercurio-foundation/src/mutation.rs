@@ -180,6 +180,22 @@ pub fn semantic_reasoning_context_from_authoring_project(
     focus: Vec<ElementRef>,
     max_elements: usize,
 ) -> SemanticReasoningContext {
+    semantic_reasoning_context_from_authoring_project_with_oracle(
+        project,
+        workspace_revision,
+        focus,
+        max_elements,
+        &crate::semantic_profile::ConservativeSemanticCapabilityOracle,
+    )
+}
+
+pub fn semantic_reasoning_context_from_authoring_project_with_oracle(
+    project: &AuthoringProject,
+    workspace_revision: WorkspaceRevision,
+    focus: Vec<ElementRef>,
+    max_elements: usize,
+    oracle: &impl SemanticCapabilityOracle,
+) -> SemanticReasoningContext {
     let mut elements = Vec::new();
     let mut relationships = Vec::new();
     let mut source_files = Vec::new();
@@ -195,6 +211,7 @@ pub fn semantic_reasoning_context_from_authoring_project(
             &mut elements,
             &mut relationships,
             &mut truncated,
+            oracle,
         );
     }
 
@@ -216,6 +233,18 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances(
     max_affordances: usize,
 ) {
     let capability_context = default_semantic_mutation_capability_context();
+    enrich_semantic_reasoning_context_with_child_affordances_for_capability(
+        context,
+        max_affordances,
+        &capability_context,
+    );
+}
+
+pub fn enrich_semantic_reasoning_context_with_child_affordances_for_capability(
+    context: &mut SemanticReasoningContext,
+    max_affordances: usize,
+    capability_context: &SemanticMutationCapabilityContext,
+) {
     let focus = context
         .focus
         .iter()
@@ -256,7 +285,7 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances(
                     child_kind: keyword.clone(),
                     status: "candidate".to_string(),
                     reason: Some(
-                        "candidate from core Model v2 writable definition vocabulary; feasibility remains authoritative"
+                        "candidate from the active language mutation profile; feasibility remains authoritative"
                             .to_string(),
                     ),
                 },
@@ -272,7 +301,7 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances(
                     child_kind: keyword.clone(),
                     status: "candidate".to_string(),
                     reason: Some(
-                        "candidate from core Model v2 writable usage vocabulary; feasibility remains authoritative"
+                        "candidate from the active language mutation profile; feasibility remains authoritative"
                             .to_string(),
                     ),
                 },
@@ -386,6 +415,7 @@ fn collect_module_semantic_context(
     elements: &mut Vec<SemanticElementContext>,
     relationships: &mut Vec<SemanticRelationshipContext>,
     truncated: &mut bool,
+    oracle: &impl SemanticCapabilityOracle,
 ) {
     if let Some(package) = &module.package {
         let package_name = package.name.as_dot_string();
@@ -413,6 +443,7 @@ fn collect_module_semantic_context(
                 elements,
                 relationships,
                 truncated,
+                oracle,
             );
         }
     }
@@ -426,6 +457,7 @@ fn collect_module_semantic_context(
             elements,
             relationships,
             truncated,
+            oracle,
         );
     }
 }
@@ -438,6 +470,7 @@ fn collect_declaration_semantic_context(
     elements: &mut Vec<SemanticElementContext>,
     relationships: &mut Vec<SemanticRelationshipContext>,
     truncated: &mut bool,
+    oracle: &impl SemanticCapabilityOracle,
 ) {
     match declaration {
         Declaration::Package(package) => {
@@ -466,6 +499,7 @@ fn collect_declaration_semantic_context(
                     elements,
                     relationships,
                     truncated,
+                    oracle,
                 );
             }
         }
@@ -517,6 +551,7 @@ fn collect_declaration_semantic_context(
                     elements,
                     relationships,
                     truncated,
+                    oracle,
                 );
             }
         }
@@ -546,7 +581,7 @@ fn collect_declaration_semantic_context(
                     source: ElementRef::new(qname.clone()),
                     target: ElementRef::new(target.as_dot_string()),
                 });
-                if semantic_trace_relationship_uses_owner_source(&usage.keyword) {
+                if oracle.relationship_uses_owner_as_source(&usage.keyword) {
                     if let Some(owner) = &owner {
                         relationships.push(SemanticRelationshipContext {
                             kind: usage.keyword.clone(),
@@ -555,7 +590,7 @@ fn collect_declaration_semantic_context(
                         });
                     }
                 }
-            } else if semantic_trace_relationship_uses_owner_source(&usage.keyword) {
+            } else if oracle.relationship_uses_owner_as_source(&usage.keyword) {
                 if let Some(owner) = &owner {
                     relationships.push(SemanticRelationshipContext {
                         kind: usage.keyword.clone(),
@@ -588,6 +623,7 @@ fn collect_declaration_semantic_context(
                     elements,
                     relationships,
                     truncated,
+                    oracle,
                 );
             }
         }
@@ -695,11 +731,6 @@ fn qualify_context_name(owner: Option<&str>, name: &str) -> String {
         .filter(|owner| !owner.is_empty())
         .map(|owner| format!("{owner}.{name}"))
         .unwrap_or_else(|| name.to_string())
-}
-
-fn semantic_trace_relationship_uses_owner_source(keyword: &str) -> bool {
-    crate::semantic_profile::ConservativeSemanticCapabilityOracle
-        .relationship_uses_owner_as_source(keyword)
 }
 
 pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabilityContext {
