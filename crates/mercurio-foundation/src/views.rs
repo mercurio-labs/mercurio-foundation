@@ -610,6 +610,7 @@ pub fn library_tree_view_from_document(
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[deprecated(note = "requirement table views are domain-specific; use mercurio-requirements")]
 pub struct RequirementTableViewDto {
     pub title: String,
     pub columns: Vec<RequirementTableColumnDto>,
@@ -619,6 +620,7 @@ pub struct RequirementTableViewDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[deprecated(note = "requirement table views are domain-specific; use mercurio-requirements")]
 pub struct RequirementTableColumnDto {
     pub key: String,
     pub label: String,
@@ -626,6 +628,7 @@ pub struct RequirementTableColumnDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[deprecated(note = "requirement table views are domain-specific; use mercurio-requirements")]
 pub struct RequirementTableRowDto {
     pub id: String,
     pub name: Option<String>,
@@ -638,12 +641,16 @@ pub struct RequirementTableRowDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[deprecated(note = "requirement table views are domain-specific; use mercurio-requirements")]
 pub struct RequirementSourceDto {
     pub file: Option<String>,
     pub start_line: Option<u64>,
     pub end_line: Option<u64>,
 }
 
+#[deprecated(
+    note = "requirement table views are domain-specific; use mercurio-requirements::requirements_table_view"
+)]
 pub fn requirements_table_view(graph: &Graph) -> RequirementTableViewDto {
     let derived = materialize_core_indexes(graph, &[]).ok();
     let mut rows = graph

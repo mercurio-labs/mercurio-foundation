@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::frontend::ast::{
     AliasDecl, Declaration, Expr, GenericDefinitionDecl, GenericUsageDecl, ImportDecl, PackageDecl,
-    ParsedModule, PartDefinitionDecl, PartUsageDecl, QualifiedName, SourceSpan,
+    ParsedModule, QualifiedName, SourceSpan,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,25 +173,34 @@ fn push_declaration_node(
     path: &str,
     nodes: &mut Vec<SyntaxSnapshotNode>,
 ) {
+    if let Some(definition) = declaration.as_definition_like() {
+        nodes.push(generic_definition_node(&definition, path));
+        for (index, child) in definition.members.iter().enumerate() {
+            let child_path = format!("{path}.{index}");
+            push_declaration_node(child, &child_path, nodes);
+        }
+        return;
+    }
+    if let Some(usage) = declaration.as_usage_like() {
+        nodes.push(generic_usage_node(&usage, path));
+        for (index, child) in usage.body_members.iter().enumerate() {
+            let child_path = format!("{path}.{index}");
+            push_declaration_node(child, &child_path, nodes);
+        }
+        return;
+    }
+
     let node = match declaration {
         Declaration::Package(package) => package_node(package, path),
         Declaration::Import(import) => import_node(import, path),
-        Declaration::PartDefinition(definition) => part_definition_node(definition, path),
-        Declaration::PartUsage(usage) => part_usage_node(usage, path),
-        Declaration::GenericDefinition(definition) => generic_definition_node(definition, path),
-        Declaration::GenericUsage(usage) => generic_usage_node(usage, path),
+        Declaration::GenericDefinition(_) | Declaration::GenericUsage(_) => {
+            unreachable!("generic declarations are handled by projection helpers")
+        }
         Declaration::Alias(alias) => alias_node(alias, path),
     };
     nodes.push(node);
 
-    let children: &[Declaration] = match declaration {
-        Declaration::Package(package) => &package.members,
-        Declaration::PartDefinition(definition) => &definition.members,
-        Declaration::PartUsage(usage) => &usage.body_members,
-        Declaration::GenericDefinition(definition) => &definition.members,
-        Declaration::GenericUsage(usage) => &usage.body_members,
-        Declaration::Import(_) | Declaration::Alias(_) => &[],
-    };
+    let children = declaration.child_declarations();
 
     for (index, child) in children.iter().enumerate() {
         let child_path = format!("{path}.{index}");
@@ -260,32 +269,6 @@ fn alias_node(alias: &AliasDecl, path: &str) -> SyntaxSnapshotNode {
     }
 }
 
-fn part_definition_node(definition: &PartDefinitionDecl, path: &str) -> SyntaxSnapshotNode {
-    let mut properties = BTreeMap::new();
-    insert_list(
-        &mut properties,
-        "specializes",
-        definition
-            .specializes
-            .iter()
-            .map(QualifiedName::as_colon_string),
-    );
-    insert_list(
-        &mut properties,
-        "modifiers",
-        definition.modifiers.iter().cloned(),
-    );
-    SyntaxSnapshotNode {
-        path: path.to_string(),
-        family: "definition".to_string(),
-        kind: "PartDefinitionDecl".to_string(),
-        keyword: "part".to_string(),
-        declared_name: Some(definition.name.clone()),
-        span: convert_span(&definition.span),
-        properties,
-    }
-}
-
 fn generic_definition_node(definition: &GenericDefinitionDecl, path: &str) -> SyntaxSnapshotNode {
     let mut properties = BTreeMap::new();
     insert_list(
@@ -308,52 +291,6 @@ fn generic_definition_node(definition: &GenericDefinitionDecl, path: &str) -> Sy
         keyword: definition.keyword.clone(),
         declared_name: Some(definition.name.clone()),
         span: convert_span(&definition.span),
-        properties,
-    }
-}
-
-fn part_usage_node(usage: &PartUsageDecl, path: &str) -> SyntaxSnapshotNode {
-    let mut properties = usage_properties(usage.ty.as_ref(), usage.expression.as_ref());
-    insert_list(
-        &mut properties,
-        "additional_types",
-        usage
-            .additional_types
-            .iter()
-            .map(QualifiedName::as_colon_string),
-    );
-    insert_list(
-        &mut properties,
-        "specializes",
-        usage.specializes.iter().map(QualifiedName::as_colon_string),
-    );
-    insert_list(
-        &mut properties,
-        "subsets",
-        usage.subsets.iter().map(QualifiedName::as_colon_string),
-    );
-    insert_list(
-        &mut properties,
-        "redefines",
-        usage.redefines.iter().map(QualifiedName::as_colon_string),
-    );
-    insert_list(
-        &mut properties,
-        "modifiers",
-        usage.modifiers.iter().cloned(),
-    );
-    insert_list(
-        &mut properties,
-        "implicit_name",
-        [usage.is_implicit_name.to_string()],
-    );
-    SyntaxSnapshotNode {
-        path: path.to_string(),
-        family: "usage".to_string(),
-        kind: "PartUsageDecl".to_string(),
-        keyword: "part".to_string(),
-        declared_name: (!usage.is_implicit_name).then(|| usage.name.clone()),
-        span: convert_span(&usage.span),
         properties,
     }
 }

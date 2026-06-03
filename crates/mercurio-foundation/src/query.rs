@@ -9,6 +9,7 @@ use crate::ir::{KirDocument, KirElement};
 use crate::metadata::metadata_annotations_named;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[deprecated(note = "requirement tracing is domain-specific; use mercurio-requirements")]
 pub struct RequirementTrace {
     pub relationship: String,
     pub source: String,
@@ -28,6 +29,9 @@ pub fn elements_with_metadata<'a>(
         .collect()
 }
 
+#[deprecated(
+    note = "requirement tracing is domain-specific; use mercurio-requirements::requirement_traces"
+)]
 pub fn requirement_traces(
     document: &KirDocument,
     requirement_id: &str,
@@ -876,6 +880,18 @@ fn element_field_value(element: &KirElement, field: &str) -> Option<Value> {
         "id" => Value::String(element.id.clone()),
         "kind" => Value::String(element.kind.clone()),
         "layer" => Value::Number(Number::from(element.layer)),
+        "qualified_name" => element
+            .properties
+            .get(first)
+            .cloned()
+            .or_else(|| qualified_name_from_element_id(&element.id).map(Value::String))?,
+        "metatype" => element.properties.get(first).cloned().or_else(|| {
+            element
+                .properties
+                .get("metadata")
+                .and_then(|metadata| metadata.get("metatype"))
+                .cloned()
+        })?,
         property => element.properties.get(property)?.clone(),
     };
 
@@ -887,6 +903,11 @@ fn element_field_value(element: &KirElement, field: &str) -> Option<Value> {
     }
 
     Some(value)
+}
+
+fn qualified_name_from_element_id(element_id: &str) -> Option<String> {
+    let (_, qualified_name) = element_id.split_once('.')?;
+    (!qualified_name.is_empty()).then(|| qualified_name.to_string())
 }
 
 fn split_at_next_clause<'a>(

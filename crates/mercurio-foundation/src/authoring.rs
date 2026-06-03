@@ -14,10 +14,21 @@ use crate::frontend::diagnostics::Diagnostic;
 use crate::ir::KIR_SCHEMA_VERSION;
 use crate::ir::{KirDocument, KirElement, KirError};
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub type SourceCompiler = fn(&BTreeMap<String, String>) -> Result<KirDocument, AuthoringError>;
+
+#[derive(Debug, Clone, Default)]
 pub struct AuthoringProject {
     files: BTreeMap<String, FileModel>,
+    source_compiler: Option<SourceCompiler>,
 }
+
+impl PartialEq for AuthoringProject {
+    fn eq(&self, other: &Self) -> bool {
+        self.files == other.files
+    }
+}
+
+impl Eq for AuthoringProject {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileModel {
@@ -436,6 +447,11 @@ impl AuthoringProject {
         Ok(project)
     }
 
+    pub fn with_source_compiler(mut self, compiler: SourceCompiler) -> Self {
+        self.source_compiler = Some(compiler);
+        self
+    }
+
     pub fn from_model_files(files: BTreeMap<String, String>) -> Result<Self, AuthoringError> {
         load_authoring_project_from_model(files)
     }
@@ -545,7 +561,7 @@ impl AuthoringProject {
                         &element,
                         DocEdit::Text(value_as_string(&value, &attribute)?),
                     ),
-                    "id" | "requirement_id" => self.apply_doc_edit(
+                    "id" => self.apply_doc_edit(
                         &element,
                         DocEdit::Id(value_as_string(&value, &attribute)?),
                     ),
@@ -578,7 +594,7 @@ impl AuthoringProject {
                     "target" => self.apply_target_edit(&element, None),
                     "imports" => self.apply_imports_replace(&element, Vec::new()),
                     "doc" | "text" => self.apply_doc_edit(&element, DocEdit::ClearText),
-                    "id" | "requirement_id" => self.apply_doc_edit(&element, DocEdit::ClearId),
+                    "id" => self.apply_doc_edit(&element, DocEdit::ClearId),
                     other => Err(AuthoringError::Unsupported(format!(
                         "semantic clear is not supported for attribute `{other}`"
                     ))),
@@ -1276,16 +1292,20 @@ impl AuthoringProject {
         })
     }
 
-    #[cfg(not(test))]
     fn compile_user_kir(&self) -> Result<KirDocument, AuthoringError> {
+        if let Some(compiler) = self.source_compiler {
+            return compiler(&self.render_all_files());
+        }
+
+        #[cfg(test)]
+        {
+            return Ok(fake_authoring_project_to_kir(self));
+        }
+
+        #[cfg(not(test))]
         Err(AuthoringError::Unsupported(
             "compiling authoring source requires a language-specific compiler".to_string(),
         ))
-    }
-
-    #[cfg(test)]
-    fn compile_user_kir(&self) -> Result<KirDocument, AuthoringError> {
-        Ok(fake_authoring_project_to_kir(self))
     }
 
     fn render_all_files(&self) -> BTreeMap<String, String> {
@@ -1833,26 +1853,6 @@ impl Usage {
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
-        if self.keyword == "satisfy" {
-            header.push_str("satisfy requirement ");
-            header.push_str(&self.name);
-            if self.members.is_empty() {
-                header.push(';');
-                lines.push(format!("{prefix}{header}"));
-                return lines.join("\n");
-            }
-            header.push_str(" {");
-            lines.push(format!("{prefix}{header}"));
-            let body = self
-                .members
-                .iter()
-                .map(|member| member.render(indent + 2))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            lines.push(body);
-            lines.push(format!("{prefix}}}"));
-            return lines.join("\n");
-        }
         if self.keyword == "metadata" {
             header.push('@');
             header.push_str(&self.name.replace('.', "::"));
@@ -1980,6 +1980,13 @@ impl Alias {
 
 impl Declaration {
     fn from_ast(declaration: &AstDeclaration) -> Self {
+        if let Some(definition) = declaration.as_definition_like() {
+            return Self::Definition(definition_from_ast_like(&definition));
+        }
+        if let Some(usage) = declaration.as_usage_like() {
+            return Self::Usage(usage_from_ast_like(&usage));
+        }
+
         match declaration {
             AstDeclaration::Package(package) => Self::Package(Package::from_ast(package)),
             AstDeclaration::Import(import) => Self::Import(Import {
@@ -1987,127 +1994,13 @@ impl Declaration {
                 docs: import.docs.clone(),
                 modifiers: import.modifiers.clone(),
             }),
-            AstDeclaration::PartDefinition(definition) => Self::Definition(Definition {
-                keyword: "part".to_string(),
-                name: definition.name.clone(),
-                specializes: definition
-                    .specializes
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                members: definition
-                    .members
-                    .iter()
-                    .map(Declaration::from_ast)
-                    .collect(),
-                docs: definition.docs.clone(),
-                modifiers: definition.modifiers.clone(),
-            }),
-            AstDeclaration::PartUsage(usage) => Self::Usage(Usage {
-                keyword: "part".to_string(),
-                name: usage.name.clone(),
-                is_implicit_name: usage.is_implicit_name,
-                ty: usage
-                    .ty
-                    .as_ref()
-                    .map(|ty| QualifiedName(ty.segments.clone())),
-                reference_target: None,
-                metadata_properties: BTreeMap::new(),
-                multiplicity: usage.multiplicity.clone(),
-                expression: usage.expression.as_ref().map(render_expr),
-                additional_types: usage
-                    .additional_types
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                specializes: usage
-                    .specializes
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                subsets: usage
-                    .subsets
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                redefines: usage
-                    .redefines
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                members: usage
-                    .body_members
-                    .iter()
-                    .map(Declaration::from_ast)
-                    .collect(),
-                docs: usage.docs.clone(),
-                modifiers: usage.modifiers.clone(),
-            }),
-            AstDeclaration::GenericDefinition(definition) => Self::Definition(Definition {
-                keyword: definition.keyword.clone(),
-                name: definition.name.clone(),
-                specializes: definition
-                    .specializes
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                members: definition
-                    .members
-                    .iter()
-                    .map(Declaration::from_ast)
-                    .collect(),
-                docs: definition.docs.clone(),
-                modifiers: definition.modifiers.clone(),
-            }),
-            AstDeclaration::GenericUsage(usage) => Self::Usage(Usage {
-                keyword: usage.keyword.clone(),
-                name: usage.name.clone(),
-                is_implicit_name: usage.is_implicit_name,
-                ty: usage
-                    .ty
-                    .as_ref()
-                    .map(|ty| QualifiedName(ty.segments.clone())),
-                reference_target: usage
-                    .reference_target
-                    .as_ref()
-                    .map(|target| QualifiedName(target.segments.clone())),
-                metadata_properties: usage.metadata_properties.clone(),
-                multiplicity: usage.multiplicity.clone(),
-                expression: usage.expression.as_ref().map(render_expr),
-                additional_types: usage
-                    .additional_types
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                specializes: usage
-                    .specializes
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                subsets: usage
-                    .subsets
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                redefines: usage
-                    .redefines
-                    .iter()
-                    .map(|name| QualifiedName(name.segments.clone()))
-                    .collect(),
-                members: usage
-                    .body_members
-                    .iter()
-                    .map(Declaration::from_ast)
-                    .collect(),
-                docs: usage.docs.clone(),
-                modifiers: usage.modifiers.clone(),
-            }),
             AstDeclaration::Alias(alias) => Self::Alias(Alias {
                 name: alias.name.clone(),
                 target: QualifiedName(alias.target.segments.clone()),
                 docs: alias.docs.clone(),
                 modifiers: alias.modifiers.clone(),
             }),
+            _ => unreachable!("definition-like and usage-like declarations are handled above"),
         }
     }
 
@@ -2128,6 +2021,73 @@ impl Declaration {
             Self::Usage(usage) => usage.render(indent),
             Self::Alias(alias) => alias.render(indent),
         }
+    }
+}
+
+fn definition_from_ast_like(
+    definition: &crate::frontend::ast::GenericDefinitionDecl,
+) -> Definition {
+    Definition {
+        keyword: definition.keyword.clone(),
+        name: definition.name.clone(),
+        specializes: definition
+            .specializes
+            .iter()
+            .map(|name| QualifiedName(name.segments.clone()))
+            .collect(),
+        members: definition
+            .members
+            .iter()
+            .map(Declaration::from_ast)
+            .collect(),
+        docs: definition.docs.clone(),
+        modifiers: definition.modifiers.clone(),
+    }
+}
+
+fn usage_from_ast_like(usage: &crate::frontend::ast::GenericUsageDecl) -> Usage {
+    Usage {
+        keyword: usage.keyword.clone(),
+        name: usage.name.clone(),
+        is_implicit_name: usage.is_implicit_name,
+        ty: usage
+            .ty
+            .as_ref()
+            .map(|ty| QualifiedName(ty.segments.clone())),
+        reference_target: usage
+            .reference_target
+            .as_ref()
+            .map(|target| QualifiedName(target.segments.clone())),
+        metadata_properties: usage.metadata_properties.clone(),
+        multiplicity: usage.multiplicity.clone(),
+        expression: usage.expression.as_ref().map(render_expr),
+        additional_types: usage
+            .additional_types
+            .iter()
+            .map(|name| QualifiedName(name.segments.clone()))
+            .collect(),
+        specializes: usage
+            .specializes
+            .iter()
+            .map(|name| QualifiedName(name.segments.clone()))
+            .collect(),
+        subsets: usage
+            .subsets
+            .iter()
+            .map(|name| QualifiedName(name.segments.clone()))
+            .collect(),
+        redefines: usage
+            .redefines
+            .iter()
+            .map(|name| QualifiedName(name.segments.clone()))
+            .collect(),
+        members: usage
+            .body_members
+            .iter()
+            .map(Declaration::from_ast)
+            .collect(),
+        docs: usage.docs.clone(),
+        modifiers: usage.modifiers.clone(),
     }
 }
 
@@ -2162,6 +2122,41 @@ fn collect_source_nodes(
     nodes: &mut BTreeMap<String, SourceNode>,
 ) {
     for declaration in declarations {
+        if let Some(definition) = declaration.as_definition_like() {
+            let qname = qualify_name(owner, &definition.name);
+            nodes.insert(
+                qname.clone(),
+                SourceNode {
+                    span: definition.span.clone(),
+                    indent: definition.span.start_col.saturating_sub(1),
+                },
+            );
+            collect_source_nodes(
+                &definition.members,
+                &qname,
+                Some(parent_or_self(parent_qname, &qname)),
+                nodes,
+            );
+            continue;
+        }
+        if let Some(usage) = declaration.as_usage_like() {
+            let qname = qualify_name(owner, &usage.name);
+            nodes.insert(
+                qname.clone(),
+                SourceNode {
+                    span: usage.span.clone(),
+                    indent: usage.span.start_col.saturating_sub(1),
+                },
+            );
+            collect_source_nodes(
+                &usage.body_members,
+                &qname,
+                Some(parent_or_self(parent_qname, &qname)),
+                nodes,
+            );
+            continue;
+        }
+
         match declaration {
             AstDeclaration::Package(package) => {
                 let qname = qualify_name(owner, &package.name.segments.join("."));
@@ -2175,70 +2170,6 @@ fn collect_source_nodes(
                 collect_source_nodes(&package.members, &qname, Some(&qname), nodes);
             }
             AstDeclaration::Import(_) => {}
-            AstDeclaration::PartDefinition(definition) => {
-                let qname = qualify_name(owner, &definition.name);
-                nodes.insert(
-                    qname.clone(),
-                    SourceNode {
-                        span: definition.span.clone(),
-                        indent: definition.span.start_col.saturating_sub(1),
-                    },
-                );
-                collect_source_nodes(
-                    &definition.members,
-                    &qname,
-                    Some(parent_or_self(parent_qname, &qname)),
-                    nodes,
-                );
-            }
-            AstDeclaration::PartUsage(usage) => {
-                let qname = qualify_name(owner, &usage.name);
-                nodes.insert(
-                    qname.clone(),
-                    SourceNode {
-                        span: usage.span.clone(),
-                        indent: usage.span.start_col.saturating_sub(1),
-                    },
-                );
-                collect_source_nodes(
-                    &usage.body_members,
-                    &qname,
-                    Some(parent_or_self(parent_qname, &qname)),
-                    nodes,
-                );
-            }
-            AstDeclaration::GenericDefinition(definition) => {
-                let qname = qualify_name(owner, &definition.name);
-                nodes.insert(
-                    qname.clone(),
-                    SourceNode {
-                        span: definition.span.clone(),
-                        indent: definition.span.start_col.saturating_sub(1),
-                    },
-                );
-                collect_source_nodes(
-                    &definition.members,
-                    &qname,
-                    Some(parent_or_self(parent_qname, &qname)),
-                    nodes,
-                );
-            }
-            AstDeclaration::GenericUsage(usage) => {
-                let qname = qualify_name(owner, &usage.name);
-                nodes.insert(
-                    qname.clone(),
-                    SourceNode {
-                        span: usage.span.clone(),
-                        indent: usage.span.start_col.saturating_sub(1),
-                    },
-                );
-                collect_source_nodes(
-                    &usage.body_members,
-                    &qname,
-                    Some(parent_or_self(parent_qname, &qname)),
-                    nodes,
-                );
-            }
             AstDeclaration::Alias(alias) => {
                 let qname = qualify_name(owner, &alias.name);
                 nodes.insert(
@@ -2249,6 +2180,7 @@ fn collect_source_nodes(
                     },
                 );
             }
+            _ => unreachable!("definition-like and usage-like declarations are handled above"),
         }
     }
 }
@@ -2667,13 +2599,13 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
             semantic_doc_attribute("doc", &definition.docs),
             semantic_doc_attribute(
                 "text",
-                &requirement_text_from_docs(&definition.docs)
+                &text_from_docs(&definition.docs)
                     .into_iter()
                     .collect::<Vec<_>>(),
             ),
             semantic_doc_attribute(
                 "id",
-                &requirement_id_from_docs(&definition.docs)
+                &id_from_docs(&definition.docs)
                     .into_iter()
                     .collect::<Vec<_>>(),
             ),
@@ -2701,15 +2633,11 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
             semantic_doc_attribute("doc", &usage.docs),
             semantic_doc_attribute(
                 "text",
-                &requirement_text_from_docs(&usage.docs)
-                    .into_iter()
-                    .collect::<Vec<_>>(),
+                &text_from_docs(&usage.docs).into_iter().collect::<Vec<_>>(),
             ),
             semantic_doc_attribute(
                 "id",
-                &requirement_id_from_docs(&usage.docs)
-                    .into_iter()
-                    .collect::<Vec<_>>(),
+                &id_from_docs(&usage.docs).into_iter().collect::<Vec<_>>(),
             ),
             SemanticAttribute {
                 name: "type".to_string(),
@@ -2880,8 +2808,6 @@ fn normalize_attribute_name(name: &str) -> String {
         "ownedMember" => "members".to_string(),
         "ownedSpecialization" => "specializes".to_string(),
         "documentation" => "doc".to_string(),
-        "requirementId" => "requirement_id".to_string(),
-        "requirement_id" => "requirement_id".to_string(),
         "id" => "id".to_string(),
         "text" => "text".to_string(),
         "declaredName" => "declared_name".to_string(),
@@ -2933,25 +2859,25 @@ fn declaration_docs_mut(declaration: &mut Declaration) -> &mut Vec<String> {
 fn apply_doc_value_edit(docs: &mut Vec<String>, edit: DocEdit) {
     match edit {
         DocEdit::Id(value) => {
-            docs.retain(|doc| !is_requirement_id_doc(doc));
+            docs.retain(|doc| !is_id_doc(doc));
             let value = value.trim();
             if !value.is_empty() {
                 docs.insert(0, format!("id: {value}"));
             }
         }
         DocEdit::Text(value) => {
-            docs.retain(|doc| is_requirement_id_doc(doc));
+            docs.retain(|doc| is_id_doc(doc));
             let value = value.trim();
             if !value.is_empty() {
                 docs.push(value.to_string());
             }
         }
-        DocEdit::ClearId => docs.retain(|doc| !is_requirement_id_doc(doc)),
-        DocEdit::ClearText => docs.retain(|doc| is_requirement_id_doc(doc)),
+        DocEdit::ClearId => docs.retain(|doc| !is_id_doc(doc)),
+        DocEdit::ClearText => docs.retain(|doc| is_id_doc(doc)),
     }
 }
 
-fn requirement_id_from_docs(docs: &[String]) -> Option<String> {
+fn id_from_docs(docs: &[String]) -> Option<String> {
     docs.iter().find_map(|doc| {
         let trimmed = doc.trim();
         trimmed
@@ -2963,13 +2889,13 @@ fn requirement_id_from_docs(docs: &[String]) -> Option<String> {
     })
 }
 
-fn requirement_text_from_docs(docs: &[String]) -> Option<String> {
+fn text_from_docs(docs: &[String]) -> Option<String> {
     docs.iter()
-        .find(|doc| !is_requirement_id_doc(doc) && !doc.trim().is_empty())
+        .find(|doc| !is_id_doc(doc) && !doc.trim().is_empty())
         .cloned()
 }
 
-fn is_requirement_id_doc(doc: &str) -> bool {
+fn is_id_doc(doc: &str) -> bool {
     let trimmed = doc.trim();
     trimmed.starts_with("id:") || trimmed.starts_with("ID:")
 }
@@ -3450,29 +3376,29 @@ fn relationship_usage(
     _source: &QualifiedName,
     target: &QualifiedName,
 ) -> Result<Usage, AuthoringError> {
-    let normalized = kind.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "satisfy" | "satisfies" => Ok(Usage {
-            keyword: "satisfy".to_string(),
-            name: target.tail().unwrap_or("requirement").to_string(),
-            is_implicit_name: false,
-            ty: None,
-            reference_target: Some(target.clone()),
-            metadata_properties: BTreeMap::new(),
-            multiplicity: None,
-            expression: None,
-            additional_types: Vec::new(),
-            specializes: Vec::new(),
-            subsets: Vec::new(),
-            redefines: Vec::new(),
-            members: Vec::new(),
-            docs: Vec::new(),
-            modifiers: Vec::new(),
-        }),
-        other => Err(AuthoringError::Unsupported(format!(
-            "relationship kind `{other}` is not supported by authoring write-back"
-        ))),
+    let keyword = kind.trim().to_ascii_lowercase();
+    if keyword.is_empty() {
+        return Err(AuthoringError::Unsupported(
+            "relationship kind is required by authoring write-back".to_string(),
+        ));
     }
+    Ok(Usage {
+        keyword,
+        name: target.tail().unwrap_or("target").to_string(),
+        is_implicit_name: false,
+        ty: None,
+        reference_target: Some(target.clone()),
+        metadata_properties: BTreeMap::new(),
+        multiplicity: None,
+        expression: None,
+        additional_types: Vec::new(),
+        specializes: Vec::new(),
+        subsets: Vec::new(),
+        redefines: Vec::new(),
+        members: Vec::new(),
+        docs: Vec::new(),
+        modifiers: Vec::new(),
+    })
 }
 
 fn extract_declaration(
@@ -3973,13 +3899,32 @@ fn build_declaration_from_kir(
         })));
     }
 
-    if id.starts_with("feature.") || element.properties.contains_key("owner") {
-        let name = element
-            .properties
-            .get("declared_name")
-            .and_then(Value::as_str)
-            .or_else(|| element.properties.get("name").and_then(Value::as_str))
+    if id.starts_with("feature.")
+        || id.starts_with("relationship.")
+        || element.properties.contains_key("owner")
+    {
+        let reference_target =
+            if id.starts_with("relationship.") || element.properties.contains_key("target") {
+                element
+                    .properties
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .map(qualified_name_from_element_id)
+            } else {
+                None
+            };
+        let name = reference_target
+            .as_ref()
+            .and_then(QualifiedName::tail)
             .map(str::to_string)
+            .or_else(|| {
+                element
+                    .properties
+                    .get("declared_name")
+                    .and_then(Value::as_str)
+                    .or_else(|| element.properties.get("name").and_then(Value::as_str))
+                    .map(str::to_string)
+            })
             .unwrap_or_else(|| tail_from_id(id));
         let ty = element
             .properties
@@ -3991,7 +3936,7 @@ fn build_declaration_from_kir(
             name,
             is_implicit_name: element.properties.get("declared_name").is_none(),
             ty: ty.clone(),
-            reference_target: None,
+            reference_target,
             metadata_properties: BTreeMap::new(),
             multiplicity: element
                 .properties
@@ -4078,8 +4023,13 @@ fn usage_modifiers_from_properties(properties: &BTreeMap<String, Value>) -> Vec<
 
 fn keyword_from_kind(kind: &str, is_definition: bool) -> String {
     let tail = kind.rsplit("::").next().unwrap_or(kind);
-    let suffix = if is_definition { "Definition" } else { "Usage" };
-    let keyword = tail.strip_suffix(suffix).unwrap_or(tail);
+    let keyword = if is_definition {
+        tail.strip_suffix("Definition").unwrap_or(tail)
+    } else {
+        tail.strip_suffix("Usage")
+            .or_else(|| tail.strip_suffix("Relationship"))
+            .unwrap_or(tail)
+    };
     keyword
         .chars()
         .enumerate()
@@ -4090,6 +4040,16 @@ fn keyword_from_kind(kind: &str, is_definition: bool) -> String {
             acc.push(ch.to_ascii_lowercase());
             acc
         })
+}
+
+fn qualified_name_from_element_id(id: &str) -> QualifiedName {
+    let without_prefix = id
+        .strip_prefix("type.")
+        .or_else(|| id.strip_prefix("feature."))
+        .or_else(|| id.strip_prefix("relationship."))
+        .or_else(|| id.strip_prefix("pkg."))
+        .unwrap_or(id);
+    QualifiedName::parse(without_prefix)
 }
 
 fn declaration_name_for_sort(declaration: &Declaration) -> String {
@@ -4194,29 +4154,18 @@ fn fake_declaration_from_header(
         }));
     }
 
-    if let Some(rest) = header.strip_prefix("satisfy requirement ") {
-        return Ok(Declaration::Usage(Usage {
-            keyword: "satisfy".to_string(),
-            name: clean_fake_name(rest),
-            is_implicit_name: false,
-            ty: None,
-            reference_target: Some(QualifiedName::parse(rest.trim())),
-            metadata_properties: BTreeMap::new(),
-            multiplicity: None,
-            expression: None,
-            additional_types: Vec::new(),
-            specializes: Vec::new(),
-            subsets: Vec::new(),
-            redefines: Vec::new(),
-            members,
-            docs: Vec::new(),
-            modifiers: Vec::new(),
-        }));
-    }
-
     let mut words = header.split_whitespace();
     let keyword = words.next().unwrap_or("part").to_string();
     let rest = words.collect::<Vec<_>>().join(" ");
+    let (rest, reference_target) = rest
+        .split_once(" references ")
+        .map(|(left, right)| {
+            (
+                left.trim().to_string(),
+                Some(QualifiedName::parse(right.trim())),
+            )
+        })
+        .unwrap_or((rest, None));
     let (name_part, expression) = rest
         .split_once('=')
         .map(|(left, right)| (left.trim(), Some(right.trim().to_string())))
@@ -4236,7 +4185,7 @@ fn fake_declaration_from_header(
         name,
         is_implicit_name: false,
         ty,
-        reference_target: None,
+        reference_target,
         metadata_properties: BTreeMap::new(),
         multiplicity: None,
         expression,
@@ -4346,7 +4295,7 @@ fn fake_emit_declaration(
         Declaration::Usage(usage) => {
             let owner = owner.unwrap_or("root");
             let qname = format!("{owner}.{}", usage.name);
-            let id = if usage.keyword == "satisfy" {
+            let id = if usage.reference_target.is_some() {
                 format!("relationship.{qname}")
             } else {
                 format!("feature.{qname}")
@@ -4366,9 +4315,14 @@ fn fake_emit_declaration(
             if let Some(expression) = &usage.expression {
                 properties.insert("expression_ir".to_string(), json!(expression));
             }
-            if usage.keyword == "satisfy" {
+            if usage.reference_target.is_some() {
                 properties.insert("source".to_string(), json!(format!("type.{owner}")));
-                properties.insert("target".to_string(), json!(format!("type.{}", usage.name)));
+                let target = usage
+                    .reference_target
+                    .as_ref()
+                    .map(QualifiedName::as_dot_string)
+                    .unwrap_or_else(|| usage.name.clone());
+                properties.insert("target".to_string(), json!(format!("type.{target}")));
             }
             elements.push(KirElement {
                 id,
@@ -4389,7 +4343,7 @@ fn fake_declaration_id(declaration: &Declaration, owner: &str) -> String {
     match declaration {
         Declaration::Package(package) => format!("pkg.{}", package.name.as_dot_string()),
         Declaration::Definition(definition) => format!("type.{owner}.{}", definition.name),
-        Declaration::Usage(usage) if usage.keyword == "satisfy" => {
+        Declaration::Usage(usage) if usage.reference_target.is_some() => {
             format!("relationship.{owner}.{}", usage.name)
         }
         Declaration::Usage(usage) => format!("feature.{owner}.{}", usage.name),
@@ -4401,25 +4355,39 @@ fn fake_declaration_id(declaration: &Declaration, owner: &str) -> String {
 #[cfg(test)]
 fn fake_definition_kind(keyword: &str) -> String {
     match keyword {
-        "requirement" => "model.RequirementDefinition",
-        "action" => "model.ActionDefinition",
-        "metadata" => "model.MetadataDefinition",
-        "attribute" => "model.AttributeDefinition",
-        _ => "model.PartDefinition",
+        "action" => "model.ActionDefinition".to_string(),
+        "metadata" => "model.MetadataDefinition".to_string(),
+        "attribute" => "model.AttributeDefinition".to_string(),
+        other => return format!("model.{}Definition", pascal_case(other)),
     }
-    .to_string()
 }
 
 #[cfg(test)]
 fn fake_usage_kind(keyword: &str) -> String {
     match keyword {
-        "requirement" => "model.RequirementUsage",
-        "attribute" => "model.AttributeUsage",
-        "satisfy" => "model.SatisfyRelationship",
-        "action" => "model.ActionUsage",
-        _ => "model.PartUsage",
+        "attribute" => "model.AttributeUsage".to_string(),
+        "action" => "model.ActionUsage".to_string(),
+        other => return format!("model.{}Usage", pascal_case(other)),
     }
-    .to_string()
+}
+
+#[cfg(test)]
+fn pascal_case(value: &str) -> String {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => format!(
+                    "{}{}",
+                    first.to_ascii_uppercase(),
+                    chars.as_str().to_ascii_lowercase()
+                ),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

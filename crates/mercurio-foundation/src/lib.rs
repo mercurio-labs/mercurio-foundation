@@ -1,22 +1,39 @@
 pub mod assessment;
 pub mod authoring;
-pub mod behavior;
-pub mod constraints;
-pub mod datalog;
-pub mod derived;
+pub mod behavior {
+    pub use mercurio_runtime::behavior::*;
+}
+pub mod constraints {
+    pub use mercurio_runtime::constraints::*;
+}
+pub mod datalog {
+    pub use mercurio_runtime::datalog::*;
+}
+pub mod derived {
+    pub use mercurio_model::derived::*;
+}
 pub mod element_view;
-pub mod expression;
+pub mod expression {
+    pub use mercurio_model::expression::*;
+}
 pub mod feasibility;
 pub mod frontend;
+#[allow(deprecated)]
 pub mod goal;
-pub mod graph;
+pub mod graph {
+    pub use mercurio_model::graph::*;
+}
 pub mod identity;
 pub mod ir;
 pub mod language;
 pub mod library;
 pub mod logging;
-pub mod metadata;
-pub mod metamodel;
+pub mod metadata {
+    pub use mercurio_model::metadata::*;
+}
+pub mod metamodel {
+    pub use mercurio_model::metamodel::*;
+}
 pub mod mpack;
 pub mod mutation;
 pub mod outline;
@@ -25,16 +42,23 @@ pub mod performance;
 pub mod plugin_registry;
 pub mod proposal;
 pub mod python_codegen;
+#[allow(deprecated)]
 pub mod query;
-pub mod runtime;
+pub mod runtime {
+    pub use mercurio_runtime::runtime::*;
+}
 pub mod semantic_compare;
+pub mod semantic_profile;
 pub mod semantic_target;
 pub mod session;
-pub mod simulation;
+pub mod simulation {
+    pub use mercurio_runtime::simulation::*;
+}
 pub mod source_set;
 pub mod syntax_compare;
 #[cfg(test)]
 pub(crate) mod test_support;
+#[allow(deprecated)]
 pub mod views;
 pub mod workspace;
 pub mod workspace_cache;
@@ -83,10 +107,9 @@ pub use expression::{
     UnaryExpressionOp,
 };
 pub use feasibility::{
-    AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
     MutationContext, MutationFeasibilityReport, MutationFeasibilityService, RequiredChoice,
-    SemanticCapabilityOracle, workspace_revision_for_project,
+    workspace_revision_for_project,
 };
 pub use frontend::pilot::{
     PilotDocumentationBlock, PilotExportDocument, PilotExportElement, PilotExportRelationship,
@@ -176,6 +199,7 @@ pub use proposal::{
     SemanticImpactStatus, SemanticImpactSummary,
 };
 pub use python_codegen::{PythonWrapperGeneration, generate_python_wrappers};
+#[allow(deprecated)]
 pub use query::{
     FilterExpr, OrderBy, Projection, Query, QueryEngine, QueryError, QueryResultSet, QuerySource,
     RequirementTrace, SortDirection, TermPattern, TriplePattern, elements_with_metadata,
@@ -191,13 +215,17 @@ pub use semantic_compare::{
     SemanticSourceSpan, SemanticValueMismatch, SnapshotMode, build_semantic_snapshot,
     build_semantic_snapshot_with_registry, compare_snapshots, compare_snapshots_with_options,
 };
+pub use semantic_profile::{
+    AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
+    SemanticCapabilityOracle,
+};
 pub use semantic_target::{
     IncludeSubtypes, ResolvedSemanticTarget, SemanticTarget, SemanticTargetError,
     SemanticTargetResolver, TargetLayers,
 };
 pub use session::{
-    CommitMode, CommitResult, CommitStrategy, ForkElement, KirOverlay, ModelFork, ModelSession,
-    ModelWorkspace, SessionError, WorkspaceSnapshot,
+    CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec, KirOverlay, ModelFork,
+    ModelSession, ModelWorkspace, SessionError, WorkspaceSnapshot,
 };
 pub use source_set::{
     SourceDocument, compile_source_document_with_registry, compile_source_documents,
@@ -207,6 +235,7 @@ pub use syntax_compare::{
     SyntaxComparisonReport, SyntaxNodeMismatch, SyntaxSnapshot, SyntaxSnapshotNode,
     SyntaxSourceSpan, build_rust_syntax_snapshot, compare_syntax_snapshots,
 };
+#[allow(deprecated)]
 pub use views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
     ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,

@@ -8,6 +8,7 @@ use crate::authoring::{
 };
 use crate::graph::Graph;
 use crate::ir::{KirDocument, KirElement};
+use crate::semantic_profile::SemanticCapabilityOracle;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ElementRef {
@@ -655,15 +656,15 @@ fn insert_doc_context_attributes(attributes: &mut BTreeMap<String, Value>, docs:
         "docs".to_string(),
         Value::Array(docs.iter().map(|doc| Value::String(doc.clone())).collect()),
     );
-    if let Some(id) = requirement_id_from_docs(docs) {
+    if let Some(id) = id_from_docs(docs) {
         attributes.insert("id".to_string(), Value::String(id));
     }
-    if let Some(text) = requirement_text_from_docs(docs) {
+    if let Some(text) = text_from_docs(docs) {
         attributes.insert("text".to_string(), Value::String(text));
     }
 }
 
-fn requirement_id_from_docs(docs: &[String]) -> Option<String> {
+fn id_from_docs(docs: &[String]) -> Option<String> {
     docs.iter().find_map(|doc| {
         let trimmed = doc.trim();
         trimmed
@@ -675,13 +676,13 @@ fn requirement_id_from_docs(docs: &[String]) -> Option<String> {
     })
 }
 
-fn requirement_text_from_docs(docs: &[String]) -> Option<String> {
+fn text_from_docs(docs: &[String]) -> Option<String> {
     docs.iter()
-        .find(|doc| !is_requirement_id_doc(doc) && !doc.trim().is_empty())
+        .find(|doc| !is_id_doc(doc) && !doc.trim().is_empty())
         .cloned()
 }
 
-fn is_requirement_id_doc(doc: &str) -> bool {
+fn is_id_doc(doc: &str) -> bool {
     let trimmed = doc.trim();
     trimmed.starts_with("id:") || trimmed.starts_with("ID:")
 }
@@ -697,15 +698,13 @@ fn qualify_context_name(owner: Option<&str>, name: &str) -> String {
 }
 
 fn semantic_trace_relationship_uses_owner_source(keyword: &str) -> bool {
-    matches!(
-        keyword.to_ascii_lowercase().as_str(),
-        "satisfy" | "verify" | "refine"
-    )
+    crate::semantic_profile::ConservativeSemanticCapabilityOracle
+        .relationship_uses_owner_as_source(keyword)
 }
 
 pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabilityContext {
     SemanticMutationCapabilityContext {
-        metamodel_version: "model-v2-writable-mutation-v1".to_string(),
+        metamodel_version: "language-neutral-mutation-v1".to_string(),
         supported_operations: vec![
             "AddPackage".to_string(),
             "AddDefinition".to_string(),
@@ -719,47 +718,11 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
             "MoveDeclaration".to_string(),
             "SetAttribute".to_string(),
         ],
-        definition_keywords: vec![
-            "part".to_string(),
-            "attribute".to_string(),
-            "requirement".to_string(),
-            "item".to_string(),
-            "connection".to_string(),
-            "port".to_string(),
-            "action".to_string(),
-            "constraint".to_string(),
-            "calc".to_string(),
-            "state".to_string(),
-            "view".to_string(),
-            "verification".to_string(),
-        ],
-        usage_keywords: vec![
-            "part".to_string(),
-            "attribute".to_string(),
-            "requirement".to_string(),
-            "item".to_string(),
-            "connection".to_string(),
-            "port".to_string(),
-            "action".to_string(),
-            "constraint".to_string(),
-            "calc".to_string(),
-            "state".to_string(),
-            "satisfy".to_string(),
-            "verify".to_string(),
-            "ref".to_string(),
-            "reference".to_string(),
-        ],
-        relationship_kinds: vec![
-            "satisfy".to_string(),
-            "verify".to_string(),
-            "trace".to_string(),
-            "refine".to_string(),
-        ],
+        definition_keywords: Vec::new(),
+        usage_keywords: Vec::new(),
+        relationship_kinds: Vec::new(),
         guidance: vec![
-            "Use Model v2 textual concepts, not Model v1 block terminology.".to_string(),
-            "Never use keyword `block`; use `part` for part definitions and part usages."
-                .to_string(),
-            "Requirement definitions should carry explicit `id` and `text` semantic attributes; use SetAttribute on existing requirement elements when those fields are missing."
+            "Use a language-specific mutation profile for concrete keywords and relationships."
                 .to_string(),
             "Return semantic mutations, not source text edits.".to_string(),
             "Core feasibility remains authoritative for contextual legality.".to_string(),
@@ -1074,23 +1037,23 @@ mod tests {
     use crate::ir::{KirDocument, KirElement};
 
     #[test]
-    fn default_capability_context_exposes_writable_model_v2_vocabulary() {
+    fn default_capability_context_is_language_neutral() {
         let context = default_semantic_mutation_capability_context();
 
-        assert_eq!(context.metamodel_version, "model-v2-writable-mutation-v1");
+        assert_eq!(context.metamodel_version, "language-neutral-mutation-v1");
         assert!(
             context
                 .supported_operations
                 .contains(&"AddDefinition".to_string())
         );
-        assert!(context.definition_keywords.contains(&"part".to_string()));
-        assert!(!context.definition_keywords.contains(&"block".to_string()));
-        assert!(context.relationship_kinds.contains(&"satisfy".to_string()));
+        assert!(context.definition_keywords.is_empty());
+        assert!(context.usage_keywords.is_empty());
+        assert!(context.relationship_kinds.is_empty());
         assert!(
             context
                 .guidance
                 .iter()
-                .any(|item| item.contains("Never use keyword `block`"))
+                .any(|item| item.contains("language-specific mutation profile"))
         );
     }
 
@@ -1209,14 +1172,14 @@ package HybridVehicle {
     }
 
     #[test]
-    fn semantic_reasoning_context_normalizes_trace_relationship_source_to_owner() {
+    fn neutral_semantic_reasoning_context_keeps_trace_relationship_usage_source() {
         let files = BTreeMap::from([(
             "hybrid.model".to_string(),
             r#"
 package HybridVehicle {
     part def Vehicle {
         action def RegenerativeBraking {
-            satisfy requirement EfficiencyRequirement;
+            trace EfficiencyRequirement references EfficiencyRequirement;
         }
     }
 
@@ -1235,8 +1198,9 @@ package HybridVehicle {
         );
 
         assert!(context.relationships.iter().any(|relationship| {
-            relationship.kind == "satisfy"
-                && relationship.source.qualified_name == "HybridVehicle.Vehicle.RegenerativeBraking"
+            relationship.kind == "trace"
+                && relationship.source.qualified_name
+                    == "HybridVehicle.Vehicle.RegenerativeBraking.EfficiencyRequirement"
                 && relationship
                     .target
                     .qualified_name
@@ -1265,15 +1229,12 @@ package HybridVehicle {
 
         enrich_semantic_reasoning_context_with_child_affordances(&mut context, 64);
 
-        assert!(context.affordances.iter().any(|affordance| {
-            affordance.element.qualified_name == "HybridVehicle.HybridVehicle"
-                && affordance.operation == "AddUsage"
-                && affordance.child_kind == "part"
-                && affordance.status == "candidate"
-        }));
-        assert!(context.affordances.iter().all(|affordance| {
-            affordance.element.qualified_name == "HybridVehicle.HybridVehicle"
-        }));
+        assert!(
+            context
+                .affordances
+                .iter()
+                .all(|affordance| affordance.child_kind != "part")
+        );
     }
 
     #[test]

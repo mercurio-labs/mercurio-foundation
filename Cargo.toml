@@ -2,6 +2,8 @@
 members = [
     "crates/mercurio-kir",
     "crates/mercurio-language-contracts",
+    "crates/mercurio-model",
+    "crates/mercurio-runtime",
     "crates/mercurio-foundation",
 ]
 resolver = "2"

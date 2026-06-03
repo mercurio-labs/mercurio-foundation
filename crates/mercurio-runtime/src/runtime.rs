@@ -8,16 +8,15 @@ use serde_json::{Number, Value};
 use crate::datalog::{
     DatalogError, DerivedIndexes, RulePack, load_default_rulepacks, materialize_core_indexes,
 };
-use crate::derived::{
+use mercurio_model::derived::{
     DerivedFeatureCache, DerivedFeatureManifestError, DerivedFeatureRegistry, DerivedPropertyValue,
     manifest_from_metadata,
 };
-use crate::expression::{
+use mercurio_model::expression::{
     ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionPathSegment,
 };
-use crate::graph::{Graph, GraphArtifact, GraphError};
-use crate::identity::workspace_revision_for_kir_document;
-use crate::ir::KirDocument;
+use mercurio_model::graph::{Graph, GraphArtifact, GraphError};
+use mercurio_model::ir::KirDocument;
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
@@ -163,9 +162,8 @@ impl Runtime {
     }
 
     pub fn from_document(document: KirDocument) -> Result<Self, RuntimeError> {
-        let revision = workspace_revision_for_kir_document(&document)
-            .map(|revision| revision.fingerprint)
-            .unwrap_or_else(|_| "document".to_string());
+        let revision =
+            workspace_revision_fingerprint(&document).unwrap_or_else(|_| "document".to_string());
         let derived_feature_registry = DerivedFeatureRegistry::with_manifest_and_builtins(
             manifest_from_metadata(&document.metadata)?,
         )?;
@@ -185,9 +183,8 @@ impl Runtime {
         let total_timer = Instant::now();
 
         let revision_timer = Instant::now();
-        let revision = workspace_revision_for_kir_document(&document)
-            .map(|revision| revision.fingerprint)
-            .unwrap_or_else(|_| "document".to_string());
+        let revision =
+            workspace_revision_fingerprint(&document).unwrap_or_else(|_| "document".to_string());
         let workspace_revision_millis = millis(revision_timer.elapsed());
 
         let manifest_timer = Instant::now();
@@ -372,7 +369,7 @@ impl Runtime {
         })
     }
 
-    fn transitive_subtypes_of(&self, type_node: crate::graph::NodeId) -> Vec<String> {
+    fn transitive_subtypes_of(&self, type_node: mercurio_model::graph::NodeId) -> Vec<String> {
         let mut result = BTreeSet::new();
         let mut visited = BTreeSet::new();
         let mut stack = self
@@ -396,7 +393,7 @@ impl Runtime {
         result.into_iter().collect()
     }
 
-    fn transitive_supertypes_of(&self, type_node: crate::graph::NodeId) -> Vec<String> {
+    fn transitive_supertypes_of(&self, type_node: mercurio_model::graph::NodeId) -> Vec<String> {
         let mut result = BTreeSet::new();
         let mut visited = BTreeSet::new();
         let mut stack = self
@@ -689,11 +686,44 @@ fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
 
-fn element_name_matches(properties: &crate::graph::ElementProperties, expected: &str) -> bool {
+fn workspace_revision_fingerprint(document: &KirDocument) -> Result<String, serde_json::Error> {
+    let bytes = serde_json::to_vec(document)?;
+    Ok(stable_digest([(
+        "kir-document".as_bytes(),
+        bytes.as_slice(),
+    )]))
+}
+
+fn stable_digest<'a, I>(chunks: I) -> String
+where
+    I: IntoIterator<Item = (&'a [u8], &'a [u8])>,
+{
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET;
+    for (label, bytes) in chunks {
+        for byte in label
+            .iter()
+            .chain(&(bytes.len() as u64).to_le_bytes())
+            .chain(bytes)
+        {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    format!("fnv1a64:{hash:016x}")
+}
+
+fn element_name_matches(
+    properties: &mercurio_model::graph::ElementProperties,
+    expected: &str,
+) -> bool {
     feature_name(properties) == Some(expected)
 }
 
-fn feature_name(properties: &crate::graph::ElementProperties) -> Option<&str> {
+fn feature_name(properties: &mercurio_model::graph::ElementProperties) -> Option<&str> {
     properties
         .get("declared_name")
         .or_else(|| properties.get("name"))
@@ -745,7 +775,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{ExecutionContext, Runtime};
-    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+    use mercurio_model::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 
     fn sample_runtime() -> Runtime {
         Runtime::from_document(KirDocument {

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::frontend::ast::{
     AliasDecl, Declaration, GenericDefinitionDecl, GenericUsageDecl, ImportDecl, PackageDecl,
-    ParsedModule, PartDefinitionDecl, PartUsageDecl, SourceSpan,
+    ParsedModule, SourceSpan,
 };
 use crate::graph::Graph;
 use crate::ir::{KirDocument, KirElement};
@@ -80,9 +80,14 @@ pub fn build_editor_outline(
                 .iter()
                 .map(|import| import_outline_node(relative_path, import, element_index)),
         );
-        nodes.extend(module.definitions.iter().map(|definition| {
-            part_definition_outline_node(relative_path, definition, element_index)
-        }));
+        nodes.extend(
+            module
+                .definition_like_declarations()
+                .iter()
+                .map(|definition| {
+                    generic_definition_outline_node(relative_path, definition, element_index)
+                }),
+        );
     }
 
     nodes
@@ -156,22 +161,20 @@ fn declaration_outline_node(
     declaration: &Declaration,
     element_index: &HashMap<EditorOutlineKey, String>,
 ) -> EditorOutlineNodeDto {
+    if let Some(definition) = declaration.as_definition_like() {
+        return generic_definition_outline_node(relative_path, &definition, element_index);
+    }
+    if let Some(usage) = declaration.as_usage_like() {
+        return generic_usage_outline_node(relative_path, &usage, element_index);
+    }
+
     match declaration {
         Declaration::Package(package) => {
             package_outline_node(relative_path, package, element_index)
         }
         Declaration::Import(import) => import_outline_node(relative_path, import, element_index),
-        Declaration::PartDefinition(definition) => {
-            part_definition_outline_node(relative_path, definition, element_index)
-        }
-        Declaration::PartUsage(usage) => {
-            part_usage_outline_node(relative_path, usage, element_index)
-        }
-        Declaration::GenericDefinition(definition) => {
-            generic_definition_outline_node(relative_path, definition, element_index)
-        }
-        Declaration::GenericUsage(usage) => {
-            generic_usage_outline_node(relative_path, usage, element_index)
+        Declaration::GenericDefinition(_) | Declaration::GenericUsage(_) => {
+            unreachable!("generic declarations are handled by projection helpers")
         }
         Declaration::Alias(alias) => alias_outline_node(relative_path, alias, element_index),
     }
@@ -191,9 +194,14 @@ fn package_outline_node(
                 .iter()
                 .map(|import| import_outline_node(relative_path, import, element_index)),
         );
-        children.extend(package.definitions.iter().map(|definition| {
-            part_definition_outline_node(relative_path, definition, element_index)
-        }));
+        children.extend(
+            package
+                .definition_like_declarations()
+                .iter()
+                .map(|definition| {
+                    generic_definition_outline_node(relative_path, definition, element_index)
+                }),
+        );
     }
 
     outline_node(
@@ -277,124 +285,6 @@ fn import_outline_node(
             ),
         ]),
         Vec::new(),
-    )
-}
-
-fn part_definition_outline_node(
-    relative_path: &str,
-    definition: &PartDefinitionDecl,
-    element_index: &HashMap<EditorOutlineKey, String>,
-) -> EditorOutlineNodeDto {
-    let mut children =
-        outline_nodes_for_declarations(relative_path, &definition.members, element_index);
-    if children.is_empty() {
-        children.extend(
-            definition
-                .part_members
-                .iter()
-                .map(|member| part_usage_outline_node(relative_path, member, element_index)),
-        );
-    }
-
-    outline_node(
-        relative_path,
-        element_index,
-        "part_definition",
-        &definition.name,
-        "part def",
-        &definition.span,
-        BTreeMap::from([
-            ("name".to_string(), Value::String(definition.name.clone())),
-            (
-                "specializes".to_string(),
-                Value::Array(
-                    definition
-                        .specializes
-                        .iter()
-                        .map(|item| Value::String(item.as_colon_string()))
-                        .collect(),
-                ),
-            ),
-            (
-                "member_count".to_string(),
-                Value::from(children.len() as u64),
-            ),
-            (
-                "docs".to_string(),
-                Value::Array(definition.docs.iter().cloned().map(Value::String).collect()),
-            ),
-            (
-                "modifiers".to_string(),
-                Value::Array(
-                    definition
-                        .modifiers
-                        .iter()
-                        .cloned()
-                        .map(Value::String)
-                        .collect(),
-                ),
-            ),
-        ]),
-        children,
-    )
-}
-
-fn part_usage_outline_node(
-    relative_path: &str,
-    usage: &PartUsageDecl,
-    element_index: &HashMap<EditorOutlineKey, String>,
-) -> EditorOutlineNodeDto {
-    outline_node(
-        relative_path,
-        element_index,
-        "part_usage",
-        &usage.name,
-        "part",
-        &usage.span,
-        BTreeMap::from([
-            ("name".to_string(), Value::String(usage.name.clone())),
-            (
-                "type".to_string(),
-                usage
-                    .ty
-                    .as_ref()
-                    .map(|item| Value::String(item.as_colon_string()))
-                    .unwrap_or(Value::Null),
-            ),
-            (
-                "additional_types".to_string(),
-                Value::Array(
-                    usage
-                        .additional_types
-                        .iter()
-                        .map(|item| Value::String(item.as_colon_string()))
-                        .collect(),
-                ),
-            ),
-            (
-                "specializes".to_string(),
-                Value::Array(
-                    usage
-                        .specializes
-                        .iter()
-                        .map(|item| Value::String(item.as_colon_string()))
-                        .collect(),
-                ),
-            ),
-            (
-                "member_count".to_string(),
-                Value::from(usage.body_members.len() as u64),
-            ),
-            (
-                "docs".to_string(),
-                Value::Array(usage.docs.iter().cloned().map(Value::String).collect()),
-            ),
-            (
-                "modifiers".to_string(),
-                Value::Array(usage.modifiers.iter().cloned().map(Value::String).collect()),
-            ),
-        ]),
-        outline_nodes_for_declarations(relative_path, &usage.body_members, element_index),
     )
 }
 

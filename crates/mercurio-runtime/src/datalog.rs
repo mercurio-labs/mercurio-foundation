@@ -1,13 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::graph::Graph;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::paths::default_stdlib_rulepack_path;
+use mercurio_model::graph::Graph;
 
 pub const CORE_RULEPACK_ID: &str = "mercurio.core";
 pub const CORE_RULEPACK_VERSION: &str = "0.1.0";
@@ -83,7 +81,7 @@ pub struct DerivedIndexes {
 }
 
 impl DerivedIndexes {
-    pub(crate) fn explanations(&self) -> &BTreeMap<Fact, Explanation> {
+    pub fn explanations(&self) -> &BTreeMap<Fact, Explanation> {
         &self.explanations
     }
 }
@@ -352,6 +350,24 @@ pub fn load_default_rulepacks() -> Result<Vec<RulePack>, DatalogError> {
 
         Ok(vec![RulePack::from_path(&path)?])
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn default_stdlib_rulepack_path() -> PathBuf {
+    if let Ok(path) = std::env::var("MERCURIO_MODEL_RULEPACK_PATH") {
+        return PathBuf::from(path);
+    }
+
+    if let Ok(path) = std::env::var("MERCURIO_STDLIB_RULEPACK_PATH") {
+        return PathBuf::from(path);
+    }
+
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("resources")
+        .join("foundation")
+        .join("core.rulepack.json")
 }
 
 impl Fact {
@@ -1016,8 +1032,8 @@ mod tests {
     use super::{
         Fact, RulePack, extract_graph_facts, load_default_rulepacks, materialize_core_indexes,
     };
-    use crate::graph::Graph;
-    use crate::ir::{KirDocument, KirElement};
+    use mercurio_model::graph::Graph;
+    use mercurio_model::{KirDocument, KirElement};
 
     #[test]
     fn extracts_base_graph_facts() {

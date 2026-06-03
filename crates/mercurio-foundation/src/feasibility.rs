@@ -12,6 +12,11 @@ use crate::mutation::{
     ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, RelationshipChange,
     SemanticDiff, SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
 };
+use crate::semantic_profile::normalize_definition_keyword;
+pub use crate::semantic_profile::{
+    AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
+    SemanticCapabilityOracle,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MutationContext {
@@ -76,135 +81,6 @@ pub struct RequiredChoice {
     pub operation_index: usize,
     pub message: String,
     pub options: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CapabilityAnswer {
-    Allowed,
-    Denied(String),
-    Unknown(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttributePolicyAnswer {
-    pub writable: bool,
-    pub reason: Option<String>,
-}
-
-pub trait SemanticCapabilityOracle {
-    fn can_contain(&self, container_kind: &str, child_kind: &str) -> CapabilityAnswer;
-    fn can_specialize(&self, source_kind: &str, target_kind: &str) -> CapabilityAnswer;
-    fn can_type_usage(&self, usage_kind: &str, definition_kind: &str) -> CapabilityAnswer;
-    fn can_relate(
-        &self,
-        relationship_kind: &str,
-        source_kind: &str,
-        target_kind: &str,
-    ) -> CapabilityAnswer;
-    fn attribute_policy(&self, kind: &str, attribute: &str) -> AttributePolicyAnswer;
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ConservativeSemanticCapabilityOracle;
-
-impl SemanticCapabilityOracle for ConservativeSemanticCapabilityOracle {
-    fn can_contain(&self, container_kind: &str, child_kind: &str) -> CapabilityAnswer {
-        if container_kind.is_empty() || child_kind.is_empty() {
-            CapabilityAnswer::Unknown("missing kind information".to_string())
-        } else if !is_container_kind(container_kind) {
-            CapabilityAnswer::Denied(format!(
-                "`{container_kind}` cannot own `{child_kind}` declarations"
-            ))
-        } else if is_definition_keyword(child_kind)
-            || is_usage_keyword(child_kind)
-            || child_kind == "package"
-        {
-            CapabilityAnswer::Allowed
-        } else {
-            CapabilityAnswer::Unknown(format!("unknown child kind `{child_kind}`"))
-        }
-    }
-
-    fn can_specialize(&self, source_kind: &str, target_kind: &str) -> CapabilityAnswer {
-        if source_kind.is_empty() || target_kind.is_empty() {
-            CapabilityAnswer::Unknown("missing kind information".to_string())
-        } else {
-            CapabilityAnswer::Allowed
-        }
-    }
-
-    fn can_type_usage(&self, usage_kind: &str, definition_kind: &str) -> CapabilityAnswer {
-        if usage_kind.is_empty() || definition_kind.is_empty() {
-            CapabilityAnswer::Unknown("missing kind information".to_string())
-        } else if !is_usage_keyword(usage_kind) {
-            CapabilityAnswer::Denied(format!("`{usage_kind}` is not a usage kind"))
-        } else if !definition_kind.to_ascii_lowercase().contains("def") {
-            CapabilityAnswer::Denied(format!("`{definition_kind}` is not a definition-like type"))
-        } else if usage_kind == "part" && !definition_kind.to_ascii_lowercase().contains("part") {
-            CapabilityAnswer::Denied(format!(
-                "part usages should be typed by part definitions, got `{definition_kind}`"
-            ))
-        } else {
-            CapabilityAnswer::Allowed
-        }
-    }
-
-    fn can_relate(
-        &self,
-        relationship_kind: &str,
-        source_kind: &str,
-        target_kind: &str,
-    ) -> CapabilityAnswer {
-        let relation = relationship_kind.to_ascii_lowercase();
-        if !is_container_kind(source_kind) {
-            return CapabilityAnswer::Denied(format!(
-                "relationship source `{source_kind}` is not element-like"
-            ));
-        }
-        let target = target_kind.to_ascii_lowercase();
-        if relation.contains("satisfy") && !target.contains("requirement") {
-            return CapabilityAnswer::Denied(
-                "satisfy relationships must target a requirement-like element".to_string(),
-            );
-        }
-        if relation.contains("verify") && !target.contains("requirement") {
-            return CapabilityAnswer::Denied(
-                "verify relationships must target a requirement-like element".to_string(),
-            );
-        }
-        if !(relation.contains("satisfy") || relation.contains("verify")) {
-            return CapabilityAnswer::Unknown(format!(
-                "relationship kind `{relationship_kind}` is not yet governed"
-            ));
-        }
-        CapabilityAnswer::Allowed
-    }
-
-    fn attribute_policy(&self, kind: &str, attribute: &str) -> AttributePolicyAnswer {
-        let attribute = attribute.to_ascii_lowercase();
-        let writable = matches!(
-            attribute.as_str(),
-            "declared_name"
-                | "specializes"
-                | "type"
-                | "is_abstract"
-                | "is_end"
-                | "direction"
-                | "target"
-                | "imports"
-                | "expression"
-                | "doc"
-                | "text"
-                | "id"
-                | "requirement_id"
-        );
-        AttributePolicyAnswer {
-            writable,
-            reason: (!writable).then(|| {
-                format!("attribute `{attribute}` is not writable on `{kind}` by this service")
-            }),
-        }
-    }
 }
 
 pub trait MutationFeasibilityService {
@@ -916,57 +792,6 @@ fn join_ref(parent: &str, name: &str) -> String {
     }
 }
 
-fn is_container_kind(kind: &str) -> bool {
-    let lower = kind.to_ascii_lowercase();
-    lower == "package" || lower.contains("def") || lower.contains("usage") || lower == "part"
-}
-
-fn is_definition_keyword(kind: &str) -> bool {
-    matches!(
-        kind,
-        "part"
-            | "attribute"
-            | "requirement"
-            | "item"
-            | "connection"
-            | "port"
-            | "action"
-            | "constraint"
-            | "calc"
-            | "state"
-            | "view"
-            | "verification"
-    ) || kind.ends_with(" def")
-}
-
-fn is_usage_keyword(kind: &str) -> bool {
-    matches!(
-        kind,
-        "part"
-            | "attribute"
-            | "requirement"
-            | "item"
-            | "connection"
-            | "port"
-            | "action"
-            | "constraint"
-            | "calc"
-            | "state"
-            | "satisfy"
-            | "verify"
-            | "ref"
-            | "reference"
-    )
-}
-
-fn normalize_definition_keyword(keyword: &str) -> String {
-    keyword
-        .strip_suffix(" def")
-        .unwrap_or(keyword)
-        .trim()
-        .to_string()
-}
-
 pub fn workspace_revision_for_project(project: &AuthoringProject) -> WorkspaceRevision {
     let mut hasher = DefaultHasher::new();
     for (path, _) in project.files() {
@@ -1196,7 +1021,10 @@ package HybridVehicle {
             .unwrap();
         let edited = project.write_back_mutation(&result).unwrap();
         let source = edited.edited_files.get("hybrid.model").unwrap();
-        assert!(source.contains("satisfy requirement ImproveEfficiency;"));
+        assert!(
+            source
+                .contains("satisfy ImproveEfficiency references HybridVehicle.ImproveEfficiency;")
+        );
     }
 
     #[test]
@@ -1381,7 +1209,7 @@ package Demo {
     }
 
     #[test]
-    fn feasibility_blocks_satisfy_relationship_to_non_requirement() {
+    fn neutral_feasibility_allows_satisfy_relationship_without_language_profile() {
         let context = MutationContext::from_project(hybrid_vehicle_project());
         let proposal = MutationProposal {
             intent: "Invalid satisfy target".to_string(),
@@ -1398,15 +1226,12 @@ package Demo {
 
         let report = CoreMutationFeasibilityService::new().check(&context, &proposal);
 
-        assert_eq!(report.status, FeasibilityStatus::Blocked);
-        assert!(report.blocking_reasons.iter().any(|issue| {
-            issue.kind == FeasibilityIssueKind::MetamodelViolation
-                && issue.message.contains("must target a requirement")
-        }));
+        assert_eq!(report.status, FeasibilityStatus::Allowed);
+        assert!(report.blocking_reasons.is_empty());
     }
 
     #[test]
-    fn feasibility_blocks_part_usage_typed_by_requirement_definition() {
+    fn neutral_feasibility_allows_part_usage_typing_without_language_profile() {
         let context = MutationContext::from_project(hybrid_vehicle_project());
         let proposal = MutationProposal {
             intent: "Invalid part typing".to_string(),
@@ -1425,13 +1250,8 @@ package Demo {
 
         let report = CoreMutationFeasibilityService::new().check(&context, &proposal);
 
-        assert_eq!(report.status, FeasibilityStatus::Blocked);
-        assert!(report.blocking_reasons.iter().any(|issue| {
-            issue.kind == FeasibilityIssueKind::MetamodelViolation
-                && issue
-                    .message
-                    .contains("part usages should be typed by part definitions")
-        }));
+        assert_eq!(report.status, FeasibilityStatus::Allowed);
+        assert!(report.blocking_reasons.is_empty());
     }
 
     #[test]
@@ -1460,7 +1280,7 @@ package Demo {
     }
 
     #[test]
-    fn feasibility_applies_requirement_id_and_text_attributes() {
+    fn neutral_feasibility_blocks_requirement_specific_attributes_without_language_profile() {
         let context = MutationContext::from_project(hybrid_vehicle_project());
         let proposal = MutationProposal {
             intent: "Fill requirement metadata".to_string(),
@@ -1487,14 +1307,10 @@ package Demo {
         let service = CoreMutationFeasibilityService::new();
         let report = service.check(&context, &proposal);
 
-        assert_eq!(report.status, FeasibilityStatus::Allowed);
-        let application = service
-            .apply_checked_plan(&context, &report.normalized_plan.unwrap())
-            .unwrap();
-        let source = application.edited_files.get("hybrid.model").unwrap();
-        assert!(source.contains("doc /* id: REQ-EFF-001 */"));
-        assert!(source.contains(
-            "doc /* The hybrid vehicle shall improve efficiency through energy recovery. */"
-        ));
+        assert_eq!(report.status, FeasibilityStatus::Blocked);
+        assert!(report.blocking_reasons.iter().any(|issue| {
+            issue.kind == FeasibilityIssueKind::MetamodelViolation
+                && issue.message.contains("not writable")
+        }));
     }
 }

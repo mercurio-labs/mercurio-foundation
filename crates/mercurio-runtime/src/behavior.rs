@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::graph::{Element, Graph};
 use crate::runtime::Runtime;
+use mercurio_model::graph::{Element, Graph};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateMachineModel {
@@ -733,7 +733,8 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::{KirDocument, KirElement, Runtime};
+    use crate::Runtime;
+    use mercurio_model::{KirDocument, KirElement};
 
     use super::*;
 

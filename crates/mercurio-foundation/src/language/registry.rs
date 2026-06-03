@@ -6,6 +6,7 @@ use crate::language::profile::{LanguageProfile, LanguageProfileError, default_la
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetamodelConceptRegistry {
     canonical_kinds: BTreeMap<SemanticConcept, String>,
+    semantic_anchors: BTreeMap<String, String>,
     aliases: BTreeMap<String, String>,
 }
 
@@ -13,6 +14,7 @@ impl MetamodelConceptRegistry {
     pub fn from_profile(profile: &LanguageProfile) -> Self {
         Self {
             canonical_kinds: profile.canonical_kinds.clone(),
+            semantic_anchors: profile.semantic_anchors.clone(),
             aliases: profile.aliases.clone(),
         }
     }
@@ -30,6 +32,10 @@ impl MetamodelConceptRegistry {
             .map(|canonical| self.normalize_kind(kind) == canonical)
             .unwrap_or(false)
     }
+
+    pub fn semantic_anchor(&self, concept: &str) -> Option<&str> {
+        self.semantic_anchors.get(concept).map(String::as_str)
+    }
 }
 
 pub fn default_metamodel_registry() -> Result<MetamodelConceptRegistry, LanguageProfileError> {
@@ -41,14 +47,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_accepts_current_aliases() {
+    fn default_registry_is_core_only() {
         let registry = default_metamodel_registry().unwrap();
 
-        assert!(registry.is_kind(
-            "Model::Systems::PartDefinition",
-            SemanticConcept::PartDefinition
-        ));
-        assert!(registry.is_kind("model.PartDefinition", SemanticConcept::PartDefinition));
-        assert!(!registry.is_kind("Model::Systems::PartUsage", SemanticConcept::PartDefinition));
+        assert!(registry.is_kind("model.Package", SemanticConcept::Package));
+        assert!(registry.semantic_anchor("part_definition").is_none());
     }
 }

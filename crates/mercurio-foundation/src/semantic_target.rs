@@ -187,6 +187,7 @@ mod tests {
                 SemanticConcept::Package,
                 "Model::Package".to_string(),
             )]),
+            semantic_anchors: BTreeMap::new(),
             aliases: BTreeMap::new(),
         };
         let registry = MetamodelConceptRegistry::from_profile(&profile);

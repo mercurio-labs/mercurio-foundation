@@ -63,12 +63,6 @@ enum ForkOperation {
         owner: Option<String>,
         source_file: String,
     },
-    AddRequirement {
-        id: String,
-        qualified_name: String,
-        owner: String,
-        source_file: String,
-    },
     RenameDeclaration {
         element: ElementRef,
         new_name: String,
@@ -86,6 +80,14 @@ pub enum CommitMode {
 pub struct ForkElement {
     pub id: String,
     pub qualified_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForkElementSpec {
+    pub id_prefix: String,
+    pub kind: String,
+    pub name: String,
+    pub properties: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -252,74 +254,6 @@ impl ModelFork {
         Ok(ForkElement { id, qualified_name })
     }
 
-    pub fn requirement(
-        &mut self,
-        owner: &ForkElement,
-        name: impl Into<String>,
-        text: impl Into<String>,
-    ) -> Result<ForkElement, SessionError> {
-        let name = normalize_name(&name.into())?;
-        let qualified_name = format!("{}.{}", owner.qualified_name, name);
-        let id = format!("requirement.{qualified_name}");
-        self.ensure_not_present(&id)?;
-        let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
-            .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
-        let element = KirElement {
-            id: id.clone(),
-            kind: "Model::RequirementUsage".to_string(),
-            layer: 2,
-            properties: BTreeMap::from([
-                ("declared_name".to_string(), Value::String(name)),
-                ("owner".to_string(), Value::String(owner.id.clone())),
-                ("doc".to_string(), doc_metadata(text.into())),
-                ("metadata".to_string(), source_file_metadata(&source_file)),
-            ]),
-        };
-        self.overlay.added_elements.insert(id.clone(), element);
-        self.patch_member(owner.id.as_str(), id.as_str());
-        self.overlay.operations.push(ForkOperation::AddRequirement {
-            id: id.clone(),
-            qualified_name: qualified_name.clone(),
-            owner: owner.id.clone(),
-            source_file,
-        });
-        Ok(ForkElement { id, qualified_name })
-    }
-
-    pub fn part(
-        &mut self,
-        owner: &ForkElement,
-        name: impl Into<String>,
-        ty: Option<impl Into<String>>,
-    ) -> Result<ForkElement, SessionError> {
-        let name = normalize_name(&name.into())?;
-        let qualified_name = format!("{}.{}", owner.qualified_name, name);
-        let id = format!("feature.{qualified_name}");
-        self.ensure_not_present(&id)?;
-        let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
-            .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
-        let mut properties = BTreeMap::from([
-            ("declared_name".to_string(), Value::String(name)),
-            ("owner".to_string(), Value::String(owner.id.clone())),
-            ("metadata".to_string(), source_file_metadata(&source_file)),
-        ]);
-        if let Some(ty) = ty {
-            properties.insert(
-                "type".to_string(),
-                Value::String(normalize_qname(&ty.into())?),
-            );
-        }
-        let element = KirElement {
-            id: id.clone(),
-            kind: "Model::PartUsage".to_string(),
-            layer: 2,
-            properties,
-        };
-        self.overlay.added_elements.insert(id.clone(), element);
-        self.patch_member(owner.id.as_str(), id.as_str());
-        Ok(ForkElement { id, qualified_name })
-    }
-
     pub fn add_metadata(
         &mut self,
         owner: &ForkElement,
@@ -359,36 +293,33 @@ impl ModelFork {
         Ok(ForkElement { id, qualified_name })
     }
 
-    pub fn satisfy(
+    pub fn semantic_element(
         &mut self,
         owner: &ForkElement,
-        target: &ForkElement,
+        spec: ForkElementSpec,
     ) -> Result<ForkElement, SessionError> {
-        self.relationship(owner, "satisfy", target)
-    }
-
-    pub fn verify(
-        &mut self,
-        owner: &ForkElement,
-        target: &ForkElement,
-    ) -> Result<ForkElement, SessionError> {
-        self.relationship(owner, "verify", target)
-    }
-
-    pub fn requirements<I, N, T>(
-        &mut self,
-        owner: &ForkElement,
-        items: I,
-    ) -> Result<Vec<ForkElement>, SessionError>
-    where
-        I: IntoIterator<Item = (N, T)>,
-        N: Into<String>,
-        T: Into<String>,
-    {
-        items
-            .into_iter()
-            .map(|(name, text)| self.requirement(owner, name, text))
-            .collect()
+        let name = normalize_name(&spec.name)?;
+        let id_prefix = normalize_name(&spec.id_prefix)?;
+        let qualified_name = format!("{}.{}", owner.qualified_name, name);
+        let id = format!("{id_prefix}.{qualified_name}");
+        self.ensure_not_present(&id)?;
+        let source_file = source_file_for_owner(self.overlay.added_elements.get(&owner.id))
+            .unwrap_or_else(|| generated_source_file_for(&owner.qualified_name));
+        let mut properties = BTreeMap::from([
+            ("declared_name".to_string(), Value::String(name)),
+            ("owner".to_string(), Value::String(owner.id.clone())),
+            ("metadata".to_string(), source_file_metadata(&source_file)),
+        ]);
+        properties.extend(spec.properties);
+        let element = KirElement {
+            id: id.clone(),
+            kind: spec.kind,
+            layer: 2,
+            properties,
+        };
+        self.overlay.added_elements.insert(id.clone(), element);
+        self.patch_member(owner.id.as_str(), id.as_str());
+        Ok(ForkElement { id, qualified_name })
     }
 
     pub fn rename_declaration(
@@ -624,7 +555,7 @@ impl ModelFork {
         Ok(())
     }
 
-    fn relationship(
+    pub fn relationship(
         &mut self,
         owner: &ForkElement,
         kind: &str,
@@ -903,21 +834,6 @@ fn source_file_metadata(source_file: &str) -> Value {
     )
 }
 
-fn doc_metadata(text: String) -> Value {
-    Value::Object(
-        BTreeMap::from([(
-            "blocks".to_string(),
-            Value::Array(vec![Value::Object(
-                BTreeMap::from([("text".to_string(), Value::String(text))])
-                    .into_iter()
-                    .collect(),
-            )]),
-        )])
-        .into_iter()
-        .collect(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -945,16 +861,20 @@ mod tests {
     }
 
     #[test]
-    fn fork_overlay_adds_large_requirement_set_without_cloning_base() {
+    fn generic_fork_overlay_adds_large_element_set_without_cloning_base() {
         let snapshot = Arc::new(WorkspaceSnapshot::new(empty_document()).unwrap());
         let session = snapshot.session();
-        let mut fork = session.fork("bulk requirements");
-        let package = fork.package("SyntheticRequirements", None).unwrap();
+        let mut fork = session.fork("bulk generated elements");
+        let package = fork.package("SyntheticElements", None).unwrap();
         for index in 0..10_000 {
-            fork.requirement(
+            fork.semantic_element(
                 &package,
-                format!("Req{index:05}"),
-                format!("Generated requirement {index:05}"),
+                ForkElementSpec {
+                    id_prefix: "element".to_string(),
+                    kind: "model.GenericUsage".to_string(),
+                    name: format!("Generated{index:05}"),
+                    properties: BTreeMap::new(),
+                },
             )
             .unwrap();
         }
@@ -965,18 +885,22 @@ mod tests {
     }
 
     #[test]
-    fn fork_overlay_bulk_requirement_addition_is_linear_enough() {
+    fn fork_overlay_bulk_semantic_element_addition_is_linear_enough() {
         let snapshot = Arc::new(WorkspaceSnapshot::new(empty_document()).unwrap());
         let session = snapshot.session();
-        let mut fork = session.fork("bulk requirements timing");
-        let package = fork.package("SyntheticRequirements", None).unwrap();
+        let mut fork = session.fork("bulk elements timing");
+        let package = fork.package("SyntheticElements", None).unwrap();
 
         let started = Instant::now();
         for index in 0..10_000 {
-            fork.requirement(
+            fork.semantic_element(
                 &package,
-                format!("Req{index:05}"),
-                format!("Generated requirement {index:05}"),
+                ForkElementSpec {
+                    id_prefix: "element".to_string(),
+                    kind: "model.GenericUsage".to_string(),
+                    name: format!("Generated{index:05}"),
+                    properties: BTreeMap::new(),
+                },
             )
             .unwrap();
         }
@@ -985,7 +909,7 @@ mod tests {
         assert_eq!(fork.overlay().added_elements.len(), 10_001);
         assert!(
             elapsed.as_secs_f64() < 2.0,
-            "adding 10k requirements to an overlay took {elapsed:?}"
+            "adding 10k semantic elements to an overlay took {elapsed:?}"
         );
     }
 
@@ -993,23 +917,43 @@ mod tests {
     fn rewrite_source_commit_emits_generated_model() {
         let workspace = ModelWorkspace::new(WorkspaceSnapshot::new(empty_document()).unwrap());
         let session = workspace.session();
-        let mut fork = session.fork("generated requirements");
-        let package = fork.package("SyntheticRequirements", None).unwrap();
-        fork.requirement(&package, "Req00001", "Generated requirement")
+        let mut fork = session.fork("generated elements");
+        let package = fork.package("SyntheticElements", None).unwrap();
+        let target = fork
+            .semantic_element(
+                &package,
+                ForkElementSpec {
+                    id_prefix: "element".to_string(),
+                    kind: "model.GenericUsage".to_string(),
+                    name: "Target00001".to_string(),
+                    properties: BTreeMap::new(),
+                },
+            )
             .unwrap();
-        fork.part(&package, "controller", Option::<String>::None)
+        let source = fork
+            .semantic_element(
+                &package,
+                ForkElementSpec {
+                    id_prefix: "element".to_string(),
+                    kind: "model.GenericUsage".to_string(),
+                    name: "source".to_string(),
+                    properties: BTreeMap::new(),
+                },
+            )
             .unwrap();
+        fork.relationship(&source, "relates", &target).unwrap();
 
         let result = fork.commit(CommitMode::RewriteSource).unwrap();
 
         assert_eq!(result.strategy_used, CommitStrategy::RewriteGeneratedSource);
         let source = result
             .edited_files
-            .get("generated/synthetic_requirements.model")
+            .get("generated/synthetic_elements.model")
             .unwrap();
-        assert!(source.contains("package SyntheticRequirements"));
-        assert!(source.contains("requirement Req00001"));
-        assert!(source.contains("part controller"));
+        assert!(source.contains("package SyntheticElements"));
+        assert!(source.contains("generic Target00001"));
+        assert!(source.contains("generic source"));
+        assert!(source.contains("relates Target00001 references"));
         assert_ne!(workspace.current_snapshot().revision, result.base_revision);
     }
 
@@ -1017,11 +961,19 @@ mod tests {
     fn preserve_source_bulk_addition_uses_generated_companion_file() {
         let workspace = ModelWorkspace::new(WorkspaceSnapshot::new(empty_document()).unwrap());
         let session = workspace.session();
-        let mut fork = session.fork("generated requirements");
-        let package = fork.package("SyntheticRequirements", None).unwrap();
+        let mut fork = session.fork("generated elements");
+        let package = fork.package("SyntheticElements", None).unwrap();
         for index in 0..101 {
-            fork.requirement(&package, format!("Req{index:05}"), "Generated")
-                .unwrap();
+            fork.semantic_element(
+                &package,
+                ForkElementSpec {
+                    id_prefix: "element".to_string(),
+                    kind: "model.GenericUsage".to_string(),
+                    name: format!("Generated{index:05}"),
+                    properties: BTreeMap::new(),
+                },
+            )
+            .unwrap();
         }
 
         let result = fork.commit(CommitMode::PreserveSource).unwrap();
@@ -1061,7 +1013,15 @@ mod tests {
         let mut first_fork = first.fork("first");
         let first_package = first_fork.package("First", None).unwrap();
         first_fork
-            .requirement(&first_package, "Req00001", "Generated")
+            .semantic_element(
+                &first_package,
+                ForkElementSpec {
+                    id_prefix: "element".to_string(),
+                    kind: "model.GenericUsage".to_string(),
+                    name: "Generated00001".to_string(),
+                    properties: BTreeMap::new(),
+                },
+            )
             .unwrap();
         first_fork.commit(CommitMode::RewriteSource).unwrap();
 

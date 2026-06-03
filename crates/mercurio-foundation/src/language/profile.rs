@@ -22,6 +22,8 @@ pub struct LanguageProfile {
     #[serde(default)]
     pub canonical_kinds: BTreeMap<SemanticConcept, String>,
     #[serde(default)]
+    pub semantic_anchors: BTreeMap<String, String>,
+    #[serde(default)]
     pub aliases: BTreeMap<String, String>,
 }
 
@@ -124,28 +126,11 @@ fn core_language_profile() -> LanguageProfile {
         stdlib_path: "resources/foundation/empty.kir.json".to_string(),
         kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
         canonical_kinds: BTreeMap::from([
-            (
-                SemanticConcept::PartDefinition,
-                "model.PartDefinition".to_string(),
-            ),
-            (SemanticConcept::PartUsage, "model.PartUsage".to_string()),
-            (
-                SemanticConcept::RequirementUsage,
-                "model.RequirementUsage".to_string(),
-            ),
             (SemanticConcept::Package, "model.Package".to_string()),
             (SemanticConcept::Type, "model.Type".to_string()),
         ]),
-        aliases: BTreeMap::from([
-            (
-                "Model::Systems::PartDefinition".to_string(),
-                "model.PartDefinition".to_string(),
-            ),
-            (
-                "Model::Systems::PartUsage".to_string(),
-                "model.PartUsage".to_string(),
-            ),
-        ]),
+        semantic_anchors: BTreeMap::new(),
+        aliases: BTreeMap::new(),
     }
 }
 
@@ -161,8 +146,9 @@ mod tests {
         assert_eq!(profile.language, SourceLanguage::Model);
         assert_eq!(profile.stdlib_version, "none");
         assert_eq!(
-            profile.canonical_kinds[&SemanticConcept::PartDefinition],
-            "model.PartDefinition"
+            profile.canonical_kinds[&SemanticConcept::Package],
+            "model.Package"
         );
+        assert!(!profile.semantic_anchors.contains_key("requirement_usage"));
     }
 }

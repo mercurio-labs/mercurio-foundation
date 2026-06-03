@@ -227,6 +227,25 @@ fn collect_declaration_assessment_facts(
     facts: &mut Vec<Fact>,
 ) {
     for declaration in declarations {
+        if let Some(definition) = declaration.as_definition_like() {
+            let id = scoped_id(owner, &definition.name);
+            facts.push(Fact::new("definition", [id.clone()]));
+            facts.push(Fact::new(
+                "definition_keyword",
+                [id.clone(), definition.keyword.clone()],
+            ));
+            facts.push(Fact::new("name", [id.clone(), definition.name.clone()]));
+            if let Some(owner) = owner {
+                facts.push(Fact::new("owns", [owner.to_string(), id.clone()]));
+            }
+            collect_declaration_assessment_facts(&definition.members, Some(&id), facts);
+            continue;
+        }
+        if let Some(usage) = declaration.as_usage_like() {
+            collect_usage_assessment_facts(&usage, owner, facts);
+            continue;
+        }
+
         match declaration {
             Declaration::Package(package) => {
                 let name = package.name.as_colon_string();
@@ -243,120 +262,90 @@ fn collect_declaration_assessment_facts(
                 }
                 collect_declaration_assessment_facts(&package.members, Some(&id), facts);
             }
-            Declaration::PartDefinition(definition) => {
-                let id = scoped_id(owner, &definition.name);
-                facts.push(Fact::new("part_definition", [id.clone()]));
-                facts.push(Fact::new("name", [id.clone(), definition.name.clone()]));
-                if let Some(owner) = owner {
-                    facts.push(Fact::new("owns", [owner.to_string(), id.clone()]));
-                }
-                collect_declaration_assessment_facts(&definition.members, Some(&id), facts);
-            }
-            Declaration::PartUsage(usage) => {
-                let id = scoped_id(owner, &usage.name);
-                facts.push(Fact::new("part_usage", [id.clone()]));
-                facts.push(Fact::new("name", [id.clone(), usage.name.clone()]));
-                if let Some(owner) = owner {
-                    facts.push(Fact::new("owns", [owner.to_string(), id.clone()]));
-                }
-                if let Some(ty) = &usage.ty {
-                    facts.push(Fact::new("type", [id.clone(), ty.as_colon_string()]));
-                }
-                if let Some(multiplicity) = &usage.multiplicity {
-                    facts.push(Fact::new(
-                        "multiplicity",
-                        [id.clone(), multiplicity.raw.clone()],
-                    ));
-                    facts.push(Fact::new(
-                        "multiplicity_lower",
-                        [id.clone(), multiplicity.lower.clone()],
-                    ));
-                    facts.push(Fact::new(
-                        "multiplicity_upper",
-                        [id.clone(), multiplicity.upper.clone()],
-                    ));
-                }
-                collect_declaration_assessment_facts(&usage.body_members, Some(&id), facts);
-            }
-            Declaration::GenericUsage(usage) => {
-                let id = scoped_id(owner, &usage.name);
-                facts.push(Fact::new("usage", [id.clone()]));
-                facts.push(Fact::new(
-                    "usage_keyword",
-                    [id.clone(), usage.keyword.clone()],
-                ));
-                for modifier in &usage.modifiers {
-                    facts.push(Fact::new("modifier", [id.clone(), modifier.clone()]));
-                }
-                if matches!(
-                    usage.keyword.as_str(),
-                    "connect" | "connection" | "interface"
-                ) {
-                    facts.push(Fact::new("connection_usage", [id.clone()]));
-                }
-                if usage.keyword == "interface" {
-                    facts.push(Fact::new("interface_usage", [id.clone()]));
-                }
-                facts.push(Fact::new("name", [id.clone(), usage.name.clone()]));
-                if let Some(owner) = owner {
-                    facts.push(Fact::new("owns", [owner.to_string(), id.clone()]));
-                }
-                if let Some(ty) = &usage.ty {
-                    facts.push(Fact::new("type", [id.clone(), ty.as_colon_string()]));
-                }
-                if let Some(reference_target) = &usage.reference_target {
-                    let target = reference_target.as_colon_string();
-                    facts.push(Fact::new("reference_target", [id.clone(), target.clone()]));
-                    if let Some(owner) = owner {
-                        if usage
-                            .modifiers
-                            .iter()
-                            .any(|modifier| modifier == "end-source")
-                        {
-                            facts.push(Fact::new(
-                                "connected_source",
-                                [owner.to_string(), target.clone()],
-                            ));
-                            facts.push(Fact::new(
-                                "connected_endpoint",
-                                [owner.to_string(), "source".to_string(), target.clone()],
-                            ));
-                        }
-                        if usage
-                            .modifiers
-                            .iter()
-                            .any(|modifier| modifier == "end-target")
-                        {
-                            facts.push(Fact::new(
-                                "connected_target",
-                                [owner.to_string(), target.clone()],
-                            ));
-                            facts.push(Fact::new(
-                                "connected_endpoint",
-                                [owner.to_string(), "target".to_string(), target],
-                            ));
-                        }
-                    }
-                }
-                if let Some(multiplicity) = &usage.multiplicity {
-                    facts.push(Fact::new(
-                        "multiplicity",
-                        [id.clone(), multiplicity.raw.clone()],
-                    ));
-                    facts.push(Fact::new(
-                        "multiplicity_lower",
-                        [id.clone(), multiplicity.lower.clone()],
-                    ));
-                    facts.push(Fact::new(
-                        "multiplicity_upper",
-                        [id.clone(), multiplicity.upper.clone()],
-                    ));
-                }
-                collect_declaration_assessment_facts(&usage.body_members, Some(&id), facts);
-            }
             _ => {}
         }
     }
+}
+
+fn collect_usage_assessment_facts(
+    usage: &crate::frontend::ast::GenericUsageDecl,
+    owner: Option<&str>,
+    facts: &mut Vec<Fact>,
+) {
+    let id = scoped_id(owner, &usage.name);
+    facts.push(Fact::new("usage", [id.clone()]));
+    facts.push(Fact::new(
+        "usage_keyword",
+        [id.clone(), usage.keyword.clone()],
+    ));
+    for modifier in &usage.modifiers {
+        facts.push(Fact::new("modifier", [id.clone(), modifier.clone()]));
+    }
+    if matches!(
+        usage.keyword.as_str(),
+        "connect" | "connection" | "interface"
+    ) {
+        facts.push(Fact::new("connection_usage", [id.clone()]));
+    }
+    if usage.keyword == "interface" {
+        facts.push(Fact::new("interface_usage", [id.clone()]));
+    }
+    facts.push(Fact::new("name", [id.clone(), usage.name.clone()]));
+    if let Some(owner) = owner {
+        facts.push(Fact::new("owns", [owner.to_string(), id.clone()]));
+    }
+    if let Some(ty) = &usage.ty {
+        facts.push(Fact::new("type", [id.clone(), ty.as_colon_string()]));
+    }
+    if let Some(reference_target) = &usage.reference_target {
+        let target = reference_target.as_colon_string();
+        facts.push(Fact::new("reference_target", [id.clone(), target.clone()]));
+        if let Some(owner) = owner {
+            if usage
+                .modifiers
+                .iter()
+                .any(|modifier| modifier == "end-source")
+            {
+                facts.push(Fact::new(
+                    "connected_source",
+                    [owner.to_string(), target.clone()],
+                ));
+                facts.push(Fact::new(
+                    "connected_endpoint",
+                    [owner.to_string(), "source".to_string(), target.clone()],
+                ));
+            }
+            if usage
+                .modifiers
+                .iter()
+                .any(|modifier| modifier == "end-target")
+            {
+                facts.push(Fact::new(
+                    "connected_target",
+                    [owner.to_string(), target.clone()],
+                ));
+                facts.push(Fact::new(
+                    "connected_endpoint",
+                    [owner.to_string(), "target".to_string(), target],
+                ));
+            }
+        }
+    }
+    if let Some(multiplicity) = &usage.multiplicity {
+        facts.push(Fact::new(
+            "multiplicity",
+            [id.clone(), multiplicity.raw.clone()],
+        ));
+        facts.push(Fact::new(
+            "multiplicity_lower",
+            [id.clone(), multiplicity.lower.clone()],
+        ));
+        facts.push(Fact::new(
+            "multiplicity_upper",
+            [id.clone(), multiplicity.upper.clone()],
+        ));
+    }
+    collect_declaration_assessment_facts(&usage.body_members, Some(&id), facts);
 }
 
 fn scoped_id(owner: Option<&str>, name: &str) -> String {

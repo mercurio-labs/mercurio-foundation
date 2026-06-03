@@ -1,17 +1,11 @@
 [package]
-name = "mercurio-foundation"
+name = "mercurio-model"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[lib]
-name = "mercurio_core"
-
 [dependencies]
 mercurio-kir = { path = "../mercurio-kir" }
 mercurio-language-contracts = { path = "../mercurio-language-contracts" }
-mercurio-model = { path = "../mercurio-model" }
-mercurio-runtime = { path = "../mercurio-runtime" }
 serde.workspace = true
 serde_json.workspace = true
-zip.workspace = true

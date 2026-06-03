@@ -595,19 +595,13 @@ fn metadata_name(element: &KirElement) -> Option<&str> {
 
 fn concepts_py(profile: &LanguageProfile) -> String {
     let package = python_string_literal(concept_anchor(profile, SemanticConcept::Package));
-    let part_definition =
-        python_string_literal(concept_anchor(profile, SemanticConcept::PartDefinition));
-    let part_usage = python_string_literal(concept_anchor(profile, SemanticConcept::PartUsage));
-    let attribute_usage =
-        python_string_literal(concept_anchor(profile, SemanticConcept::AttributeUsage));
-    let requirement_usage =
-        python_string_literal(concept_anchor(profile, SemanticConcept::RequirementUsage));
-    let verification_case_usage = python_string_literal(concept_anchor(
-        profile,
-        SemanticConcept::VerificationCaseUsage,
-    ));
-    let constraint_usage =
-        python_string_literal(concept_anchor(profile, SemanticConcept::ConstraintUsage));
+    let part_definition = python_string_literal(profile_anchor(profile, "part_definition"));
+    let part_usage = python_string_literal(profile_anchor(profile, "part_usage"));
+    let attribute_usage = python_string_literal(profile_anchor(profile, "attribute_usage"));
+    let requirement_usage = python_string_literal(profile_anchor(profile, "requirement_usage"));
+    let verification_case_usage =
+        python_string_literal(profile_anchor(profile, "verification_case_usage"));
+    let constraint_usage = python_string_literal(profile_anchor(profile, "constraint_usage"));
     format!(
         r#"from __future__ import annotations
 
@@ -799,6 +793,10 @@ fn concept_anchor(profile: &LanguageProfile, concept: SemanticConcept) -> Option
     profile.canonical_kinds.get(&concept).map(String::as_str)
 }
 
+fn profile_anchor<'a>(profile: &'a LanguageProfile, concept: &str) -> Option<&'a str> {
+    profile.semantic_anchors.get(concept).map(String::as_str)
+}
+
 fn python_string_literal(value: Option<&str>) -> String {
     value
         .map(|value| format!("{value:?}"))
@@ -905,6 +903,7 @@ mod tests {
                 SemanticConcept::Package,
                 "Model::Package".to_string(),
             )]),
+            semantic_anchors: BTreeMap::new(),
             aliases: BTreeMap::new(),
         };
 
@@ -986,8 +985,9 @@ mod tests {
             stdlib_version: "test".to_string(),
             stdlib_path: "stdlib.kir.json".to_string(),
             kir_schema_version: "0.2".to_string(),
-            canonical_kinds: BTreeMap::from([(
-                SemanticConcept::PartDefinition,
+            canonical_kinds: BTreeMap::new(),
+            semantic_anchors: BTreeMap::from([(
+                "part_definition".to_string(),
                 "Model::Systems::PartDefinition".to_string(),
             )]),
             aliases: BTreeMap::from([(

@@ -57,6 +57,9 @@ pub enum SemanticGoalCheck {
         kind: String,
         target_name: String,
     },
+    #[deprecated(
+        note = "requirement quality checks are domain-specific; use mercurio-requirements"
+    )]
     RequirementsHaveFields {
         fields: Vec<String>,
     },

@@ -439,7 +439,7 @@ impl ElementProperties {
         properties
     }
 
-    pub(crate) fn from_declared_arc_for_artifact(
+    pub fn from_declared_arc_for_artifact(
         element_id: String,
         mut declared: BTreeMap<Arc<str>, Value>,
     ) -> Self {

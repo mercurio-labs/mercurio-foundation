@@ -106,34 +106,6 @@ pub struct MultiplicityRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PartUsageDecl {
-    pub name: String,
-    pub is_implicit_name: bool,
-    pub ty: Option<QualifiedName>,
-    pub multiplicity: Option<MultiplicityRange>,
-    pub expression: Option<Expr>,
-    pub additional_types: Vec<QualifiedName>,
-    pub specializes: Vec<QualifiedName>,
-    pub subsets: Vec<QualifiedName>,
-    pub redefines: Vec<QualifiedName>,
-    pub body_members: Vec<Declaration>,
-    pub docs: Vec<String>,
-    pub modifiers: Vec<String>,
-    pub span: SourceSpan,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PartDefinitionDecl {
-    pub name: String,
-    pub specializes: Vec<QualifiedName>,
-    pub members: Vec<Declaration>,
-    pub part_members: Vec<PartUsageDecl>,
-    pub docs: Vec<String>,
-    pub modifiers: Vec<String>,
-    pub span: SourceSpan,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenericDefinitionDecl {
     pub keyword: String,
     pub name: String,
@@ -180,11 +152,34 @@ pub struct AliasDecl {
 pub enum Declaration {
     Package(PackageDecl),
     Import(ImportDecl),
-    PartDefinition(PartDefinitionDecl),
-    PartUsage(PartUsageDecl),
     GenericDefinition(GenericDefinitionDecl),
     GenericUsage(GenericUsageDecl),
     Alias(AliasDecl),
+}
+
+impl Declaration {
+    pub fn as_definition_like(&self) -> Option<GenericDefinitionDecl> {
+        match self {
+            Self::GenericDefinition(definition) => Some(definition.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_usage_like(&self) -> Option<GenericUsageDecl> {
+        match self {
+            Self::GenericUsage(usage) => Some(usage.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn child_declarations(&self) -> &[Declaration] {
+        match self {
+            Self::Package(package) => &package.members,
+            Self::GenericDefinition(definition) => &definition.members,
+            Self::GenericUsage(usage) => &usage.body_members,
+            Self::Import(_) | Self::Alias(_) => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,7 +187,7 @@ pub struct PackageDecl {
     pub name: QualifiedName,
     pub members: Vec<Declaration>,
     pub imports: Vec<ImportDecl>,
-    pub definitions: Vec<PartDefinitionDecl>,
+    pub definitions: Vec<GenericDefinitionDecl>,
     pub docs: Vec<String>,
     pub modifiers: Vec<String>,
     pub span: SourceSpan,
@@ -203,5 +198,33 @@ pub struct ParsedModule {
     pub package: Option<PackageDecl>,
     pub members: Vec<Declaration>,
     pub imports: Vec<ImportDecl>,
-    pub definitions: Vec<PartDefinitionDecl>,
+    pub definitions: Vec<GenericDefinitionDecl>,
+}
+
+impl PackageDecl {
+    pub fn definition_like_declarations(&self) -> Vec<GenericDefinitionDecl> {
+        let mut definitions = self
+            .members
+            .iter()
+            .filter_map(Declaration::as_definition_like)
+            .collect::<Vec<_>>();
+        if definitions.is_empty() {
+            definitions.extend(self.definitions.iter().cloned());
+        }
+        definitions
+    }
+}
+
+impl ParsedModule {
+    pub fn definition_like_declarations(&self) -> Vec<GenericDefinitionDecl> {
+        let mut definitions = self
+            .members
+            .iter()
+            .filter_map(Declaration::as_definition_like)
+            .collect::<Vec<_>>();
+        if definitions.is_empty() {
+            definitions.extend(self.definitions.iter().cloned());
+        }
+        definitions
+    }
 }

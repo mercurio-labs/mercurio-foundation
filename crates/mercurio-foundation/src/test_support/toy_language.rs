@@ -92,9 +92,9 @@ struct ToyModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ToyDeclaration {
     Type { name: String },
-    PartDefinition { name: String },
+    Definition { name: String },
     FeatureDefinition { name: String },
-    PartUsage { name: String, type_name: String },
+    Usage { name: String, type_name: String },
 }
 
 impl ToyModel {
@@ -136,9 +136,9 @@ impl ToyDeclaration {
     fn element_id(&self, package: &str) -> String {
         match self {
             ToyDeclaration::Type { name } => format!("type.{package}.{name}"),
-            ToyDeclaration::PartDefinition { name } => format!("type.{package}.{name}"),
+            ToyDeclaration::Definition { name } => format!("type.{package}.{name}"),
             ToyDeclaration::FeatureDefinition { name } => format!("type.{package}.{name}"),
-            ToyDeclaration::PartUsage { name, .. } => format!("part.{package}.{name}"),
+            ToyDeclaration::Usage { name, .. } => format!("part.{package}.{name}"),
         }
     }
 
@@ -150,7 +150,7 @@ impl ToyDeclaration {
                 layer: 2,
                 properties: common_properties(package, &name, source_name),
             },
-            ToyDeclaration::PartDefinition { name } => KirElement {
+            ToyDeclaration::Definition { name } => KirElement {
                 id: format!("type.{package}.{name}"),
                 kind: "model.PartDefinition".to_string(),
                 layer: 2,
@@ -162,7 +162,7 @@ impl ToyDeclaration {
                 layer: 2,
                 properties: common_properties(package, &name, source_name),
             },
-            ToyDeclaration::PartUsage { name, type_name } => {
+            ToyDeclaration::Usage { name, type_name } => {
                 let mut properties = common_properties(package, &name, source_name);
                 properties.insert(
                     "type".to_string(),
@@ -250,7 +250,7 @@ fn parse(source: &str, source_name: &str) -> Result<ToyModel, Vec<Diagnostic>> {
                         match tokens.get(index) {
                             Some(name) if is_identifier(name) => {
                                 declarations
-                                    .push(ToyDeclaration::PartDefinition { name: name.clone() });
+                                    .push(ToyDeclaration::Definition { name: name.clone() });
                                 index += 1;
                             }
                             _ => {
@@ -267,7 +267,7 @@ fn parse(source: &str, source_name: &str) -> Result<ToyModel, Vec<Diagnostic>> {
                         index += 1;
                         match (tokens.get(index).map(String::as_str), tokens.get(index + 1)) {
                             (Some(":"), Some(type_name)) if is_qualified_identifier(type_name) => {
-                                declarations.push(ToyDeclaration::PartUsage {
+                                declarations.push(ToyDeclaration::Usage {
                                     name: part_name,
                                     type_name: type_name.clone(),
                                 });

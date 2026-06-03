@@ -4,9 +4,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::expression::ExpressionIr;
-use crate::graph::{Element, Graph};
 use crate::runtime::ExecutionContext;
+use mercurio_model::expression::ExpressionIr;
+use mercurio_model::graph::{Element, Graph};
 
 const EPSILON: f64 = 1.0e-9;
 
@@ -1131,8 +1131,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::graph::Graph;
-    use crate::ir::{KirDocument, KirElement};
+    use mercurio_model::graph::Graph;
+    use mercurio_model::{KirDocument, KirElement};
 
     #[test]
     fn propagates_simple_acausal_equation() {
