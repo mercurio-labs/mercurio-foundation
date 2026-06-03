@@ -5,6 +5,7 @@ members = [
     "crates/mercurio-model",
     "crates/mercurio-runtime",
     "crates/mercurio-foundation",
+    "crates/mercurio-views",
 ]
 resolver = "2"
 

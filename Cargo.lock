@@ -108,6 +108,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mercurio-views"
+version = "0.1.0"
+dependencies = [
+ "mercurio-foundation",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
