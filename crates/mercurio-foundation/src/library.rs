@@ -828,9 +828,7 @@ impl LocalPackageRepository {
                 .parent()
                 .unwrap_or(self.root.as_path())
                 .join(&manifest.file);
-            let verification = self
-                .verify_package(&manifest.name, &manifest.version)
-                .ok();
+            let verification = self.verify_package(&manifest.name, &manifest.version).ok();
             records.push(LocalPackageRecord {
                 repository_path: self.root.to_string_lossy().to_string(),
                 manifest_path: manifest_path.to_string_lossy().to_string(),

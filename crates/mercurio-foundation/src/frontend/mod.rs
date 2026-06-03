@@ -4,4 +4,4 @@ pub mod lexer;
 pub mod model;
 pub mod pilot;
 
-pub use mercurio_language_contracts::reports::{ParseReport, SemanticCompileStatus};
+pub use mercurio_language_contracts::{ParseReport, SemanticCompileStatus};

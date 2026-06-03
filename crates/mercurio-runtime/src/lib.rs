@@ -1,5 +1,12 @@
-pub mod datalog;
-pub mod runtime;
+//! Runtime evaluation and datalog APIs.
+//!
+//! Prefer the root-level re-exports as the supported API. Implementation
+//! modules remain public for compatibility, but are hidden from rustdoc.
+
+#[doc(hidden)]
+mod datalog;
+#[doc(hidden)]
+mod runtime;
 
 pub use datalog::{
     Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,

@@ -1,3 +1,8 @@
+//! Kernel intermediate representation (KIR) persistence contract.
+//!
+//! KIR is the stable interchange boundary between source frontends, model
+//! graph construction, runtime evaluation, and view generation.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;

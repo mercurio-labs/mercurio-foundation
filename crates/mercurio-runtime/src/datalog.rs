@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use mercurio_model::graph::Graph;
+use mercurio_model::Graph;
 
 pub const CORE_RULEPACK_ID: &str = "mercurio.core";
 pub const CORE_RULEPACK_VERSION: &str = "0.1.0";
@@ -1032,7 +1032,7 @@ mod tests {
     use super::{
         Fact, RulePack, extract_graph_facts, load_default_rulepacks, materialize_core_indexes,
     };
-    use mercurio_model::graph::Graph;
+    use mercurio_model::Graph;
     use mercurio_model::{KirDocument, KirElement};
 
     #[test]

@@ -13,8 +13,7 @@ use crate::mutation::{
     SemanticDiff, SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
 };
 pub use crate::semantic_profile::{
-    AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
-    SemanticCapabilityOracle,
+    CapabilityAnswer, ConservativeSemanticCapabilityOracle, SemanticCapabilityOracle,
 };
 
 #[derive(Debug, Clone, PartialEq)]

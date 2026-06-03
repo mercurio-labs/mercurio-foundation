@@ -8,15 +8,12 @@ use serde_json::{Number, Value};
 use crate::datalog::{
     DatalogError, DerivedIndexes, RulePack, load_default_rulepacks, materialize_core_indexes,
 };
-use mercurio_model::derived::{
+use mercurio_model::{
     DerivedFeatureCache, DerivedFeatureManifestError, DerivedFeatureRegistry, DerivedPropertyValue,
+    ElementProperties, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
+    ExpressionPathSegment, Graph, GraphArtifact, GraphError, KirDocument, NodeId,
     manifest_from_metadata,
 };
-use mercurio_model::expression::{
-    ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionPathSegment,
-};
-use mercurio_model::graph::{Graph, GraphArtifact, GraphError};
-use mercurio_model::ir::KirDocument;
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
@@ -369,7 +366,7 @@ impl Runtime {
         })
     }
 
-    fn transitive_subtypes_of(&self, type_node: mercurio_model::graph::NodeId) -> Vec<String> {
+    fn transitive_subtypes_of(&self, type_node: NodeId) -> Vec<String> {
         let mut result = BTreeSet::new();
         let mut visited = BTreeSet::new();
         let mut stack = self
@@ -393,7 +390,7 @@ impl Runtime {
         result.into_iter().collect()
     }
 
-    fn transitive_supertypes_of(&self, type_node: mercurio_model::graph::NodeId) -> Vec<String> {
+    fn transitive_supertypes_of(&self, type_node: NodeId) -> Vec<String> {
         let mut result = BTreeSet::new();
         let mut visited = BTreeSet::new();
         let mut stack = self
@@ -716,14 +713,11 @@ where
     format!("fnv1a64:{hash:016x}")
 }
 
-fn element_name_matches(
-    properties: &mercurio_model::graph::ElementProperties,
-    expected: &str,
-) -> bool {
+fn element_name_matches(properties: &ElementProperties, expected: &str) -> bool {
     feature_name(properties) == Some(expected)
 }
 
-fn feature_name(properties: &mercurio_model::graph::ElementProperties) -> Option<&str> {
+fn feature_name(properties: &ElementProperties) -> Option<&str> {
     properties
         .get("declared_name")
         .or_else(|| properties.get("name"))
@@ -775,7 +769,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{ExecutionContext, Runtime};
-    use mercurio_model::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+    use mercurio_model::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 
     fn sample_runtime() -> Runtime {
         Runtime::from_document(KirDocument {

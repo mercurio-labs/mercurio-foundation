@@ -1,1 +1,1 @@
-pub use mercurio_language_contracts::diagnostics::*;
+pub use mercurio_language_contracts::Diagnostic;

@@ -2,7 +2,7 @@ use crate::frontend::ast::ParsedModule;
 use crate::frontend::diagnostics::Diagnostic;
 use crate::ir::KirDocument;
 
-pub use mercurio_language_contracts::reports::{SemanticCompileReport, SemanticCompileStatus};
+pub use mercurio_language_contracts::{SemanticCompileReport, SemanticCompileStatus};
 
 #[cfg(not(test))]
 pub fn compile_model_text(

@@ -1,14 +1,17 @@
+//! View specification DTOs and render entrypoints.
+//!
+//! This crate exposes serializable diagram/table specs, validation diagnostics,
+//! and render functions for model-backed views.
+
 use std::collections::{BTreeSet, VecDeque};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use mercurio_core::graph::{Element, Graph, NodeId};
-use mercurio_core::metadata_annotations_named;
-use mercurio_core::metamodel::{
-    MetamodelAttributeRegistry, collect_specialization_ancestors, effective_properties,
-    element_metatype, query_element_attributes,
+use mercurio_core::{
+    Element, Graph, MetamodelAttributeRegistry, NodeId, collect_specialization_ancestors,
+    effective_properties, element_metatype, metadata_annotations_named, query_element_attributes,
 };
 
 const DEFAULT_MAX_DEPTH: usize = 8;
@@ -1471,23 +1474,19 @@ fn diagram_node(
     metamodel_registry: &MetamodelAttributeRegistry,
     element: &Element,
 ) -> DiagramNodeDto {
-    let attributes = mercurio_core::metamodel::query_element_attributes(
-        graph,
-        metamodel_registry,
-        element.id,
-        None,
-    )
-    .map(|query| query.rows)
-    .unwrap_or_default()
-    .into_iter()
-    .map(|attribute| DiagramAttributeDto {
-        name: attribute.name,
-        type_label: attribute
-            .effective_value
-            .as_ref()
-            .map(|value| value_type_label(value).to_string()),
-    })
-    .collect();
+    let attributes =
+        mercurio_core::query_element_attributes(graph, metamodel_registry, element.id, None)
+            .map(|query| query.rows)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|attribute| DiagramAttributeDto {
+                name: attribute.name,
+                type_label: attribute
+                    .effective_value
+                    .as_ref()
+                    .map(|value| value_type_label(value).to_string()),
+            })
+            .collect();
 
     DiagramNodeDto {
         id: element.element_id.clone(),
