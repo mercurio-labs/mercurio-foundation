@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityAnswer {
     Allowed,
@@ -9,6 +11,304 @@ pub enum CapabilityAnswer {
 pub struct AttributePolicyAnswer {
     pub writable: bool,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SemanticCapabilityProfile {
+    pub containment: BTreeSet<CapabilityPair>,
+    pub specializations: BTreeSet<CapabilityPair>,
+    pub usage_typings: BTreeSet<CapabilityPair>,
+    pub relationships: BTreeSet<RelationshipCapability>,
+    pub attribute_policies: BTreeMap<AttributePolicyKey, AttributePolicyAnswer>,
+    pub relationship_owner_sources: BTreeSet<String>,
+    pub doc_id_attribute_aliases: Vec<&'static str>,
+    pub supporting_definition_keywords: BTreeMap<String, String>,
+    pub definition_keyword_aliases: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CapabilityPair {
+    pub source_kind: String,
+    pub target_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RelationshipCapability {
+    pub relationship_kind: String,
+    pub source_kind: String,
+    pub target_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AttributePolicyKey {
+    pub kind: String,
+    pub attribute: String,
+}
+
+impl SemanticCapabilityProfile {
+    pub fn allow_containment(mut self, container_kind: &str, child_kind: &str) -> Self {
+        self.containment
+            .insert(CapabilityPair::new(container_kind, child_kind));
+        self
+    }
+
+    pub fn allow_specialization(mut self, source_kind: &str, target_kind: &str) -> Self {
+        self.specializations
+            .insert(CapabilityPair::new(source_kind, target_kind));
+        self
+    }
+
+    pub fn allow_usage_typing(mut self, usage_kind: &str, definition_kind: &str) -> Self {
+        self.usage_typings
+            .insert(CapabilityPair::new(usage_kind, definition_kind));
+        self
+    }
+
+    pub fn allow_relationship(
+        mut self,
+        relationship_kind: &str,
+        source_kind: &str,
+        target_kind: &str,
+    ) -> Self {
+        self.relationships.insert(RelationshipCapability::new(
+            relationship_kind,
+            source_kind,
+            target_kind,
+        ));
+        self
+    }
+
+    pub fn attribute_policy(
+        mut self,
+        kind: &str,
+        attribute: &str,
+        answer: AttributePolicyAnswer,
+    ) -> Self {
+        self.attribute_policies
+            .insert(AttributePolicyKey::new(kind, attribute), answer);
+        self
+    }
+
+    pub fn relationship_uses_owner_as_source(mut self, relationship_kind: &str) -> Self {
+        self.relationship_owner_sources
+            .insert(normalize_capability_token(relationship_kind));
+        self
+    }
+
+    pub fn supporting_definition_keyword(
+        mut self,
+        usage_kind: &str,
+        definition_keyword: &str,
+    ) -> Self {
+        self.supporting_definition_keywords.insert(
+            normalize_capability_token(usage_kind),
+            normalize_capability_token(definition_keyword),
+        );
+        self
+    }
+
+    pub fn definition_keyword_alias(mut self, alias: &str, normalized: &str) -> Self {
+        self.definition_keyword_aliases.insert(
+            normalize_capability_token(alias),
+            normalize_capability_token(normalized),
+        );
+        self
+    }
+}
+
+impl CapabilityPair {
+    pub fn new(source_kind: &str, target_kind: &str) -> Self {
+        Self {
+            source_kind: normalize_capability_token(source_kind),
+            target_kind: normalize_capability_token(target_kind),
+        }
+    }
+}
+
+impl RelationshipCapability {
+    pub fn new(relationship_kind: &str, source_kind: &str, target_kind: &str) -> Self {
+        Self {
+            relationship_kind: normalize_capability_token(relationship_kind),
+            source_kind: normalize_capability_token(source_kind),
+            target_kind: normalize_capability_token(target_kind),
+        }
+    }
+}
+
+impl AttributePolicyKey {
+    pub fn new(kind: &str, attribute: &str) -> Self {
+        Self {
+            kind: normalize_capability_token(kind),
+            attribute: normalize_capability_token(attribute),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TableSemanticCapabilityOracle {
+    profile: SemanticCapabilityProfile,
+}
+
+impl TableSemanticCapabilityOracle {
+    pub fn new(profile: SemanticCapabilityProfile) -> Self {
+        Self { profile }
+    }
+
+    pub fn profile(&self) -> &SemanticCapabilityProfile {
+        &self.profile
+    }
+
+    fn pair_answer(
+        &self,
+        table: &BTreeSet<CapabilityPair>,
+        source_kind: &str,
+        target_kind: &str,
+        subject: &str,
+    ) -> CapabilityAnswer {
+        let source = normalize_capability_token(source_kind);
+        let target = normalize_capability_token(target_kind);
+        if source.is_empty() || target.is_empty() {
+            return CapabilityAnswer::Unknown("missing kind information".to_string());
+        }
+        if table.contains(&CapabilityPair {
+            source_kind: source.clone(),
+            target_kind: target.clone(),
+        }) || table.contains(&CapabilityPair {
+            source_kind: source.clone(),
+            target_kind: "*".to_string(),
+        }) || table.contains(&CapabilityPair {
+            source_kind: "*".to_string(),
+            target_kind: target.clone(),
+        }) || table.contains(&CapabilityPair {
+            source_kind: "*".to_string(),
+            target_kind: "*".to_string(),
+        }) {
+            CapabilityAnswer::Allowed
+        } else {
+            CapabilityAnswer::Denied(format!(
+                "{subject} `{source_kind}` -> `{target_kind}` is not allowed by the semantic capability profile"
+            ))
+        }
+    }
+}
+
+impl SemanticCapabilityOracle for TableSemanticCapabilityOracle {
+    fn can_contain(&self, container_kind: &str, child_kind: &str) -> CapabilityAnswer {
+        self.pair_answer(
+            &self.profile.containment,
+            container_kind,
+            child_kind,
+            "containment",
+        )
+    }
+
+    fn can_specialize(&self, source_kind: &str, target_kind: &str) -> CapabilityAnswer {
+        self.pair_answer(
+            &self.profile.specializations,
+            source_kind,
+            target_kind,
+            "specialization",
+        )
+    }
+
+    fn can_type_usage(&self, usage_kind: &str, definition_kind: &str) -> CapabilityAnswer {
+        self.pair_answer(
+            &self.profile.usage_typings,
+            usage_kind,
+            definition_kind,
+            "typing",
+        )
+    }
+
+    fn can_relate(
+        &self,
+        relationship_kind: &str,
+        source_kind: &str,
+        target_kind: &str,
+    ) -> CapabilityAnswer {
+        let relation = normalize_capability_token(relationship_kind);
+        let source = normalize_capability_token(source_kind);
+        let target = normalize_capability_token(target_kind);
+        if relation.is_empty() || source.is_empty() || target.is_empty() {
+            return CapabilityAnswer::Unknown(
+                "missing relationship capability information".to_string(),
+            );
+        }
+        let candidates = [
+            RelationshipCapability::new(&relation, &source, &target),
+            RelationshipCapability::new(&relation, &source, "*"),
+            RelationshipCapability::new(&relation, "*", &target),
+            RelationshipCapability::new(&relation, "*", "*"),
+        ];
+        if candidates
+            .iter()
+            .any(|candidate| self.profile.relationships.contains(candidate))
+        {
+            CapabilityAnswer::Allowed
+        } else {
+            CapabilityAnswer::Denied(format!(
+                "relationship `{relationship_kind}` from `{source_kind}` to `{target_kind}` is not allowed by the semantic capability profile"
+            ))
+        }
+    }
+
+    fn attribute_policy(&self, kind: &str, attribute: &str) -> AttributePolicyAnswer {
+        let kind = normalize_capability_token(kind);
+        let attribute = normalize_capability_token(attribute);
+        self.profile
+            .attribute_policies
+            .get(&AttributePolicyKey {
+                kind: kind.clone(),
+                attribute: attribute.clone(),
+            })
+            .or_else(|| {
+                self.profile.attribute_policies.get(&AttributePolicyKey {
+                    kind: "*".to_string(),
+                    attribute: attribute.clone(),
+                })
+            })
+            .cloned()
+            .unwrap_or_else(|| AttributePolicyAnswer {
+                writable: false,
+                reason: Some(format!(
+                    "attribute `{attribute}` is not writable on `{kind}` by the semantic capability profile"
+                )),
+            })
+    }
+
+    fn relationship_uses_owner_as_source(&self, relationship_kind: &str) -> bool {
+        self.profile
+            .relationship_owner_sources
+            .contains(&normalize_capability_token(relationship_kind))
+    }
+
+    fn doc_id_attribute_aliases(&self) -> &'static [&'static str] {
+        if self
+            .profile
+            .doc_id_attribute_aliases
+            .contains(&"requirement_id")
+        {
+            &["id", "requirement_id"]
+        } else {
+            &["id"]
+        }
+    }
+
+    fn supporting_definition_keyword_for_usage(&self, usage_kind: &str) -> Option<String> {
+        self.profile
+            .supporting_definition_keywords
+            .get(&normalize_capability_token(usage_kind))
+            .cloned()
+    }
+
+    fn normalize_definition_keyword(&self, keyword: &str) -> String {
+        let normalized = normalize_capability_token(keyword);
+        self.profile
+            .definition_keyword_aliases
+            .get(&normalized)
+            .cloned()
+            .unwrap_or(normalized)
+    }
 }
 
 pub trait SemanticCapabilityOracle {
@@ -38,6 +338,10 @@ pub trait SemanticCapabilityOracle {
     fn normalize_definition_keyword(&self, keyword: &str) -> String {
         keyword.trim().to_string()
     }
+}
+
+pub fn normalize_capability_token(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone, Default)]

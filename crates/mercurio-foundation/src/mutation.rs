@@ -1012,7 +1012,7 @@ impl SemanticExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MutationApplicationResult {
     pub changed_files: BTreeSet<String>,
     pub edited_files: BTreeMap<String, String>,
@@ -1020,10 +1020,10 @@ pub struct MutationApplicationResult {
     pub semantic_diff: SemanticDiff,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct SemanticDiff {
-    pub added_elements: Vec<ElementRef>,
-    pub removed_elements: Vec<ElementRef>,
+    pub added_elements: Vec<SemanticDiffElementRef>,
+    pub removed_elements: Vec<SemanticDiffElementRef>,
     pub renamed_elements: Vec<RenamedElement>,
     pub moved_elements: Vec<MovedElement>,
     pub retyped_usages: Vec<RetypedUsage>,
@@ -1035,40 +1035,88 @@ pub struct SemanticDiff {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenamedElement {
-    pub from: ElementRef,
-    pub to: ElementRef,
+    pub element: SemanticDiffElementRef,
+    pub before_name: Option<String>,
+    pub after_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MovedElement {
-    pub element: ElementRef,
-    pub from: Option<ElementRef>,
-    pub to: ElementRef,
+    pub element: SemanticDiffElementRef,
+    pub before_owner: Option<SemanticDiffElementRef>,
+    pub after_owner: Option<SemanticDiffElementRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetypedUsage {
-    pub element: ElementRef,
-    pub ty: Option<ElementRef>,
+    pub element: SemanticDiffElementRef,
+    pub before_type: Option<SemanticDiffElementRef>,
+    pub after_type: Option<SemanticDiffElementRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangedSpecialization {
-    pub element: ElementRef,
-    pub specializes: Vec<ElementRef>,
+    pub element: SemanticDiffElementRef,
+    pub before_specializes: Vec<SemanticDiffElementRef>,
+    pub after_specializes: Vec<SemanticDiffElementRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChangedAttribute {
-    pub element: ElementRef,
+    pub element: SemanticDiffElementRef,
     pub attribute: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelationshipChange {
     pub kind: String,
-    pub source: ElementRef,
-    pub target: ElementRef,
+    pub source: SemanticDiffElementRef,
+    pub target: SemanticDiffElementRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SemanticDiffElementRef {
+    pub element_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualified_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+impl SemanticDiffElementRef {
+    pub fn new(element_id: impl Into<String>) -> Self {
+        Self {
+            element_id: element_id.into(),
+            qualified_name: None,
+            label: None,
+            kind: None,
+        }
+    }
+
+    pub fn unresolved(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self {
+            element_id: value.clone(),
+            qualified_name: Some(value),
+            label: None,
+            kind: None,
+        }
+    }
+
+    pub fn from_element(element: &KirElement) -> Self {
+        Self {
+            element_id: element.id.clone(),
+            qualified_name: string_property(&element.properties, "qualified_name"),
+            label: element_label(element),
+            kind: Some(element.kind.clone()),
+        }
+    }
 }
 
 pub fn diff_kir_documents(before: &KirDocument, after: &KirDocument) -> SemanticDiff {
@@ -1086,13 +1134,16 @@ pub fn diff_kir_documents(before: &KirDocument, after: &KirDocument) -> Semantic
 
     for id in before_elements.keys() {
         if !after_elements.contains_key(id) {
-            diff.removed_elements
-                .push(ElementRef::new((*id).to_string()));
+            if let Some(element) = before_elements.get(id) {
+                diff.removed_elements
+                    .push(SemanticDiffElementRef::from_element(element));
+            }
         }
     }
     for (id, after_element) in &after_elements {
         let Some(before_element) = before_elements.get(id) else {
-            diff.added_elements.push(ElementRef::new((*id).to_string()));
+            diff.added_elements
+                .push(SemanticDiffElementRef::from_element(after_element));
             continue;
         };
         collect_element_property_diff(&mut diff, before_element, after_element);
@@ -1103,18 +1154,28 @@ pub fn diff_kir_documents(before: &KirDocument, after: &KirDocument) -> Semantic
 }
 
 fn collect_element_property_diff(diff: &mut SemanticDiff, before: &KirElement, after: &KirElement) {
+    let element = SemanticDiffElementRef::from_element(after);
     if before.kind != after.kind {
         diff.changed_attributes.push(ChangedAttribute {
-            element: ElementRef::new(after.id.clone()),
+            element: element.clone(),
             attribute: "kind".to_string(),
+            before: Some(Value::String(before.kind.clone())),
+            after: Some(Value::String(after.kind.clone())),
         });
     }
     if before.layer != after.layer {
         diff.changed_attributes.push(ChangedAttribute {
-            element: ElementRef::new(after.id.clone()),
+            element: element.clone(),
             attribute: "layer".to_string(),
+            before: Some(Value::from(before.layer)),
+            after: Some(Value::from(after.layer)),
         });
     }
+
+    collect_renamed_element(diff, before, after, &element);
+    collect_moved_element(diff, before, after, &element);
+    collect_retyped_usage(diff, before, after, &element);
+    collect_changed_specializations(diff, before, after, &element);
 
     let property_names = before
         .properties
@@ -1122,12 +1183,85 @@ fn collect_element_property_diff(diff: &mut SemanticDiff, before: &KirElement, a
         .chain(after.properties.keys())
         .collect::<BTreeSet<_>>();
     for name in property_names {
+        if classified_property(name) {
+            continue;
+        }
         if before.properties.get(name) != after.properties.get(name) {
             diff.changed_attributes.push(ChangedAttribute {
-                element: ElementRef::new(after.id.clone()),
+                element: element.clone(),
                 attribute: name.clone(),
+                before: before.properties.get(name).cloned(),
+                after: after.properties.get(name).cloned(),
             });
         }
+    }
+}
+
+fn collect_renamed_element(
+    diff: &mut SemanticDiff,
+    before: &KirElement,
+    after: &KirElement,
+    element: &SemanticDiffElementRef,
+) {
+    let before_name = element_name(before);
+    let after_name = element_name(after);
+    if before_name != after_name {
+        diff.renamed_elements.push(RenamedElement {
+            element: element.clone(),
+            before_name,
+            after_name,
+        });
+    }
+}
+
+fn collect_moved_element(
+    diff: &mut SemanticDiff,
+    before: &KirElement,
+    after: &KirElement,
+    element: &SemanticDiffElementRef,
+) {
+    let before_owner = owner_ref(before);
+    let after_owner = owner_ref(after);
+    if before_owner != after_owner {
+        diff.moved_elements.push(MovedElement {
+            element: element.clone(),
+            before_owner,
+            after_owner,
+        });
+    }
+}
+
+fn collect_retyped_usage(
+    diff: &mut SemanticDiff,
+    before: &KirElement,
+    after: &KirElement,
+    element: &SemanticDiffElementRef,
+) {
+    let before_type = type_ref(before);
+    let after_type = type_ref(after);
+    if before_type != after_type {
+        diff.retyped_usages.push(RetypedUsage {
+            element: element.clone(),
+            before_type,
+            after_type,
+        });
+    }
+}
+
+fn collect_changed_specializations(
+    diff: &mut SemanticDiff,
+    before: &KirElement,
+    after: &KirElement,
+    element: &SemanticDiffElementRef,
+) {
+    let before_specializes = specialization_refs(before);
+    let after_specializes = specialization_refs(after);
+    if before_specializes != after_specializes {
+        diff.changed_specializations.push(ChangedSpecialization {
+            element: element.clone(),
+            before_specializes,
+            after_specializes,
+        });
     }
 }
 
@@ -1153,10 +1287,30 @@ fn document_relationships(document: &KirDocument) -> BTreeSet<RelationshipChange
         .filter_map(|edge| {
             let source = graph.element_id(edge.source)?;
             let target = graph.element_id(edge.target)?;
+            let source_element = graph.element(edge.source)?;
+            let target_element = graph.element(edge.target)?;
             Some(RelationshipChange {
                 kind: edge.relation.to_string(),
-                source: ElementRef::new(source.to_string()),
-                target: ElementRef::new(target.to_string()),
+                source: SemanticDiffElementRef {
+                    element_id: source.to_string(),
+                    qualified_name: source_element
+                        .properties
+                        .get("qualified_name")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    label: graph_element_label(source_element),
+                    kind: Some(source_element.kind.to_string()),
+                },
+                target: SemanticDiffElementRef {
+                    element_id: target.to_string(),
+                    qualified_name: target_element
+                        .properties
+                        .get("qualified_name")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                    label: graph_element_label(target_element),
+                    kind: Some(target_element.kind.to_string()),
+                },
             })
         })
         .collect()
@@ -1169,7 +1323,8 @@ pub(crate) fn diff_for_operation(
     let mut diff = SemanticDiff::default();
     match operation {
         SemanticMutation::AddPackage { name, .. } => {
-            diff.added_elements.push(ElementRef::new(name.clone()));
+            diff.added_elements
+                .push(SemanticDiffElementRef::unresolved(name.clone()));
         }
         SemanticMutation::AddDefinition {
             container, name, ..
@@ -1177,10 +1332,11 @@ pub(crate) fn diff_for_operation(
         | SemanticMutation::AddUsage {
             container, name, ..
         } => {
-            diff.added_elements.push(ElementRef::new(format!(
-                "{}.{name}",
-                container.qualified_name
-            )));
+            diff.added_elements
+                .push(SemanticDiffElementRef::unresolved(format!(
+                    "{}.{name}",
+                    container.qualified_name
+                )));
         }
         SemanticMutation::AddRelationship {
             kind,
@@ -1188,18 +1344,21 @@ pub(crate) fn diff_for_operation(
             target,
         } => diff.added_relationships.push(RelationshipChange {
             kind: kind.clone(),
-            source: source.clone(),
-            target: target.clone(),
+            source: diff_ref_from_element_ref(source),
+            target: diff_ref_from_element_ref(target),
         }),
         SemanticMutation::AddMetadataAnnotation { element, .. } => {
             diff.changed_attributes.push(ChangedAttribute {
-                element: element.clone(),
+                element: diff_ref_from_element_ref(element),
                 attribute: "metadata".to_string(),
+                before: None,
+                after: None,
             });
         }
         SemanticMutation::RemoveDeclaration { element }
         | SemanticMutation::RemoveUsage { element } => {
-            diff.removed_elements.push(element.clone());
+            diff.removed_elements
+                .push(diff_ref_from_element_ref(element));
         }
         SemanticMutation::RemoveRelationship {
             kind,
@@ -1207,60 +1366,64 @@ pub(crate) fn diff_for_operation(
             target,
         } => diff.removed_relationships.push(RelationshipChange {
             kind: kind.clone(),
-            source: source.clone(),
-            target: target.clone(),
+            source: diff_ref_from_element_ref(source),
+            target: diff_ref_from_element_ref(target),
         }),
         SemanticMutation::RenameDeclaration { element, new_name } => {
-            let parent = element
-                .qualified_name
-                .rsplit_once('.')
-                .map(|(parent, _)| parent.to_string());
-            let to = parent
-                .map(|parent| format!("{parent}.{new_name}"))
-                .unwrap_or_else(|| new_name.clone());
             diff.renamed_elements.push(RenamedElement {
-                from: element.clone(),
-                to: ElementRef::new(to),
+                element: diff_ref_from_element_ref(element),
+                before_name: element
+                    .qualified_name
+                    .rsplit_once('.')
+                    .map(|(_, name)| name.to_string())
+                    .or_else(|| Some(element.qualified_name.clone())),
+                after_name: Some(new_name.clone()),
             });
         }
         SemanticMutation::UpdateUsageType { element, ty } => {
             diff.retyped_usages.push(RetypedUsage {
-                element: element.clone(),
-                ty: ty.clone(),
+                element: diff_ref_from_element_ref(element),
+                before_type: None,
+                after_type: ty.as_ref().map(diff_ref_from_element_ref),
             });
         }
         SemanticMutation::SetExpression { element, .. } => {
             diff.changed_attributes.push(ChangedAttribute {
-                element: element.clone(),
+                element: diff_ref_from_element_ref(element),
                 attribute: "expression".to_string(),
+                before: None,
+                after: None,
             });
         }
         SemanticMutation::UpdateSpecializations {
             element,
             specializes,
         } => diff.changed_specializations.push(ChangedSpecialization {
-            element: element.clone(),
-            specializes: specializes.clone(),
+            element: diff_ref_from_element_ref(element),
+            before_specializes: Vec::new(),
+            after_specializes: specializes.iter().map(diff_ref_from_element_ref).collect(),
         }),
         SemanticMutation::MoveDeclaration {
             element,
             destination,
         } => diff.moved_elements.push(MovedElement {
-            element: element.clone(),
-            from: None,
-            to: destination.clone(),
+            element: diff_ref_from_element_ref(element),
+            before_owner: None,
+            after_owner: Some(diff_ref_from_element_ref(destination)),
         }),
         SemanticMutation::SetAttribute {
             element, attribute, ..
         } => diff.changed_attributes.push(ChangedAttribute {
-            element: element.clone(),
+            element: diff_ref_from_element_ref(element),
             attribute: attribute.clone(),
+            before: None,
+            after: None,
         }),
     }
 
     if let Some(result) = result {
         for declaration in &result.changed_declarations {
-            let element = ElementRef::new(declaration.clone());
+            let element = SemanticDiffElementRef::unresolved(declaration.clone());
             if !diff.added_elements.contains(&element)
                 && !diff
                     .changed_attributes
@@ -1278,12 +1441,150 @@ pub(crate) fn diff_for_operation(
                 diff.changed_attributes.push(ChangedAttribute {
                     element,
                     attribute: "declaration".to_string(),
+                    before: None,
+                    after: None,
                 });
             }
         }
     }
 
     diff
+}
+
+fn diff_ref_from_element_ref(element: &ElementRef) -> SemanticDiffElementRef {
+    SemanticDiffElementRef {
+        element_id: element.qualified_name.clone(),
+        qualified_name: Some(element.qualified_name.clone()),
+        label: element
+            .qualified_name
+            .rsplit('.')
+            .next()
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        kind: None,
+    }
+}
+
+fn element_name(element: &KirElement) -> Option<String> {
+    string_property(&element.properties, "declared_name")
+        .or_else(|| string_property(&element.properties, "name"))
+        .or_else(|| string_property(&element.properties, "qualified_name"))
+}
+
+fn element_label(element: &KirElement) -> Option<String> {
+    string_property(&element.properties, "declared_name")
+        .or_else(|| string_property(&element.properties, "name"))
+        .or_else(|| {
+            element
+                .id
+                .rsplit(['.', ':', '/'])
+                .find(|part| !part.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn graph_element_label(element: &crate::graph::Element) -> Option<String> {
+    element
+        .properties
+        .get("declared_name")
+        .or_else(|| element.properties.get("name"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            element
+                .element_id
+                .rsplit(['.', ':', '/'])
+                .find(|part| !part.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn owner_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {
+    for key in [
+        "owner",
+        "owning_namespace",
+        "owning_type",
+        "owning_definition",
+        "featuring_type",
+    ] {
+        if let Some(owner) = element.properties.get(key).and_then(Value::as_str) {
+            return Some(SemanticDiffElementRef::unresolved(owner));
+        }
+    }
+    None
+}
+
+fn type_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {
+    for key in ["type", "definition", "feature_typings"] {
+        if let Some(value) = element.properties.get(key) {
+            if let Some(reference) = first_reference_value(value) {
+                return Some(SemanticDiffElementRef::unresolved(reference));
+            }
+        }
+    }
+    None
+}
+
+fn specialization_refs(element: &KirElement) -> Vec<SemanticDiffElementRef> {
+    [
+        "specializes",
+        "specialized_features",
+        "subsets",
+        "redefines",
+    ]
+    .into_iter()
+    .filter_map(|key| element.properties.get(key))
+    .flat_map(reference_values)
+    .map(SemanticDiffElementRef::unresolved)
+    .collect()
+}
+
+fn first_reference_value(value: &Value) -> Option<String> {
+    reference_values(value).into_iter().next()
+}
+
+fn reference_values(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(value) => vec![value.clone()],
+        Value::Array(values) => values.iter().flat_map(reference_values).collect::<Vec<_>>(),
+        Value::Object(object) => object
+            .get("id")
+            .or_else(|| object.get("element_id"))
+            .or_else(|| object.get("qualified_name"))
+            .or_else(|| object.get("ref"))
+            .and_then(Value::as_str)
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn string_property(properties: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+    properties
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn classified_property(name: &str) -> bool {
+    matches!(
+        name,
+        "declared_name"
+            | "name"
+            | "qualified_name"
+            | "owner"
+            | "owning_namespace"
+            | "owning_type"
+            | "owning_definition"
+            | "featuring_type"
+            | "type"
+            | "definition"
+            | "feature_typings"
+            | "specializes"
+            | "specialized_features"
+            | "subsets"
+            | "redefines"
+    )
 }
 
 pub(crate) fn merge_diff(target: &mut SemanticDiff, source: SemanticDiff) {
@@ -1395,15 +1696,153 @@ mod tests {
 
         assert!(
             diff.added_elements
-                .contains(&ElementRef::new("case.verifyStartup"))
+                .iter()
+                .any(|element| element.element_id == "case.verifyStartup")
         );
         assert!(diff.changed_attributes.iter().any(|change| {
-            change.element == ElementRef::new("req.startup") && change.attribute == "metadata"
+            change.element.element_id == "req.startup"
+                && change.attribute == "metadata"
+                && change.before.is_none()
+                && change.after == Some(serde_json::json!([{"type": "ReviewTag"}]))
         }));
         assert!(diff.added_relationships.iter().any(|relationship| {
             relationship.kind == "members"
-                && relationship.source == ElementRef::new("pkg.Demo")
-                && relationship.target == ElementRef::new("case.verifyStartup")
+                && relationship.source.element_id == "pkg.Demo"
+                && relationship.target.element_id == "case.verifyStartup"
+        }));
+    }
+
+    #[test]
+    fn semantic_diff_classifies_stable_id_changes() {
+        let before = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Demo".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "part.Vehicle".to_string(),
+                    kind: "PartUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("declared_name".to_string(), serde_json::json!("vehicle")),
+                        ("owner".to_string(), serde_json::json!("pkg.Demo")),
+                        ("type".to_string(), serde_json::json!("def.Vehicle")),
+                        ("specializes".to_string(), serde_json::json!(["def.Asset"])),
+                        ("mass".to_string(), serde_json::json!(1000)),
+                    ]),
+                },
+                KirElement {
+                    id: "def.Vehicle".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "def.Asset".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        };
+        let after = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Demo".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "pkg.Other".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "part.Vehicle".to_string(),
+                    kind: "PartUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("declared_name".to_string(), serde_json::json!("car")),
+                        ("owner".to_string(), serde_json::json!("pkg.Other")),
+                        ("type".to_string(), serde_json::json!("def.Car")),
+                        (
+                            "specializes".to_string(),
+                            serde_json::json!(["def.MobileAsset"]),
+                        ),
+                        ("mass".to_string(), serde_json::json!(950)),
+                    ]),
+                },
+                KirElement {
+                    id: "def.Car".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "def.MobileAsset".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        };
+
+        let diff = diff_kir_documents(&before, &after);
+
+        assert!(
+            diff.added_elements
+                .iter()
+                .any(|element| element.element_id == "pkg.Other")
+        );
+        assert!(
+            diff.removed_elements
+                .iter()
+                .any(|element| element.element_id == "def.Vehicle")
+        );
+        assert!(diff.renamed_elements.iter().any(|change| {
+            change.element.element_id == "part.Vehicle"
+                && change.before_name.as_deref() == Some("vehicle")
+                && change.after_name.as_deref() == Some("car")
+        }));
+        assert!(diff.moved_elements.iter().any(|change| {
+            change.element.element_id == "part.Vehicle"
+                && change
+                    .before_owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.element_id == "pkg.Demo")
+                && change
+                    .after_owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.element_id == "pkg.Other")
+        }));
+        assert!(diff.retyped_usages.iter().any(|change| {
+            change.element.element_id == "part.Vehicle"
+                && change
+                    .before_type
+                    .as_ref()
+                    .is_some_and(|ty| ty.element_id == "def.Vehicle")
+                && change
+                    .after_type
+                    .as_ref()
+                    .is_some_and(|ty| ty.element_id == "def.Car")
+        }));
+        assert!(diff.changed_specializations.iter().any(|change| {
+            change.element.element_id == "part.Vehicle"
+                && change.before_specializes[0].element_id == "def.Asset"
+                && change.after_specializes[0].element_id == "def.MobileAsset"
+        }));
+        assert!(diff.changed_attributes.iter().any(|change| {
+            change.element.element_id == "part.Vehicle"
+                && change.attribute == "mass"
+                && change.before == Some(serde_json::json!(1000))
+                && change.after == Some(serde_json::json!(950))
         }));
     }
 

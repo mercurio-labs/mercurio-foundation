@@ -76,6 +76,26 @@ pub enum CapabilityMaturity {
     Stable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisScope {
+    AuthoredModel,
+    Stdlib,
+    Metamodel,
+    All,
+}
+
+impl AnalysisScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AuthoredModel => "authored_model",
+            Self::Stdlib => "stdlib",
+            Self::Metamodel => "metamodel",
+            Self::All => "all",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityRunRequest {
     pub run_id: String,
@@ -943,15 +963,20 @@ impl SemanticCapability for GenericModelInspectionCapability {
             });
         }
 
+        let analysis_scope = parameter_analysis_scope(&request);
         let query = parameter_string(&request, "query");
         let limit = parameter_usize(&request, "limit", 8);
         let (insights, payload, evidence) = match &request.target {
             CapabilityTarget::Element { element_id } => {
-                inspect_element(workspace, element_id, &request.run_id)?
+                inspect_element(workspace, element_id, analysis_scope, &request.run_id)?
             }
             _ => match query.as_deref().filter(|value| !value.trim().is_empty()) {
-                Some(query) => inspect_query(workspace, query, limit, &request.run_id),
-                None => inspect_workspace_summary(workspace, limit, &request.run_id),
+                Some(query) => {
+                    inspect_query(workspace, query, analysis_scope, limit, &request.run_id)
+                }
+                None => {
+                    inspect_workspace_summary(workspace, analysis_scope, limit, &request.run_id)
+                }
             },
         };
         let artifact = SemanticArtifact {
@@ -1062,11 +1087,16 @@ impl SemanticCapability for GenericImpactCapability {
             });
         }
 
+        let analysis_scope = parameter_analysis_scope_or(&request, AnalysisScope::AuthoredModel);
         let (insights, payload, evidence) = match &request.target {
             CapabilityTarget::Element { element_id } => {
-                graph_impact_for_element(workspace, element_id)?
+                graph_impact_for_element(workspace, element_id, analysis_scope)?
             }
-            _ => graph_impact_for_workspace(workspace, parameter_usize(&request, "limit", 5)),
+            _ => graph_impact_for_workspace(
+                workspace,
+                analysis_scope,
+                parameter_usize(&request, "limit", 5),
+            ),
         };
         let artifact = SemanticArtifact {
             id: format!("artifact.{}.impact", request.run_id),
@@ -1116,6 +1146,7 @@ fn readiness(
 
 fn graph_impact_for_workspace(
     workspace: &SemanticWorkspaceSnapshot,
+    analysis_scope: AnalysisScope,
     limit: usize,
 ) -> (Vec<SemanticInsight>, Value, EvidenceGraph) {
     let mut degree_by_node = BTreeMap::<u32, usize>::new();
@@ -1127,7 +1158,7 @@ fn graph_impact_for_workspace(
         .into_iter()
         .filter_map(|(node_id, degree)| {
             let element = workspace.graph.element(node_id)?;
-            if !is_authored_model_element(element) {
+            if !element_matches_analysis_scope(element, analysis_scope) {
                 return None;
             }
             Some((element.element_id.clone(), degree))
@@ -1179,7 +1210,13 @@ fn graph_impact_for_workspace(
     let payload = json!({
         "schema": "mercurio.capability.graph_impact.v1",
         "scope": "workspace",
-        "analysisScope": "authored_model",
+        "analysisScope": analysis_scope.as_str(),
+        "filteredOutOfScopeElementCount": workspace
+            .graph
+            .elements()
+            .iter()
+            .filter(|element| !element_matches_analysis_scope(element, analysis_scope))
+            .count(),
         "filteredLibraryElementCount": workspace
             .graph
             .elements()
@@ -1198,10 +1235,20 @@ fn graph_impact_for_workspace(
 fn graph_impact_for_element(
     workspace: &SemanticWorkspaceSnapshot,
     element_id: &str,
+    analysis_scope: AnalysisScope,
 ) -> Result<(Vec<SemanticInsight>, Value, EvidenceGraph), CapabilityError> {
     let node = workspace.graph.node_id(element_id).ok_or_else(|| {
         CapabilityError::InvalidRequest(format!("unknown element `{element_id}`"))
     })?;
+    let element = workspace.graph.element(node).ok_or_else(|| {
+        CapabilityError::InvalidRequest(format!("unknown element `{element_id}`"))
+    })?;
+    if !element_matches_analysis_scope(element, analysis_scope) {
+        return Err(CapabilityError::InvalidRequest(format!(
+            "element `{element_id}` is outside analysis scope `{}`",
+            analysis_scope.as_str()
+        )));
+    }
     let outgoing = workspace.graph.outgoing_edges(node).collect::<Vec<_>>();
     let incoming = workspace.graph.incoming_edges(node).collect::<Vec<_>>();
     let degree = outgoing.len() + incoming.len();
@@ -1235,6 +1282,7 @@ fn graph_impact_for_element(
     let payload = json!({
         "schema": "mercurio.capability.graph_impact.v1",
         "scope": "element",
+        "analysisScope": analysis_scope.as_str(),
         "elementId": element_id,
         "incoming": edge_payload(workspace, &incoming),
         "outgoing": edge_payload(workspace, &outgoing),
@@ -1259,6 +1307,7 @@ fn graph_impact_for_element(
 
 fn inspect_workspace_summary(
     workspace: &SemanticWorkspaceSnapshot,
+    analysis_scope: AnalysisScope,
     limit: usize,
     run_id: &str,
 ) -> (Vec<SemanticInsight>, Value, EvidenceGraph) {
@@ -1283,13 +1332,34 @@ fn inspect_workspace_summary(
                 || matches!(element.kind.as_ref(), "Metaclass" | "MetamodelFeature")
         })
         .count();
-    let mut kind_counts = BTreeMap::<String, usize>::new();
+    let mut authored_kind_counts = BTreeMap::<String, usize>::new();
     for element in workspace.graph.elements() {
         if is_authored_model_element(element) {
-            *kind_counts.entry(element.kind.to_string()).or_default() += 1;
+            *authored_kind_counts
+                .entry(element.kind.to_string())
+                .or_default() += 1;
         }
     }
-    let top_kinds = kind_counts
+    let scoped_count = workspace
+        .graph
+        .elements()
+        .iter()
+        .filter(|element| element_matches_analysis_scope(element, analysis_scope))
+        .count();
+    let mut scoped_kind_counts = BTreeMap::<String, usize>::new();
+    for element in workspace.graph.elements() {
+        if element_matches_analysis_scope(element, analysis_scope) {
+            *scoped_kind_counts
+                .entry(element.kind.to_string())
+                .or_default() += 1;
+        }
+    }
+    let top_kinds = authored_kind_counts
+        .into_iter()
+        .map(|(kind, count)| json!({ "kind": kind, "count": count }))
+        .take(limit)
+        .collect::<Vec<_>>();
+    let top_scoped_kinds = scoped_kind_counts
         .into_iter()
         .map(|(kind, count)| json!({ "kind": kind, "count": count }))
         .take(limit)
@@ -1297,12 +1367,15 @@ fn inspect_workspace_summary(
     let payload = json!({
         "schema": "mercurio.capability.model_inspection.v1",
         "scope": "workspace",
+        "analysisScope": analysis_scope.as_str(),
         "elementCount": workspace.graph.elements().len(),
+        "scopedElementCount": scoped_count,
         "authoredElementCount": authored_count,
         "libraryElementCount": library_count,
         "metamodelElementCount": metamodel_count,
         "relationshipCount": workspace.graph.edges().len(),
         "topAuthoredKinds": top_kinds,
+        "topScopedKinds": top_scoped_kinds,
     });
     let evidence_id = format!("evidence.{run_id}.inspection.workspace");
     let evidence = EvidenceGraph {
@@ -1317,6 +1390,7 @@ fn inspect_workspace_summary(
                     "elementCount".to_string(),
                     Value::from(workspace.graph.elements().len()),
                 ),
+                ("scopedElementCount".to_string(), Value::from(scoped_count)),
                 (
                     "authoredElementCount".to_string(),
                     Value::from(authored_count),
@@ -1342,7 +1416,8 @@ fn inspect_workspace_summary(
             label: Some("Workspace".to_string()),
         },
         claim: format!(
-            "Workspace inspection found {authored_count} authored elements, {library_count} library elements, and {metamodel_count} metamodel elements."
+            "Workspace inspection found {scoped_count} elements in analysis scope `{}` from {authored_count} authored elements, {library_count} library elements, and {metamodel_count} metamodel elements.",
+            analysis_scope.as_str()
         ),
         polarity: InsightPolarity::Neutral,
         severity: InsightSeverity::Info,
@@ -1351,6 +1426,14 @@ fn inspect_workspace_summary(
         evidence_ids: vec![evidence_id],
         source_spans: Vec::new(),
         metrics: BTreeMap::from([
+            (
+                "scoped_element_count".to_string(),
+                Value::from(scoped_count),
+            ),
+            (
+                "analysis_scope".to_string(),
+                Value::String(analysis_scope.as_str().to_string()),
+            ),
             (
                 "authored_element_count".to_string(),
                 Value::from(authored_count),
@@ -1373,6 +1456,7 @@ fn inspect_workspace_summary(
 fn inspect_query(
     workspace: &SemanticWorkspaceSnapshot,
     query: &str,
+    analysis_scope: AnalysisScope,
     limit: usize,
     run_id: &str,
 ) -> (Vec<SemanticInsight>, Value, EvidenceGraph) {
@@ -1387,6 +1471,7 @@ fn inspect_query(
             .then_with(|| left.element_id.cmp(&right.element_id))
     });
     matches.dedup_by(|left, right| left.element_id == right.element_id);
+    matches.retain(|element| element_matches_analysis_scope(element, analysis_scope));
     matches.truncate(limit);
 
     let mut evidence = EvidenceGraph::default();
@@ -1407,6 +1492,10 @@ fn inspect_query(
                 (
                     "elementId".to_string(),
                     Value::String(element.element_id.clone()),
+                ),
+                (
+                    "analysisScope".to_string(),
+                    Value::String(analysis_scope.as_str().to_string()),
                 ),
             ]),
         });
@@ -1465,6 +1554,7 @@ fn inspect_query(
     let payload = json!({
         "schema": "mercurio.capability.model_inspection.v1",
         "scope": "query",
+        "analysisScope": analysis_scope.as_str(),
         "query": query,
         "terms": terms,
         "matchCount": result_payloads.len(),
@@ -1476,14 +1566,22 @@ fn inspect_query(
 fn inspect_element(
     workspace: &SemanticWorkspaceSnapshot,
     element_id: &str,
+    analysis_scope: AnalysisScope,
     run_id: &str,
 ) -> Result<(Vec<SemanticInsight>, Value, EvidenceGraph), CapabilityError> {
     let element = workspace.element(element_id).ok_or_else(|| {
         CapabilityError::InvalidRequest(format!("unknown element `{element_id}`"))
     })?;
+    if !element_matches_analysis_scope(element, analysis_scope) {
+        return Err(CapabilityError::InvalidRequest(format!(
+            "element `{element_id}` is outside analysis scope `{}`",
+            analysis_scope.as_str()
+        )));
+    }
     let payload = json!({
         "schema": "mercurio.capability.model_inspection.v1",
         "scope": "element",
+        "analysisScope": analysis_scope.as_str(),
         "element": element_inspection_payload(workspace, element),
     });
     let subject = element_ref(element);
@@ -1617,6 +1715,32 @@ fn parameter_string(request: &CapabilityRunRequest, key: &str) -> Option<String>
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn parameter_analysis_scope(request: &CapabilityRunRequest) -> AnalysisScope {
+    parameter_analysis_scope_or(request, AnalysisScope::All)
+}
+
+fn parameter_analysis_scope_or(
+    request: &CapabilityRunRequest,
+    default: AnalysisScope,
+) -> AnalysisScope {
+    parameter_string(request, "analysis_scope")
+        .or_else(|| parameter_string(request, "analysisScope"))
+        .and_then(|value| analysis_scope_from_str(&value))
+        .unwrap_or(default)
+}
+
+fn analysis_scope_from_str(value: &str) -> Option<AnalysisScope> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "authored_model" | "authored" | "model" | "user_model" => {
+            Some(AnalysisScope::AuthoredModel)
+        }
+        "stdlib" | "library" | "libraries" | "standard_library" => Some(AnalysisScope::Stdlib),
+        "metamodel" | "meta_model" => Some(AnalysisScope::Metamodel),
+        "all" | "workspace" => Some(AnalysisScope::All),
+        _ => None,
+    }
 }
 
 fn inspection_query_terms(query: &str) -> Vec<String> {
@@ -1797,6 +1921,29 @@ fn is_authored_model_element(element: &crate::graph::Element) -> bool {
     true
 }
 
+fn is_metamodel_element(element: &crate::graph::Element) -> bool {
+    string_property(element, "metamodel_layer").is_some()
+        || string_property(element, "metamodel_language").is_some()
+        || matches!(element.kind.as_ref(), "Metaclass" | "MetamodelFeature")
+        || element.element_id.starts_with("KerML::Root::")
+}
+
+fn is_stdlib_element(element: &crate::graph::Element) -> bool {
+    !is_authored_model_element(element) && !is_metamodel_element(element)
+}
+
+fn element_matches_analysis_scope(
+    element: &crate::graph::Element,
+    analysis_scope: AnalysisScope,
+) -> bool {
+    match analysis_scope {
+        AnalysisScope::AuthoredModel => is_authored_model_element(element),
+        AnalysisScope::Stdlib => is_stdlib_element(element),
+        AnalysisScope::Metamodel => is_metamodel_element(element),
+        AnalysisScope::All => true,
+    }
+}
+
 fn value_digest(value: &Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     crate::stable_digest([("semantic-artifact".as_bytes(), bytes.as_slice())])
@@ -1806,7 +1953,7 @@ fn value_digest(value: &Value) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     use crate::{KirDocument, KirElement};
 
@@ -1944,6 +2091,151 @@ mod tests {
     }
 
     #[test]
+    fn model_inspection_analysis_scope_filters_workspace_inventory() {
+        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "Demo::Vehicle".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 0,
+                    properties: BTreeMap::from([(
+                        "declared_name".to_string(),
+                        Value::String("Vehicle".to_string()),
+                    )]),
+                },
+                KirElement {
+                    id: "ScalarValues::Real".to_string(),
+                    kind: "DataType".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "declared_name".to_string(),
+                            Value::String("Real".to_string()),
+                        ),
+                        ("is_library_element".to_string(), Value::Bool(true)),
+                        (
+                            "pilot_library_group".to_string(),
+                            Value::String("Kernel Libraries".to_string()),
+                        ),
+                    ]),
+                },
+                KirElement {
+                    id: "KerML::Root::Element".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "declared_name".to_string(),
+                            Value::String("Element".to_string()),
+                        ),
+                        (
+                            "metamodel_layer".to_string(),
+                            Value::String("kernel".to_string()),
+                        ),
+                    ]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = CapabilityRegistry::with_foundation_builtins();
+
+        let report = registry
+            .run(
+                &workspace,
+                CapabilityRunRequest {
+                    run_id: "run.inspect.authored".to_string(),
+                    capability_id: "foundation.inspect.model".to_string(),
+                    target: CapabilityTarget::Workspace,
+                    parameters: BTreeMap::from([(
+                        "analysis_scope".to_string(),
+                        Value::String("authored_model".to_string()),
+                    )]),
+                    input_artifacts: Vec::new(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            report.artifacts[0].payload["analysisScope"],
+            "authored_model"
+        );
+        assert_eq!(report.artifacts[0].payload["elementCount"], Value::from(3));
+        assert_eq!(
+            report.artifacts[0].payload["scopedElementCount"],
+            Value::from(1)
+        );
+        assert_eq!(
+            report.artifacts[0].payload["topScopedKinds"][0],
+            json!({ "kind": "PartDefinition", "count": 1 })
+        );
+    }
+
+    #[test]
+    fn model_inspection_query_scope_can_target_metamodel_only() {
+        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "Demo::ElementAdapter".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 0,
+                    properties: BTreeMap::from([(
+                        "declared_name".to_string(),
+                        Value::String("ElementAdapter".to_string()),
+                    )]),
+                },
+                KirElement {
+                    id: "KerML::Root::Element".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "declared_name".to_string(),
+                            Value::String("Element".to_string()),
+                        ),
+                        (
+                            "metamodel_layer".to_string(),
+                            Value::String("kernel".to_string()),
+                        ),
+                    ]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = CapabilityRegistry::with_foundation_builtins();
+
+        let report = registry
+            .run(
+                &workspace,
+                CapabilityRunRequest {
+                    run_id: "run.inspect.metamodel".to_string(),
+                    capability_id: "foundation.inspect.model".to_string(),
+                    target: CapabilityTarget::Workspace,
+                    parameters: BTreeMap::from([
+                        (
+                            "query".to_string(),
+                            Value::String("What is Element?".to_string()),
+                        ),
+                        (
+                            "analysis_scope".to_string(),
+                            Value::String("metamodel".to_string()),
+                        ),
+                    ]),
+                    input_artifacts: Vec::new(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(report.artifacts[0].payload["analysisScope"], "metamodel");
+        assert_eq!(report.artifacts[0].payload["matchCount"], Value::from(1));
+        assert_eq!(
+            report.artifacts[0].payload["matches"][0]["id"],
+            "KerML::Root::Element"
+        );
+    }
+
+    #[test]
     fn graph_impact_workspace_hotspots_ignore_library_elements() {
         let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
             metadata: BTreeMap::new(),
@@ -1996,6 +2288,75 @@ mod tests {
         assert_eq!(
             report.artifacts[0].payload["filteredLibraryElementCount"],
             Value::from(1)
+        );
+        assert_eq!(
+            report.artifacts[0].payload["filteredOutOfScopeElementCount"],
+            Value::from(1)
+        );
+    }
+
+    #[test]
+    fn graph_impact_workspace_scope_can_target_stdlib_elements() {
+        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "ScalarValues::Real".to_string(),
+                    kind: "DataType".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "declared_name".to_string(),
+                            Value::String("Real".to_string()),
+                        ),
+                        ("is_library_element".to_string(), Value::Bool(true)),
+                        (
+                            "pilot_library_group".to_string(),
+                            Value::String("Kernel Libraries".to_string()),
+                        ),
+                    ]),
+                },
+                typed_usage("part.engine.power", "ScalarValues::Real"),
+                typed_usage("part.engine.torque", "ScalarValues::Real"),
+                typed_usage("part.engine.speed", "ScalarValues::Real"),
+            ],
+        })
+        .unwrap();
+        let registry = CapabilityRegistry::with_foundation_builtins();
+
+        let report = registry
+            .run(
+                &workspace,
+                CapabilityRunRequest {
+                    run_id: "run.impact.stdlib".to_string(),
+                    capability_id: "foundation.impact.graph".to_string(),
+                    target: CapabilityTarget::Workspace,
+                    parameters: BTreeMap::from([
+                        (
+                            "analysis_scope".to_string(),
+                            Value::String("stdlib".to_string()),
+                        ),
+                        ("limit".to_string(), Value::from(3)),
+                    ]),
+                    input_artifacts: Vec::new(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(report.artifacts[0].payload["analysisScope"], "stdlib");
+        assert_eq!(
+            report.artifacts[0].payload["hotspots"][0]["elementId"],
+            "ScalarValues::Real"
+        );
+        assert_eq!(
+            report.artifacts[0].payload["filteredOutOfScopeElementCount"],
+            Value::from(3)
+        );
+        assert!(
+            report
+                .insights
+                .iter()
+                .all(|insight| insight.subject.element_id == "ScalarValues::Real")
         );
     }
 

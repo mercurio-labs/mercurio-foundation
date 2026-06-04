@@ -10,7 +10,8 @@ use crate::authoring::{
 };
 use crate::mutation::{
     ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, RelationshipChange,
-    SemanticDiff, SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
+    SemanticDiff, SemanticDiffElementRef, SemanticMutation, WorkspaceRevision, diff_for_operation,
+    merge_diff,
 };
 pub use crate::semantic_profile::{
     CapabilityAnswer, ConservativeSemanticCapabilityOracle, SemanticCapabilityOracle,
@@ -129,6 +130,7 @@ where
             });
         }
 
+        let before_kir = context.project.compile_kir_document().ok();
         let mut project = context.project.clone();
         let mut changed_files = BTreeSet::new();
         let mut changed_declarations = BTreeSet::new();
@@ -178,6 +180,9 @@ where
                 operation_index: None,
                 message: err.to_string(),
             })?;
+        if let (Some(before), Ok(after)) = (before_kir, project.compile_kir_document()) {
+            semantic_diff = crate::mutation::diff_kir_documents(&before, &after);
+        }
 
         Ok(MutationApplicationResult {
             changed_files,
@@ -212,6 +217,7 @@ where
             });
         }
 
+        let before_kir = context.project.compile_kir_document().ok();
         let mut project = context.project.clone();
         let mut unsupported_backend = false;
         let mut requires_supporting_changes = false;
@@ -279,13 +285,22 @@ where
             && !unsupported_backend
             && !requires_supporting_changes
             && blocking_reasons.is_empty()
-            && let Err(err) = project.write_back_changed_files(&changed_files)
         {
-            blocking_reasons.push(FeasibilityIssue {
-                kind: FeasibilityIssueKind::ValidationFailure,
-                operation_index: None,
-                message: err.to_string(),
-            });
+            match project.write_back_changed_files(&changed_files) {
+                Ok(_) => {
+                    if let (Some(before), Ok(after)) = (&before_kir, project.compile_kir_document())
+                    {
+                        resulting_diff = crate::mutation::diff_kir_documents(before, &after);
+                    }
+                }
+                Err(err) => {
+                    blocking_reasons.push(FeasibilityIssue {
+                        kind: FeasibilityIssueKind::ValidationFailure,
+                        operation_index: None,
+                        message: err.to_string(),
+                    });
+                }
+            }
         }
 
         let status = if !blocking_reasons.is_empty() {
@@ -471,6 +486,15 @@ where
                         "specialization",
                         blocking_reasons,
                     );
+                    let target_kind = declaration_kind_label(project, target)
+                        .unwrap_or_else(|| "specialization".to_string());
+                    self.warn_capability(
+                        self.oracle.can_specialize(keyword, &target_kind),
+                        index,
+                        "specialization capability",
+                        warnings,
+                        blocking_reasons,
+                    );
                 }
             }
             SemanticMutation::AddUsage {
@@ -528,6 +552,15 @@ where
                         target,
                         index,
                         "specialization",
+                        blocking_reasons,
+                    );
+                    let target_kind = declaration_kind_label(project, target)
+                        .unwrap_or_else(|| "specialization".to_string());
+                    self.warn_capability(
+                        self.oracle.can_specialize(keyword, &target_kind),
+                        index,
+                        "specialization capability",
+                        warnings,
                         blocking_reasons,
                     );
                 }
@@ -631,9 +664,50 @@ where
                     });
                 }
             }
+            SemanticMutation::UpdateUsageType { element, ty } => {
+                self.require_existing(project, element, index, "element", blocking_reasons);
+                if let Some(ty) = ty {
+                    self.require_existing(project, ty, index, "type", blocking_reasons);
+                    let usage_kind = declaration_kind_label(project, element)
+                        .unwrap_or_else(|| "usage".to_string());
+                    let definition_kind = declaration_kind_label(project, ty)
+                        .unwrap_or_else(|| "definition".to_string());
+                    self.warn_capability(
+                        self.oracle.can_type_usage(&usage_kind, &definition_kind),
+                        index,
+                        "typing capability",
+                        warnings,
+                        blocking_reasons,
+                    );
+                }
+            }
+            SemanticMutation::UpdateSpecializations {
+                element,
+                specializes,
+            } => {
+                self.require_existing(project, element, index, "element", blocking_reasons);
+                let source_kind = declaration_kind_label(project, element)
+                    .unwrap_or_else(|| "element".to_string());
+                for target in specializes {
+                    self.require_existing(
+                        project,
+                        target,
+                        index,
+                        "specialization",
+                        blocking_reasons,
+                    );
+                    let target_kind = declaration_kind_label(project, target)
+                        .unwrap_or_else(|| "specialization".to_string());
+                    self.warn_capability(
+                        self.oracle.can_specialize(&source_kind, &target_kind),
+                        index,
+                        "specialization capability",
+                        warnings,
+                        blocking_reasons,
+                    );
+                }
+            }
             SemanticMutation::RenameDeclaration { element, .. }
-            | SemanticMutation::UpdateUsageType { element, .. }
-            | SemanticMutation::UpdateSpecializations { element, .. }
             | SemanticMutation::MoveDeclaration { element, .. } => {
                 self.require_existing(project, element, index, "element", blocking_reasons);
             }
@@ -850,8 +924,8 @@ fn proposal_id(proposal: &MutationProposal) -> String {
 fn _relationship_change(kind: &str, source: ElementRef, target: ElementRef) -> RelationshipChange {
     RelationshipChange {
         kind: kind.to_string(),
-        source,
-        target,
+        source: SemanticDiffElementRef::unresolved(source.qualified_name),
+        target: SemanticDiffElementRef::unresolved(target.qualified_name),
     }
 }
 
@@ -862,6 +936,40 @@ mod tests {
     use super::*;
     use crate::authoring::load_authoring_project_from_model;
     use crate::mutation::{MutationEvidence, MutationProposal, SemanticExpression};
+    use crate::semantic_profile::AttributePolicyAnswer;
+
+    #[derive(Debug, Clone)]
+    struct TypingOracle(CapabilityAnswer);
+
+    impl SemanticCapabilityOracle for TypingOracle {
+        fn can_contain(&self, _container_kind: &str, _child_kind: &str) -> CapabilityAnswer {
+            CapabilityAnswer::Allowed
+        }
+
+        fn can_specialize(&self, _source_kind: &str, _target_kind: &str) -> CapabilityAnswer {
+            CapabilityAnswer::Allowed
+        }
+
+        fn can_type_usage(&self, _usage_kind: &str, _definition_kind: &str) -> CapabilityAnswer {
+            self.0.clone()
+        }
+
+        fn can_relate(
+            &self,
+            _relationship_kind: &str,
+            _source_kind: &str,
+            _target_kind: &str,
+        ) -> CapabilityAnswer {
+            CapabilityAnswer::Allowed
+        }
+
+        fn attribute_policy(&self, _kind: &str, _attribute: &str) -> AttributePolicyAnswer {
+            AttributePolicyAnswer {
+                writable: true,
+                reason: None,
+            }
+        }
+    }
 
     fn neutral_model_project() -> AuthoringProject {
         load_authoring_project_from_model(BTreeMap::from([(
@@ -944,11 +1052,13 @@ package SystemModel {
         let diff = report.resulting_diff.unwrap();
         assert!(
             diff.added_elements
-                .contains(&ElementRef::new("SystemModel.DiagnosticsModule"))
+                .iter()
+                .any(|element| element.element_id == "type.SystemModel.DiagnosticsModule")
         );
         assert!(
             diff.added_elements
-                .contains(&ElementRef::new("SystemModel.System.diagnostics"))
+                .iter()
+                .any(|element| element.element_id == "feature.SystemModel.System.diagnostics")
         );
 
         let application = service
@@ -964,6 +1074,73 @@ package SystemModel {
                 .changed_declarations
                 .contains("SystemModel.System.diagnostics")
         );
+        assert!(
+            application
+                .semantic_diff
+                .added_elements
+                .iter()
+                .any(|element| element.element_id == "feature.SystemModel.System.diagnostics")
+        );
+    }
+
+    #[test]
+    fn feasibility_blocks_custom_oracle_denied_typing() {
+        let context = MutationContext::from_project(neutral_model_project());
+        let proposal = MutationProposal {
+            intent: "Add policy-blocked diagnostics usage".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
+            operations: vec![SemanticMutation::AddUsage {
+                container: ElementRef::new("SystemModel.System"),
+                keyword: "component".to_string(),
+                name: "diagnostics".to_string(),
+                ty: Some(ElementRef::new("SystemModel.Sensor")),
+                specializes: Vec::new(),
+            }],
+            evidence: Vec::new(),
+            rationale: None,
+            workspace_revision: context.workspace_revision.clone(),
+        };
+
+        let report = CoreMutationFeasibilityService::with_oracle(TypingOracle(
+            CapabilityAnswer::Denied("test oracle denied typing".to_string()),
+        ))
+        .check(&context, &proposal);
+
+        assert_eq!(report.status, FeasibilityStatus::Blocked);
+        assert!(report.blocking_reasons.iter().any(|issue| {
+            issue.kind == FeasibilityIssueKind::MetamodelViolation
+                && issue.message.contains("test oracle denied typing")
+        }));
+    }
+
+    #[test]
+    fn feasibility_warns_on_custom_oracle_unknown_typing() {
+        let context = MutationContext::from_project(neutral_model_project());
+        let proposal = MutationProposal {
+            intent: "Add policy-unknown diagnostics usage".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
+            operations: vec![SemanticMutation::AddUsage {
+                container: ElementRef::new("SystemModel.System"),
+                keyword: "component".to_string(),
+                name: "diagnostics".to_string(),
+                ty: Some(ElementRef::new("SystemModel.Sensor")),
+                specializes: Vec::new(),
+            }],
+            evidence: Vec::new(),
+            rationale: None,
+            workspace_revision: context.workspace_revision.clone(),
+        };
+
+        let report = CoreMutationFeasibilityService::with_oracle(TypingOracle(
+            CapabilityAnswer::Unknown("test oracle cannot prove typing".to_string()),
+        ))
+        .check(&context, &proposal);
+
+        assert_eq!(report.status, FeasibilityStatus::AllowedWithWarnings);
+        assert!(report.warnings.iter().any(|issue| {
+            issue.kind == FeasibilityIssueKind::MetamodelViolation
+                && issue.message.contains("test oracle cannot prove typing")
+        }));
     }
 
     #[test]
@@ -1016,17 +1193,16 @@ package SystemModel {
 
         assert_eq!(report.status, FeasibilityStatus::Allowed, "{report:#?}");
         assert!(report.warnings.is_empty());
-        assert!(
-            report
-                .resulting_diff
-                .unwrap()
-                .added_relationships
-                .contains(&RelationshipChange {
-                    kind: "relate".to_string(),
-                    source: ElementRef::new("SystemModel.System"),
-                    target: ElementRef::new("SystemModel.ReliabilityObjective"),
-                })
-        );
+        let diff = report.resulting_diff.unwrap();
+        assert!(diff.added_elements.iter().any(|element| {
+            element.element_id == "relationship.SystemModel.System.ReliabilityObjective"
+        }));
+        assert!(diff.added_relationships.iter().any(|relationship| {
+            relationship.kind == "target"
+                && relationship.source.element_id
+                    == "relationship.SystemModel.System.ReliabilityObjective"
+                && relationship.target.element_id == "type.SystemModel.ReliabilityObjective"
+        }));
 
         let application = CoreMutationFeasibilityService::new()
             .apply_checked_plan(&context, &report.normalized_plan.unwrap())
@@ -1218,8 +1394,9 @@ package Demo {
                 .changed_attributes
                 .iter()
                 .any(
-                    |change| change.element == ElementRef::new("Demo.element.score")
-                        && change.attribute == "expression"
+                    |change| change.element.element_id == "feature.Demo.element.score"
+                        && change.attribute == "expression_ir"
+                        && change.after == Some(serde_json::json!("0.42"))
                 )
         );
 

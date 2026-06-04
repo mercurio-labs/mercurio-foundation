@@ -16,6 +16,8 @@ pub mod authoring;
 #[doc(hidden)]
 pub mod capability;
 #[doc(hidden)]
+pub mod cognitive;
+#[doc(hidden)]
 pub mod datalog {
     pub use mercurio_runtime::{
         Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
@@ -148,14 +150,22 @@ pub use authoring::{
     load_authoring_project_from_kir, textual_model_authoring_render_profile,
 };
 pub use capability::{
-    CapabilityCostClass, CapabilityDescriptor, CapabilityError, CapabilityKind, CapabilityMaturity,
-    CapabilityReadinessReport, CapabilityReadinessStatus, CapabilityRegistry, CapabilityRunReport,
-    CapabilityRunRequest, CapabilityRunStatus, CapabilityTarget, DecisionAssessment,
-    DecisionContext, EvidenceEdge, EvidenceGraph, EvidenceNode, EvidenceNodeKind, EvidenceRelation,
-    GenericImpactCapability, GenericModelInspectionCapability, InsightConfidence, InsightKind,
-    InsightPolarity, InsightScope, InsightSeverity, SemanticArtifact, SemanticCapability,
-    SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight,
-    SemanticWorkspaceSnapshot, assess_decision_context,
+    AnalysisScope, CapabilityCostClass, CapabilityDescriptor, CapabilityError, CapabilityKind,
+    CapabilityMaturity, CapabilityReadinessReport, CapabilityReadinessStatus, CapabilityRegistry,
+    CapabilityRunReport, CapabilityRunRequest, CapabilityRunStatus, CapabilityTarget,
+    DecisionAssessment, DecisionContext, EvidenceEdge, EvidenceGraph, EvidenceNode,
+    EvidenceNodeKind, EvidenceRelation, GenericImpactCapability, GenericModelInspectionCapability,
+    InsightConfidence, InsightKind, InsightPolarity, InsightScope, InsightSeverity,
+    SemanticArtifact, SemanticCapability, SemanticDiagnostic, SemanticDiagnosticSeverity,
+    SemanticElementRef, SemanticInsight, SemanticWorkspaceSnapshot, assess_decision_context,
+};
+pub use cognitive::{
+    CognitiveCandidate, CognitiveCitation, CognitiveConfidence, CognitiveContext,
+    CognitiveDiagnostic, CognitiveDiagnosticSeverity, CognitiveElement, CognitiveError,
+    CognitiveFocus, CognitiveInferenceRequest, CognitiveInferenceResponse, CognitiveOperation,
+    CognitiveProvider, CognitiveProviderStatus, CognitiveRelationship, DesignDecision,
+    DesignIntent, HeuristicCognitiveProvider, SemanticWorkspaceRef, analyze, critique, explore,
+    propose,
 };
 pub use datalog::{
     Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
@@ -233,10 +243,10 @@ pub use mpack::{
 pub use mutation::{
     ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
     MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
-    RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticElementContext,
-    SemanticExpression, SemanticFactContext, SemanticMutation, SemanticMutationCapabilityContext,
-    SemanticReasoningContext, SemanticRelationshipContext, WorkspaceRevision,
-    default_semantic_mutation_capability_context, diff_kir_documents,
+    RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef,
+    SemanticElementContext, SemanticExpression, SemanticFactContext, SemanticMutation,
+    SemanticMutationCapabilityContext, SemanticReasoningContext, SemanticRelationshipContext,
+    WorkspaceRevision, default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
     enrich_semantic_reasoning_context_with_child_affordances_for_capability,
     enrich_semantic_reasoning_context_with_graph,
@@ -291,8 +301,9 @@ pub use semantic_compare::{
     build_semantic_snapshot_with_registry, compare_snapshots, compare_snapshots_with_options,
 };
 pub use semantic_profile::{
-    AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
-    SemanticCapabilityOracle,
+    AttributePolicyAnswer, AttributePolicyKey, CapabilityAnswer, CapabilityPair,
+    ConservativeSemanticCapabilityOracle, RelationshipCapability, SemanticCapabilityOracle,
+    SemanticCapabilityProfile, TableSemanticCapabilityOracle, normalize_capability_token,
 };
 pub use semantic_target::{
     IncludeSubtypes, ResolvedSemanticTarget, SemanticTarget, SemanticTargetError,
