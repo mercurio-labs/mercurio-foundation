@@ -94,6 +94,7 @@ impl KirFieldRegistry {
             | "operator_expression"
             | "trigger"
             | "trigger_kind"
+            | "source_is_initial"
             | "effect"
             | "text"
             | "requirement_id"
@@ -1002,6 +1003,46 @@ mod tests {
         .normalized_for_persistence();
 
         assert_eq!(document.schema_version(), Some(super::KIR_SCHEMA_VERSION));
+        document.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn persisted_validation_accepts_transition_initial_source_marker() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![KirElement {
+                id: "transition.Demo.Machine.idle_go".to_string(),
+                kind: "SysML::States::TransitionUsage".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Machine.idle_go".to_string()),
+                    ),
+                    (
+                        "source".to_string(),
+                        Value::String("state.Demo.Machine.Idle".to_string()),
+                    ),
+                    (
+                        "target".to_string(),
+                        Value::String("state.Demo.Machine.Go".to_string()),
+                    ),
+                    ("trigger".to_string(), Value::String("start".to_string())),
+                    (
+                        "trigger_kind".to_string(),
+                        Value::String("event".to_string()),
+                    ),
+                    (
+                        "source_is_initial".to_string(),
+                        Value::String("true".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        }
+        .normalized_for_persistence();
+
         document.validate_persisted().unwrap();
     }
 
