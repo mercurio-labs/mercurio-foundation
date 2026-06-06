@@ -160,7 +160,7 @@ impl KirFieldRegistry {
 
             "expression" => KirFieldKind::Scalar,
             "expression_ir" => KirFieldKind::Expression,
-            "metadata" | "source_span" | "doc" => KirFieldKind::Metadata,
+            "metadata" | "source_span" | "doc" | "do_behavior" => KirFieldKind::Metadata,
             "element_id" => KirFieldKind::Scalar,
             _ => return None,
         };
@@ -1035,6 +1035,41 @@ mod tests {
                     (
                         "source_is_initial".to_string(),
                         Value::String("true".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        }
+        .normalized_for_persistence();
+
+        document.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn persisted_validation_accepts_state_do_behavior() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![KirElement {
+                id: "state.Demo.Bed.lifecycle.Heating".to_string(),
+                kind: "SysML::Systems::StateUsage".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Bed.lifecycle.Heating".to_string()),
+                    ),
+                    (
+                        "do_behavior".to_string(),
+                        serde_json::json!({
+                            "kind": "rate_integration",
+                            "rates": [
+                                {
+                                    "feature": "temperature",
+                                    "rate": 2.2
+                                }
+                            ]
+                        }),
                     ),
                 ]
                 .into_iter()
