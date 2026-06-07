@@ -139,6 +139,18 @@ pub enum SimulationStatus {
 pub struct SimulationModel {
     pub id: String,
     pub machines: Vec<SimulationStateMachine>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_rules: Vec<SimulationDerivedFeatureRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SimulationDerivedFeatureRule {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    pub feature: String,
+    pub expression: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -364,6 +376,7 @@ pub fn run_concurrent_simulation_model(
             );
         }
     }
+    propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
 
     let mut timeline = vec![make_core_entry(t, &subjects, &values, Vec::new())];
     let max_steps = scenario.max_steps.max(1);
@@ -382,9 +395,11 @@ pub fn run_concurrent_simulation_model(
             clock.change_loop_limit,
             &mut events,
         )? {
+            propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
             fired = true;
         }
 
+        let mut scripted_event_fired = false;
         for subject in subjects.iter_mut() {
             if step >= max_steps || subject.event_index >= subject.events.len() {
                 continue;
@@ -437,7 +452,11 @@ pub fn run_concurrent_simulation_model(
                 trigger: Some(event.trigger),
                 reason: None,
             });
+            scripted_event_fired = true;
             fired = true;
+        }
+        if scripted_event_fired {
+            propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
         }
 
         if fire_immediate_transitions(
@@ -451,6 +470,7 @@ pub fn run_concurrent_simulation_model(
             clock.change_loop_limit,
             &mut events,
         )? {
+            propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
             fired = true;
         }
 
@@ -480,6 +500,7 @@ pub fn run_concurrent_simulation_model(
                     &mut timeline,
                     t,
                 )?;
+                propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
                 t += duration;
                 step += 1;
                 fired = true;
@@ -493,6 +514,7 @@ pub fn run_concurrent_simulation_model(
                     max_steps,
                     &mut events,
                 )?;
+                propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
                 fire_immediate_transitions(
                     &mut subjects,
                     &mut values,
@@ -504,6 +526,7 @@ pub fn run_concurrent_simulation_model(
                     clock.change_loop_limit,
                     &mut events,
                 )?;
+                propagate_derived_values(&model.derived_rules, &subjects, &mut values)?;
             }
         }
 
@@ -557,6 +580,130 @@ fn make_core_entry(
             .collect(),
         values: values.clone(),
         events,
+    }
+}
+
+fn propagate_derived_values(
+    rules: &[SimulationDerivedFeatureRule],
+    subjects: &[CoreSubjectRunState<'_>],
+    values: &mut BTreeMap<(String, String), Value>,
+) -> Result<(), CoreSimulationError> {
+    if rules.is_empty() {
+        return Ok(());
+    }
+    for rule_index in derived_rule_order(rules).map_err(CoreSimulationError::InvalidProfile)? {
+        let rule = &rules[rule_index];
+        for subject in subjects {
+            if let Some(rule_subject_id) = &rule.subject_id
+                && rule_subject_id != &subject.subject_id
+            {
+                continue;
+            }
+            match eval_value(&rule.expression, &subject.subject_id, values) {
+                Ok(Value::Null) => continue,
+                Ok(value) => {
+                    values.insert((subject.subject_id.clone(), rule.feature.clone()), value);
+                }
+                Err(error) if rule.subject_id.is_none() => {
+                    if matches!(error, CoreSimulationError::InvalidExpression(_)) {
+                        continue;
+                    }
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn derived_rule_order(
+    rules: &[SimulationDerivedFeatureRule],
+) -> Result<Vec<usize>, SimulationProfileError> {
+    let mut outgoing = vec![BTreeSet::<usize>::new(); rules.len()];
+    let mut incoming_count = vec![0usize; rules.len()];
+    for (dependent_index, dependent) in rules.iter().enumerate() {
+        for path in expression_paths(&dependent.expression) {
+            for (dependency_index, dependency) in rules.iter().enumerate() {
+                if dependent_index == dependency_index {
+                    continue;
+                }
+                if !derived_rule_subjects_overlap(dependent, dependency) {
+                    continue;
+                }
+                if path == dependency.feature || path.ends_with(&format!(".{}", dependency.feature))
+                {
+                    if outgoing[dependency_index].insert(dependent_index) {
+                        incoming_count[dependent_index] += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut ready = incoming_count
+        .iter()
+        .enumerate()
+        .filter_map(|(index, count)| (*count == 0).then_some(index))
+        .collect::<Vec<_>>();
+    let mut ordered = Vec::new();
+    while let Some(index) = ready.pop() {
+        ordered.push(index);
+        for dependent in outgoing[index].clone() {
+            incoming_count[dependent] -= 1;
+            if incoming_count[dependent] == 0 {
+                ready.push(dependent);
+            }
+        }
+    }
+    if ordered.len() == rules.len() {
+        return Ok(ordered);
+    }
+    Err(SimulationProfileError {
+        findings: vec![finding(
+            "derived_rule.cycle",
+            "Derived feature rules must be acyclic.",
+            None,
+            None,
+        )],
+    })
+}
+
+fn derived_rule_subjects_overlap(
+    left: &SimulationDerivedFeatureRule,
+    right: &SimulationDerivedFeatureRule,
+) -> bool {
+    match (&left.subject_id, &right.subject_id) {
+        (Some(left), Some(right)) => left == right,
+        _ => true,
+    }
+}
+
+fn expression_paths(expression: &Value) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    collect_expression_paths(expression, &mut paths);
+    paths
+}
+
+fn collect_expression_paths(expression: &Value, paths: &mut BTreeSet<String>) {
+    let Some(object) = expression.as_object() else {
+        return;
+    };
+    if object.get("kind").and_then(Value::as_str) == Some("path")
+        && let Some(path) = expression_path(expression)
+    {
+        paths.insert(path);
+    }
+    for value in object.values() {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect_expression_paths(item, paths);
+                }
+            }
+            Value::Object(_) => collect_expression_paths(value, paths),
+            _ => {}
+        }
     }
 }
 
@@ -1753,6 +1900,9 @@ pub fn validate_simulation_model(model: &SimulationModel) -> Result<(), Simulati
     for machine in &model.machines {
         validate_machine(machine, &mut findings);
     }
+    if let Err(error) = derived_rule_order(&model.derived_rules) {
+        findings.extend(error.findings);
+    }
 
     if findings.is_empty() {
         Ok(())
@@ -2019,6 +2169,7 @@ mod tests {
                     transition("t2", "s1", "s3", "go"),
                 ],
             }],
+            derived_rules: Vec::new(),
         };
 
         let error = validate_simulation_model(&model).unwrap_err();
@@ -2040,6 +2191,7 @@ mod tests {
                 states: vec![state("s1", true), state("s2", false)],
                 transitions: vec![transition("t1", "s1", "s2", "go")],
             }],
+            derived_rules: Vec::new(),
         };
 
         validate_simulation_model(&model).unwrap();
@@ -2058,6 +2210,7 @@ mod tests {
                     transition("t2", "s1", "s2", "go"),
                 ],
             }],
+            derived_rules: Vec::new(),
         };
 
         let error = run_concurrent_simulation_model(
@@ -2131,6 +2284,7 @@ mod tests {
                     }],
                 },
             ],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2210,6 +2364,7 @@ mod tests {
                     },
                 ],
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2275,6 +2430,7 @@ mod tests {
                     effects: Vec::new(),
                 }],
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2390,6 +2546,7 @@ mod tests {
                 states: vec![heating],
                 transitions: Vec::new(),
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2445,6 +2602,7 @@ mod tests {
                 states: vec![decaying],
                 transitions: Vec::new(),
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2492,6 +2650,125 @@ mod tests {
     }
 
     #[test]
+    fn derived_rules_propagate_after_rate_integration() {
+        let heating = SimulationState {
+            do_behavior: Some(StateDoBehavior::RateIntegration {
+                rates: vec![SimulationRate {
+                    feature: "temperature".to_string(),
+                    source: SimulationRateSource::Constant(2.0),
+                }],
+            }),
+            ..state("heating", true)
+        };
+        let model = SimulationModel {
+            id: "demo".to_string(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".to_string(),
+                label: "Machine".to_string(),
+                states: vec![heating],
+                transitions: Vec::new(),
+            }],
+            derived_rules: vec![SimulationDerivedFeatureRule {
+                id: "rule.margin".to_string(),
+                label: "margin".to_string(),
+                subject_id: Some("bed".to_string()),
+                feature: "margin".to_string(),
+                expression: serde_json::json!({
+                    "kind": "binary",
+                    "op": "subtract",
+                    "left": { "kind": "path", "segments": ["target"] },
+                    "right": { "kind": "path", "segments": ["temperature"] }
+                }),
+            }],
+        };
+
+        let trace = run_concurrent_simulation_model(
+            &model,
+            ConcurrentSimulationScenario {
+                id: "scenario".to_string(),
+                subjects: vec![ConcurrentSubjectScenario {
+                    subject_id: "bed".to_string(),
+                    machine_id: "Machine".to_string(),
+                    initial_state_id: None,
+                    events: Vec::new(),
+                }],
+                max_steps: 1,
+                step_duration_s: 1.0,
+                clock_config: None,
+                initial_values: BTreeMap::from([
+                    (
+                        ("bed".to_string(), "temperature".to_string()),
+                        Value::from(20.0),
+                    ),
+                    (("bed".to_string(), "target".to_string()), Value::from(30.0)),
+                ]),
+                requirements: Vec::new(),
+                objectives: Vec::new(),
+            },
+            SimulationClockConfig {
+                max_time_s: 1.0,
+                fixed_step_s: 1.0,
+                sample_interval_s: 1.0,
+                change_loop_limit: 20,
+            },
+        )
+        .unwrap();
+
+        let final_margin = trace
+            .timeline
+            .last()
+            .unwrap()
+            .values
+            .get(&("bed".to_string(), "margin".to_string()))
+            .and_then(Value::as_f64)
+            .unwrap();
+        assert!((final_margin - 8.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn validator_rejects_derived_rule_cycles() {
+        let model = SimulationModel {
+            id: "demo".to_string(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".to_string(),
+                label: "Machine".to_string(),
+                states: vec![state("idle", true)],
+                transitions: Vec::new(),
+            }],
+            derived_rules: vec![
+                SimulationDerivedFeatureRule {
+                    id: "rule.a".to_string(),
+                    label: "a".to_string(),
+                    subject_id: None,
+                    feature: "a".to_string(),
+                    expression: serde_json::json!({
+                        "kind": "path",
+                        "segments": ["b"]
+                    }),
+                },
+                SimulationDerivedFeatureRule {
+                    id: "rule.b".to_string(),
+                    label: "b".to_string(),
+                    subject_id: None,
+                    feature: "b".to_string(),
+                    expression: serde_json::json!({
+                        "kind": "path",
+                        "segments": ["a"]
+                    }),
+                },
+            ],
+        };
+
+        let error = validate_simulation_model(&model).unwrap_err();
+        assert!(
+            error
+                .findings
+                .iter()
+                .any(|finding| finding.code == "derived_rule.cycle")
+        );
+    }
+
+    #[test]
     fn core_runner_marks_unmatched_events_as_blocked_diagnostics() {
         let model = SimulationModel {
             id: "demo".to_string(),
@@ -2501,6 +2778,7 @@ mod tests {
                 states: vec![state("idle", true), state("done", false)],
                 transitions: vec![transition("idle.done", "idle", "done", "go")],
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2559,6 +2837,7 @@ mod tests {
                     effects: Vec::new(),
                 }],
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2634,6 +2913,7 @@ mod tests {
                     },
                 ],
             }],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
@@ -2717,6 +2997,7 @@ mod tests {
                     }],
                 },
             ],
+            derived_rules: Vec::new(),
         };
 
         let trace = run_concurrent_simulation_model(
