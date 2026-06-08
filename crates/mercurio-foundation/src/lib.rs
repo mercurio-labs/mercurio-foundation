@@ -164,8 +164,8 @@ pub use cognitive::{
     CognitiveDiagnostic, CognitiveDiagnosticSeverity, CognitiveElement, CognitiveError,
     CognitiveFocus, CognitiveInferenceRequest, CognitiveInferenceResponse, CognitiveOperation,
     CognitiveProvider, CognitiveProviderStatus, CognitiveRelationship, DesignDecision,
-    DesignIntent, HeuristicCognitiveProvider, SemanticWorkspaceRef, analyze, critique, explore,
-    propose,
+    DesignIntent, HeuristicCognitiveProvider, SemanticWorkspaceRef, analyze, critique,
+    design_intent_to_assessment_spec, design_intent_to_semantic_goal_spec, explore, propose,
 };
 pub use datalog::{
     Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,

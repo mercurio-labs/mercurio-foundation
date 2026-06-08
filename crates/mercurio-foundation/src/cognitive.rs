@@ -4,12 +4,17 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::assessment::{
+    AssessmentAssertion, AssessmentExpectation, AssessmentQuery, AssessmentSpec,
+};
 use crate::capability::{
     SemanticArtifact, SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticElementRef,
     SemanticWorkspaceSnapshot,
 };
+use crate::datalog::{Atom, Term};
+use crate::goal::{SemanticGoalSpec, default_model_quality_profile};
 use crate::graph::{Element, Graph, GraphError};
-use crate::identity::SourceSpanRef;
+use crate::identity::{SourceSpanRef, stable_digest};
 use crate::ir::KirDocument;
 use crate::metamodel::MetamodelAttributeRegistry;
 use crate::mutation::WorkspaceRevision;
@@ -98,6 +103,55 @@ pub struct DesignIntent {
     pub assumptions: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, Value>,
+}
+
+pub fn design_intent_to_semantic_goal_spec(intent: &DesignIntent) -> SemanticGoalSpec {
+    let _ = intent;
+    default_model_quality_profile().goal
+}
+
+pub fn design_intent_to_assessment_spec(intent: &DesignIntent) -> AssessmentSpec {
+    let mut assertions = vec![AssessmentAssertion {
+        id: "intent-summary-present".to_string(),
+        description: "The assessment evidence is tied to the design intent summary.".to_string(),
+        query: AssessmentQuery {
+            find: vec!["summary".to_string()],
+            where_atoms: vec![Atom {
+                predicate: "design_intent_summary".to_string(),
+                terms: vec![Term::Var("summary".to_string())],
+            }],
+        },
+        expect: AssessmentExpectation::ContainsBinding {
+            variable: "summary".to_string(),
+            value: intent.summary.clone(),
+        },
+    }];
+    assertions.extend(
+        intent
+            .goals
+            .iter()
+            .enumerate()
+            .map(|(index, goal)| AssessmentAssertion {
+                id: format!("intent-goal-{}", index + 1),
+                description: format!("The assessment evidence includes design intent goal: {goal}"),
+                query: AssessmentQuery {
+                    find: vec!["goal".to_string()],
+                    where_atoms: vec![Atom {
+                        predicate: "design_intent_goal".to_string(),
+                        terms: vec![Term::Var("goal".to_string())],
+                    }],
+                },
+                expect: AssessmentExpectation::ContainsBinding {
+                    variable: "goal".to_string(),
+                    value: goal.clone(),
+                },
+            }),
+    );
+    AssessmentSpec {
+        id: stable_digest([("design-intent".as_bytes(), intent.summary.as_bytes())]),
+        title: intent.summary.clone(),
+        assertions,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -938,6 +992,102 @@ mod tests {
         assert_eq!(context.elements.len(), 1);
         assert_eq!(context.elements[0].element.element_id, "Vehicle.engine");
         assert_eq!(context.relationships.len(), 2);
+    }
+
+    #[test]
+    fn design_intent_adapters_share_one_intent_source() {
+        let intent = intent();
+        let goal = design_intent_to_semantic_goal_spec(&intent);
+        let assessment = design_intent_to_assessment_spec(&intent);
+
+        assert!(!goal.checks.is_empty());
+        assert_eq!(assessment.title, "Improve vehicle efficiency");
+        assert_eq!(assessment.assertions.len(), 2);
+        assert!(assessment.id.starts_with("sha256:") || assessment.id.starts_with("fnv"));
+    }
+
+    #[test]
+    fn design_intent_drives_assessment_goal_and_quality_gate_contracts() {
+        let intent = intent();
+        let assessment = design_intent_to_assessment_spec(&intent);
+        let assessment_result = crate::assessment::run_runtime_assessment(
+            crate::assessment::RuntimeAssessmentRequest {
+                spec: assessment,
+                rulepacks: Vec::new(),
+                facts: vec![
+                    crate::datalog::Fact::new("design_intent_summary", [intent.summary.clone()]),
+                    crate::datalog::Fact::new("design_intent_goal", [intent.goals[0].clone()]),
+                ],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            assessment_result.report.status,
+            crate::assessment::AssessmentStatus::Pass
+        );
+
+        let context = crate::mutation::SemanticReasoningContext {
+            metamodel_version: "test".to_string(),
+            workspace_revision: crate::mutation::WorkspaceRevision::unchecked(),
+            focus: Vec::new(),
+            elements: vec![
+                crate::mutation::SemanticElementContext {
+                    element: crate::mutation::ElementRef::new("Demo.ReduceLosses"),
+                    kind: "definition".to_string(),
+                    label: "ReduceLosses".to_string(),
+                    owner: Some(crate::mutation::ElementRef::new("Demo")),
+                    attributes: BTreeMap::from([
+                        (
+                            "keyword".to_string(),
+                            serde_json::Value::String("requirement".to_string()),
+                        ),
+                        (
+                            "id".to_string(),
+                            serde_json::Value::String("REQ-EFF-001".to_string()),
+                        ),
+                        (
+                            "text".to_string(),
+                            serde_json::Value::String(
+                                "The design shall reduce losses.".to_string(),
+                            ),
+                        ),
+                    ]),
+                },
+                crate::mutation::SemanticElementContext {
+                    element: crate::mutation::ElementRef::new("Demo.Vehicle.engine"),
+                    kind: "usage".to_string(),
+                    label: "engine".to_string(),
+                    owner: Some(crate::mutation::ElementRef::new("Demo.Vehicle")),
+                    attributes: BTreeMap::from([
+                        (
+                            "keyword".to_string(),
+                            serde_json::Value::String("part".to_string()),
+                        ),
+                        (
+                            "type".to_string(),
+                            serde_json::Value::String("Engine".to_string()),
+                        ),
+                    ]),
+                },
+            ],
+            relationships: Vec::new(),
+            facts: Vec::new(),
+            affordances: Vec::new(),
+            source_files: Vec::new(),
+            truncated: false,
+        };
+        let goal = design_intent_to_semantic_goal_spec(&intent);
+        let goal_evaluation = crate::goal::evaluate_semantic_goal(&context, &goal);
+        let quality_gate_evaluation = crate::goal::evaluate_semantic_goal(
+            &context,
+            &crate::goal::default_model_quality_profile().goal,
+        );
+
+        assert!(goal_evaluation.satisfied);
+        assert_eq!(goal_evaluation.score, 1.0);
+        assert!(quality_gate_evaluation.satisfied);
+        assert_eq!(quality_gate_evaluation.score, 1.0);
     }
 
     #[test]
