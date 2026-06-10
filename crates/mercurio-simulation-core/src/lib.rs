@@ -83,8 +83,8 @@ pub struct AnalysisCaseInfo {
 pub struct SimulationTrace {
     pub scenario_id: String,
     pub subject_id: String,
-    pub channels: Vec<TraceChannel>,
-    pub timeline: Vec<TraceEntry>,
+    pub channels: Vec<SimTraceChannel>,
+    pub timeline: Vec<SimTraceEntry>,
     pub status: SimulationStatus,
     #[serde(default)]
     pub requirements: Vec<SimulationRequirement>,
@@ -93,31 +93,36 @@ pub struct SimulationTrace {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TraceChannel {
+pub struct SimTraceChannel {
     pub id: String,
     pub unit: Option<String>,
-    pub source: TraceChannelSource,
+    pub source: SimTraceChannelSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TraceChannelSource {
+pub enum SimTraceChannelSource {
     StateMachine,
     RateEffect,
     AssignEffect,
 }
 
+pub type TraceChannel = SimTraceChannel;
+pub type TraceChannelSource = SimTraceChannelSource;
+pub type TraceEntry = SimTraceEntry;
+pub type TraceEvent = SimTraceEvent;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TraceEntry {
+pub struct SimTraceEntry {
     pub t: f64,
     pub states: BTreeMap<String, Vec<String>>,
     #[serde(with = "tuple_value_map")]
     pub values: BTreeMap<(String, String), Value>,
-    pub events: Vec<TraceEvent>,
+    pub events: Vec<SimTraceEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TraceEvent {
+pub struct SimTraceEvent {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_id: Option<String>,
@@ -410,7 +415,7 @@ pub fn run_concurrent_simulation_model(
     let max_steps = scenario.max_steps.max(1);
     while step < max_steps && t <= clock.max_time_s {
         let mut fired = false;
-        let mut events = Vec::<TraceEvent>::new();
+        let mut events = Vec::<SimTraceEvent>::new();
 
         if fire_immediate_transitions(
             &mut subjects,
@@ -443,7 +448,7 @@ pub fn run_concurrent_simulation_model(
                 &values,
             )
             .cloned() else {
-                events.push(TraceEvent {
+                events.push(SimTraceEvent {
                     kind: "event.dropped".to_string(),
                     subject_id: Some(subject.subject_id.clone()),
                     transition_id: None,
@@ -473,7 +478,7 @@ pub fn run_concurrent_simulation_model(
                 &mut history,
                 &mut elapsed,
             )?;
-            events.push(TraceEvent {
+            events.push(SimTraceEvent {
                 kind: "transition".to_string(),
                 subject_id: Some(subject.subject_id.clone()),
                 transition_id: Some(transition.id),
@@ -573,13 +578,13 @@ pub fn run_concurrent_simulation_model(
     let rate_integrated_channels = rate_integrated_channels(&subjects);
     let channels = values
         .keys()
-        .map(|(subject, feature)| TraceChannel {
+        .map(|(subject, feature)| SimTraceChannel {
             id: format!("{subject}.{feature}"),
             unit: None,
             source: if rate_integrated_channels.contains(&(subject.clone(), feature.clone())) {
-                TraceChannelSource::RateEffect
+                SimTraceChannelSource::RateEffect
             } else {
-                TraceChannelSource::AssignEffect
+                SimTraceChannelSource::AssignEffect
             },
         })
         .collect();
@@ -598,9 +603,9 @@ fn make_core_entry(
     t: f64,
     subjects: &[CoreSubjectRunState<'_>],
     values: &BTreeMap<(String, String), Value>,
-    events: Vec<TraceEvent>,
-) -> TraceEntry {
-    TraceEntry {
+    events: Vec<SimTraceEvent>,
+) -> SimTraceEntry {
+    SimTraceEntry {
         t,
         states: subjects
             .iter()
@@ -834,7 +839,7 @@ fn fire_immediate_transitions(
     step: &mut usize,
     max_steps: usize,
     change_loop_limit: usize,
-    events: &mut Vec<TraceEvent>,
+    events: &mut Vec<SimTraceEvent>,
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     if deliver_pending_signals(
@@ -883,7 +888,7 @@ fn fire_immediate_transitions(
                 history,
                 elapsed,
             )?;
-            events.push(TraceEvent {
+            events.push(SimTraceEvent {
                 kind: "transition".to_string(),
                 subject_id: Some(subject.subject_id.clone()),
                 transition_id: Some(transition.id.clone()),
@@ -914,7 +919,7 @@ fn fire_immediate_transitions(
                 .is_some()
             });
         if limit_reached_with_pending_transition {
-            events.push(TraceEvent {
+            events.push(SimTraceEvent {
                 kind: "change.loop.limit".to_string(),
                 subject_id: None,
                 transition_id: None,
@@ -939,7 +944,7 @@ fn deliver_pending_signals(
     elapsed: &mut BTreeMap<(String, String), f64>,
     step: &mut usize,
     max_steps: usize,
-    events: &mut Vec<TraceEvent>,
+    events: &mut Vec<SimTraceEvent>,
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     let signal_count = pending_signals.len();
@@ -985,7 +990,7 @@ fn deliver_pending_signals(
                 history,
                 elapsed,
             )?;
-            events.push(TraceEvent {
+            events.push(SimTraceEvent {
                 kind: "transition".to_string(),
                 subject_id: Some(subject.subject_id.clone()),
                 transition_id: Some(transition.id.clone()),
@@ -1154,7 +1159,7 @@ fn fire_after_transitions(
     elapsed: &mut BTreeMap<(String, String), f64>,
     step: &mut usize,
     max_steps: usize,
-    events: &mut Vec<TraceEvent>,
+    events: &mut Vec<SimTraceEvent>,
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     for subject in subjects.iter_mut() {
@@ -1215,7 +1220,7 @@ fn fire_after_transitions(
             history,
             elapsed,
         )?;
-        events.push(TraceEvent {
+        events.push(SimTraceEvent {
             kind: "transition".to_string(),
             subject_id: Some(subject.subject_id.clone()),
             transition_id: Some(transition.id.clone()),
@@ -1240,7 +1245,7 @@ fn integrate_active_state_behaviors(
     elapsed: &mut BTreeMap<(String, String), f64>,
     duration: f64,
     sample_interval_s: f64,
-    timeline: &mut Vec<TraceEntry>,
+    timeline: &mut Vec<SimTraceEntry>,
     start_t: f64,
 ) -> Result<(), CoreSimulationError> {
     if duration <= 0.0 {
@@ -2652,7 +2657,7 @@ mod tests {
 
     #[test]
     fn trace_values_serialize_as_typed_entries_and_read_legacy_maps() {
-        let entry = TraceEntry {
+        let entry = SimTraceEntry {
             t: 0.0,
             states: BTreeMap::new(),
             values: BTreeMap::from([(
@@ -2674,7 +2679,7 @@ mod tests {
         );
         assert_eq!(values[0].get("value").and_then(Value::as_f64), Some(22.0));
 
-        let decoded: TraceEntry = serde_json::from_value(encoded).unwrap();
+        let decoded: SimTraceEntry = serde_json::from_value(encoded).unwrap();
         assert_eq!(
             decoded
                 .values
@@ -2682,7 +2687,7 @@ mod tests {
             Some(&Value::from(22.0))
         );
 
-        let legacy: TraceEntry = serde_json::from_value(serde_json::json!({
+        let legacy: SimTraceEntry = serde_json::from_value(serde_json::json!({
             "t": 0.0,
             "states": {},
             "values": { "bed|temperature": 23.0 },
@@ -2745,7 +2750,7 @@ mod tests {
         .unwrap();
 
         assert!(trace.channels.iter().any(|channel| {
-            channel.id == "bed.temperature" && channel.source == TraceChannelSource::RateEffect
+            channel.id == "bed.temperature" && channel.source == SimTraceChannelSource::RateEffect
         }));
     }
 
