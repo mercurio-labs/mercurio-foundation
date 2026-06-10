@@ -1,8 +1,9 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
 
 use crate::graph::{Edge, Graph};
@@ -44,19 +45,114 @@ pub struct CapabilityDescriptor {
     pub maturity: CapabilityMaturity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityKind {
-    RequirementAnalysis,
-    Traceability,
-    ImpactAnalysis,
-    DynamicBehavior,
-    ConstraintAnalysis,
-    ContractAnalysis,
-    MutationPreview,
-    SemanticComparison,
-    DecisionAssessment,
-    Custom,
+pub const CAPABILITY_KIND_REQUIREMENT_ANALYSIS: &str =
+    "mercurio.capability.kind/requirement-analysis";
+pub const CAPABILITY_KIND_TRACEABILITY: &str = "mercurio.capability.kind/traceability";
+pub const CAPABILITY_KIND_IMPACT_ANALYSIS: &str = "mercurio.capability.kind/impact-analysis";
+pub const CAPABILITY_KIND_DYNAMIC_BEHAVIOR: &str = "mercurio.capability.kind/dynamic-behavior";
+pub const CAPABILITY_KIND_CONSTRAINT_ANALYSIS: &str =
+    "mercurio.capability.kind/constraint-analysis";
+pub const CAPABILITY_KIND_CONTRACT_ANALYSIS: &str = "mercurio.capability.kind/contract-analysis";
+pub const CAPABILITY_KIND_MUTATION_PREVIEW: &str = "mercurio.capability.kind/mutation-preview";
+pub const CAPABILITY_KIND_SEMANTIC_COMPARISON: &str =
+    "mercurio.capability.kind/semantic-comparison";
+pub const CAPABILITY_KIND_DECISION_ASSESSMENT: &str =
+    "mercurio.capability.kind/decision-assessment";
+pub const CAPABILITY_KIND_CUSTOM: &str = "mercurio.capability.kind/custom";
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CapabilityKind(pub Cow<'static, str>);
+
+impl CapabilityKind {
+    pub fn new(kind: impl Into<String>) -> Self {
+        let kind = kind.into();
+        match canonical_capability_kind(&kind) {
+            Some(canonical) => Self(Cow::Borrowed(canonical)),
+            None => Self(Cow::Owned(kind)),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+
+    #[allow(non_upper_case_globals)]
+    pub const RequirementAnalysis: Self = Self(Cow::Borrowed(CAPABILITY_KIND_REQUIREMENT_ANALYSIS));
+    #[allow(non_upper_case_globals)]
+    pub const Traceability: Self = Self(Cow::Borrowed(CAPABILITY_KIND_TRACEABILITY));
+    #[allow(non_upper_case_globals)]
+    pub const ImpactAnalysis: Self = Self(Cow::Borrowed(CAPABILITY_KIND_IMPACT_ANALYSIS));
+    #[allow(non_upper_case_globals)]
+    pub const DynamicBehavior: Self = Self(Cow::Borrowed(CAPABILITY_KIND_DYNAMIC_BEHAVIOR));
+    #[allow(non_upper_case_globals)]
+    pub const ConstraintAnalysis: Self = Self(Cow::Borrowed(CAPABILITY_KIND_CONSTRAINT_ANALYSIS));
+    #[allow(non_upper_case_globals)]
+    pub const ContractAnalysis: Self = Self(Cow::Borrowed(CAPABILITY_KIND_CONTRACT_ANALYSIS));
+    #[allow(non_upper_case_globals)]
+    pub const MutationPreview: Self = Self(Cow::Borrowed(CAPABILITY_KIND_MUTATION_PREVIEW));
+    #[allow(non_upper_case_globals)]
+    pub const SemanticComparison: Self = Self(Cow::Borrowed(CAPABILITY_KIND_SEMANTIC_COMPARISON));
+    #[allow(non_upper_case_globals)]
+    pub const DecisionAssessment: Self = Self(Cow::Borrowed(CAPABILITY_KIND_DECISION_ASSESSMENT));
+    #[allow(non_upper_case_globals)]
+    pub const Custom: Self = Self(Cow::Borrowed(CAPABILITY_KIND_CUSTOM));
+}
+
+impl Serialize for CapabilityKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.0.as_ref())
+    }
+}
+
+impl<'de> Deserialize<'de> for CapabilityKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(Self::new(raw))
+    }
+}
+
+impl Default for CapabilityKind {
+    fn default() -> Self {
+        Self::Custom
+    }
+}
+
+fn canonical_capability_kind(raw: &str) -> Option<&'static str> {
+    match raw {
+        "requirement_analysis" | CAPABILITY_KIND_REQUIREMENT_ANALYSIS => {
+            Some(CAPABILITY_KIND_REQUIREMENT_ANALYSIS)
+        }
+        "traceability" | CAPABILITY_KIND_TRACEABILITY => Some(CAPABILITY_KIND_TRACEABILITY),
+        "impact_analysis" | CAPABILITY_KIND_IMPACT_ANALYSIS => {
+            Some(CAPABILITY_KIND_IMPACT_ANALYSIS)
+        }
+        "dynamic_behavior" | CAPABILITY_KIND_DYNAMIC_BEHAVIOR => {
+            Some(CAPABILITY_KIND_DYNAMIC_BEHAVIOR)
+        }
+        "constraint_analysis" | CAPABILITY_KIND_CONSTRAINT_ANALYSIS => {
+            Some(CAPABILITY_KIND_CONSTRAINT_ANALYSIS)
+        }
+        "contract_analysis" | CAPABILITY_KIND_CONTRACT_ANALYSIS => {
+            Some(CAPABILITY_KIND_CONTRACT_ANALYSIS)
+        }
+        "mutation_preview" | CAPABILITY_KIND_MUTATION_PREVIEW => {
+            Some(CAPABILITY_KIND_MUTATION_PREVIEW)
+        }
+        "semantic_comparison" | CAPABILITY_KIND_SEMANTIC_COMPARISON => {
+            Some(CAPABILITY_KIND_SEMANTIC_COMPARISON)
+        }
+        "decision_assessment" | CAPABILITY_KIND_DECISION_ASSESSMENT => {
+            Some(CAPABILITY_KIND_DECISION_ASSESSMENT)
+        }
+        "custom" | CAPABILITY_KIND_CUSTOM => Some(CAPABILITY_KIND_CUSTOM),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1949,6 +2045,33 @@ fn value_digest(value: &Value) -> String {
     crate::stable_digest([("semantic-artifact".as_bytes(), bytes.as_slice())])
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchConfidence {
+    High,
+    Medium,
+    Low,
+}
+
+/// Output of a mutate-effect capability run.
+/// Apply by passing `proposal` to CoreMutationFeasibilityService::apply_checked_plan()
+/// then write_back_mutation() in mercurio-foundation/src/authoring.rs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityModelPatch {
+    pub capability_id: String,
+    pub run_id: String,
+    pub summary: String,
+    pub rationale: String,
+    pub confidence: PatchConfidence,
+    /// Serialized MutationProposal — kept as Value to avoid dependency cycles.
+    pub proposal: serde_json::Value,
+    /// Pre-computed SemanticDiff for UI review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resulting_diff: Option<serde_json::Value>,
+    #[serde(default)]
+    pub reversible: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -2384,6 +2507,31 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("Unblock `sysml.constraint.analysis`"))
         );
+    }
+
+    #[test]
+    fn capability_kind_accepts_legacy_and_open_ids() {
+        let legacy: CapabilityDescriptor = serde_json::from_str(
+            r#"{
+                "id": "foundation.impact.graph",
+                "name": "Impact",
+                "kind": "impact_analysis",
+                "deterministic": true,
+                "cost_class": "cheap",
+                "maturity": "prototype"
+            }"#,
+        )
+        .expect("legacy kind should deserialize");
+        assert_eq!(legacy.kind, CapabilityKind::ImpactAnalysis);
+
+        let custom = CapabilityKind::new("org.example.capability.kind/thermal-analysis");
+        assert_eq!(
+            custom.as_str(),
+            "org.example.capability.kind/thermal-analysis"
+        );
+
+        let encoded = serde_json::to_string(&legacy).expect("descriptor serializes");
+        assert!(encoded.contains(CAPABILITY_KIND_IMPACT_ANALYSIS));
     }
 
     #[test]

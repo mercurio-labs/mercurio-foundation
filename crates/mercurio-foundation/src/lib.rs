@@ -151,13 +151,14 @@ pub use authoring::{
 };
 pub use capability::{
     AnalysisScope, CapabilityCostClass, CapabilityDescriptor, CapabilityError, CapabilityKind,
-    CapabilityMaturity, CapabilityReadinessReport, CapabilityReadinessStatus, CapabilityRegistry,
-    CapabilityRunReport, CapabilityRunRequest, CapabilityRunStatus, CapabilityTarget,
-    DecisionAssessment, DecisionContext, EvidenceEdge, EvidenceGraph, EvidenceNode,
-    EvidenceNodeKind, EvidenceRelation, GenericImpactCapability, GenericModelInspectionCapability,
-    InsightConfidence, InsightKind, InsightPolarity, InsightScope, InsightSeverity,
-    SemanticArtifact, SemanticCapability, SemanticDiagnostic, SemanticDiagnosticSeverity,
-    SemanticElementRef, SemanticInsight, SemanticWorkspaceSnapshot, assess_decision_context,
+    CapabilityMaturity, CapabilityModelPatch, CapabilityReadinessReport, CapabilityReadinessStatus,
+    CapabilityRegistry, CapabilityRunReport, CapabilityRunRequest, CapabilityRunStatus,
+    CapabilityTarget, DecisionAssessment, DecisionContext, EvidenceEdge, EvidenceGraph,
+    EvidenceNode, EvidenceNodeKind, EvidenceRelation, GenericImpactCapability,
+    GenericModelInspectionCapability, InsightConfidence, InsightKind, InsightPolarity, InsightScope,
+    InsightSeverity, PatchConfidence, SemanticArtifact, SemanticCapability, SemanticDiagnostic,
+    SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight, SemanticWorkspaceSnapshot,
+    assess_decision_context,
 };
 pub use cognitive::{
     CognitiveCandidate, CognitiveCitation, CognitiveConfidence, CognitiveContext,

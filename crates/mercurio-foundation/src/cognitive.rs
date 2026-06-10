@@ -12,7 +12,7 @@ use crate::capability::{
     SemanticWorkspaceSnapshot,
 };
 use crate::datalog::{Atom, Term};
-use crate::goal::{SemanticGoalSpec, default_model_quality_profile};
+use crate::goal::{GoalPolicy, SemanticGoalCheck, SemanticGoalSpec};
 use crate::graph::{Element, Graph, GraphError};
 use crate::identity::{SourceSpanRef, stable_digest};
 use crate::ir::KirDocument;
@@ -106,8 +106,50 @@ pub struct DesignIntent {
 }
 
 pub fn design_intent_to_semantic_goal_spec(intent: &DesignIntent) -> SemanticGoalSpec {
-    let _ = intent;
-    default_model_quality_profile().goal
+    let mut checks = intent
+        .goals
+        .iter()
+        .map(|statement| SemanticGoalCheck::NamedElementExists {
+            name: intent_statement_element_name(statement),
+            kind: None,
+        })
+        .collect::<Vec<_>>();
+
+    if checks.is_empty() {
+        checks.push(SemanticGoalCheck::NamedElementExists {
+            name: intent_statement_element_name(&intent.summary),
+            kind: None,
+        });
+    }
+
+    SemanticGoalSpec {
+        policy: GoalPolicy::Any,
+        checks,
+    }
+}
+
+fn intent_statement_element_name(statement: &str) -> String {
+    let name = statement
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut word = first.to_ascii_uppercase().to_string();
+                    word.push_str(chars.as_str());
+                    word
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<String>();
+
+    if name.is_empty() {
+        "DesignIntent".to_string()
+    } else {
+        name
+    }
 }
 
 pub fn design_intent_to_assessment_spec(intent: &DesignIntent) -> AssessmentSpec {
