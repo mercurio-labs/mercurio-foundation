@@ -9,9 +9,8 @@ use crate::authoring::{
     Mutation, QualifiedName, SemanticEdit,
 };
 use crate::mutation::{
-    ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, RelationshipChange,
-    SemanticDiff, SemanticDiffElementRef, SemanticMutation, WorkspaceRevision, diff_for_operation,
-    merge_diff,
+    ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, SemanticDiff,
+    SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
 };
 pub use crate::semantic_profile::{
     CapabilityAnswer, ConservativeSemanticCapabilityOracle, SemanticCapabilityOracle,
@@ -918,15 +917,6 @@ fn proposal_id(proposal: &MutationProposal) -> String {
         format!("{operation:?}").hash(&mut hasher);
     }
     format!("{:016x}", hasher.finish())
-}
-
-#[allow(dead_code)]
-fn _relationship_change(kind: &str, source: ElementRef, target: ElementRef) -> RelationshipChange {
-    RelationshipChange {
-        kind: kind.to_string(),
-        source: SemanticDiffElementRef::unresolved(source.qualified_name),
-        target: SemanticDiffElementRef::unresolved(target.qualified_name),
-    }
 }
 
 #[cfg(test)]

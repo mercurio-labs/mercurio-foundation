@@ -47,7 +47,7 @@ pub mod expression {
 #[doc(hidden)]
 pub mod feasibility;
 #[doc(hidden)]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 pub mod frontend;
 #[allow(deprecated)]
 #[doc(hidden)]
@@ -67,7 +67,6 @@ pub mod language;
 #[doc(hidden)]
 pub mod library;
 #[doc(hidden)]
-#[allow(dead_code)]
 pub mod logging;
 #[doc(hidden)]
 pub mod metadata {
@@ -90,7 +89,6 @@ pub mod metamodel {
 #[doc(hidden)]
 pub mod mpack;
 #[doc(hidden)]
-#[allow(dead_code)]
 pub mod mutation;
 #[doc(hidden)]
 pub mod outline;
@@ -104,7 +102,6 @@ pub mod plugin_registry;
 pub mod proposal;
 #[doc(hidden)]
 pub mod python_codegen;
-#[allow(deprecated)]
 #[doc(hidden)]
 pub mod query;
 #[doc(hidden)]
@@ -155,10 +152,10 @@ pub use capability::{
     CapabilityRegistry, CapabilityRunReport, CapabilityRunRequest, CapabilityRunStatus,
     CapabilityTarget, DecisionAssessment, DecisionContext, EvidenceEdge, EvidenceGraph,
     EvidenceNode, EvidenceNodeKind, EvidenceRelation, GenericImpactCapability,
-    GenericModelInspectionCapability, InsightConfidence, InsightKind, InsightPolarity, InsightScope,
-    InsightSeverity, PatchConfidence, SemanticArtifact, SemanticCapability, SemanticDiagnostic,
-    SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight, SemanticWorkspaceSnapshot,
-    assess_decision_context,
+    GenericModelInspectionCapability, InsightConfidence, InsightKind, InsightPolarity,
+    InsightScope, InsightSeverity, PatchConfidence, SemanticArtifact, SemanticCapability,
+    SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight,
+    SemanticWorkspaceSnapshot, assess_decision_context,
 };
 pub use cognitive::{
     CognitiveCandidate, CognitiveCitation, CognitiveConfidence, CognitiveContext,
@@ -285,11 +282,9 @@ pub use proposal::{
     SemanticImpactStatus, SemanticImpactSummary,
 };
 pub use python_codegen::{PythonWrapperGeneration, generate_python_wrappers};
-#[allow(deprecated)]
 pub use query::{
     FilterExpr, OrderBy, Projection, Query, QueryEngine, QueryError, QueryResultSet, QuerySource,
-    RequirementTrace, SortDirection, TermPattern, TriplePattern, elements_with_metadata,
-    parse_query, requirement_traces,
+    SortDirection, TermPattern, TriplePattern, elements_with_metadata, parse_query,
 };
 pub use runtime::{
     ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
