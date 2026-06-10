@@ -76,14 +76,14 @@ Define:
 
 - `id`
 - `kind`
-- `layer`
+- derived semantic layer (not persisted as an element field)
 - `properties`
 - `properties.metadata`
 - source provenance fields
 
 Exit condition:
 
-- Every KIR element has stable identity, kind, layer, and validated provenance shape when provenance is present.
+- Every KIR element has stable identity, kind, derivable semantic layer, and validated provenance shape when provenance is present.
 
 ### Milestone 3: Field Contract
 

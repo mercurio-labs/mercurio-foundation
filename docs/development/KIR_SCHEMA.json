@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mercurio.local/schemas/kir-0.2.json",
+  "$id": "https://mercurio.local/schemas/kir-0.3.json",
   "title": "Mercurio KIR Document",
   "type": "object",
   "required": ["metadata", "elements"],
@@ -11,7 +11,7 @@
       "required": ["kir_schema_version"],
       "properties": {
         "kir_schema_version": {
-          "const": "0.2"
+          "const": "0.3"
         }
       },
       "additionalProperties": true
@@ -37,11 +37,6 @@
         "kind": {
           "type": "string",
           "minLength": 1
-        },
-        "layer": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 2
         },
         "properties": {
           "type": "object",

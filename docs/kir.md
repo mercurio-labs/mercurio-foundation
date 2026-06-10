@@ -11,13 +11,12 @@ A KIR document has metadata plus elements:
 ```json
 {
   "metadata": {
-    "kir_schema_version": "0.2"
+    "kir_schema_version": "0.3"
   },
   "elements": [
     {
       "id": "pkg.Demo",
       "kind": "model.Package",
-      "layer": 2,
       "properties": {
         "qualified_name": "Demo",
         "declared_name": "Demo",
@@ -32,7 +31,7 @@ A KIR document has metadata plus elements:
 
 - `id`: stable element identity inside the document.
 - `kind`: semantic kind supplied by a metamodel or profile.
-- `layer`: coarse semantic layer used by tools and projections.
+- Semantic layer is derived by readers from element kind and metadata hints; it is not persisted as a KIR element field.
 - `properties`: scalar values, structured values, metadata, and references.
 
 ## Required Invariants

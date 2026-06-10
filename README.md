@@ -26,7 +26,7 @@ See [Foundation Philosophy](docs/philosophy.md) for the longer version, includin
 ## Core Terms
 
 - **KIR**: the kernel interchange representation. KIR is the validated JSON model format consumed by graph, runtime, query, package, and adapter APIs.
-- **Element**: a KIR node with an `id`, `kind`, `layer`, and `properties`.
+- **Element**: a KIR node with an `id`, `kind`, and `properties`; semantic layer is derived by readers.
 - **Graph**: a relationship view derived from KIR reference properties.
 - **Runtime**: deterministic evaluation over a graph, derived indexes, expression IR, and rulepacks.
 - **Language service**: a registered compiler boundary that turns source text into KIR.
@@ -70,7 +70,6 @@ let document = KirDocument {
     elements: vec![KirElement {
         id: "pkg.Demo".to_string(),
         kind: "model.Package".to_string(),
-        layer: 2,
         properties: BTreeMap::from([
             ("qualified_name".to_string(), json!("Demo")),
             ("declared_name".to_string(), json!("Demo")),

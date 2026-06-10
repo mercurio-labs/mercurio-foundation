@@ -7,11 +7,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-pub const KIR_SCHEMA_VERSION: &str = "0.2";
+pub const KIR_SCHEMA_VERSION: &str = "0.3";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
+pub const SUPPORTED_KIR_SCHEMA_VERSIONS: &[&str] = &["0.2", KIR_SCHEMA_VERSION];
 pub const REPRESENTATIVE_KIR_JSON: &str =
     include_str!("../../../resources/foundation/representative.kir.json");
 
@@ -22,14 +25,142 @@ pub struct KirDocument {
     pub elements: Vec<KirElement>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KirElement {
     pub id: String,
     pub kind: String,
-    #[serde(default)]
     pub layer: u8,
-    #[serde(default)]
     pub properties: BTreeMap<String, Value>,
+}
+
+impl Serialize for KirElement {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut element = serializer.serialize_struct("KirElement", 3)?;
+        element.serialize_field("id", &self.id)?;
+        element.serialize_field("kind", &self.kind)?;
+        if !self.properties.is_empty() {
+            element.serialize_field("properties", &self.properties)?;
+        }
+        element.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for KirElement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        enum Field {
+            Id,
+            Kind,
+            Layer,
+            Properties,
+        }
+
+        impl<'de> Deserialize<'de> for Field {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                struct FieldVisitor;
+
+                impl Visitor<'_> for FieldVisitor {
+                    type Value = Field;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        formatter.write_str("`id`, `kind`, `layer`, or `properties`")
+                    }
+
+                    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+                    where
+                        E: de::Error,
+                    {
+                        match value {
+                            "id" => Ok(Field::Id),
+                            "kind" => Ok(Field::Kind),
+                            "layer" => Ok(Field::Layer),
+                            "properties" => Ok(Field::Properties),
+                            other => Err(de::Error::unknown_field(
+                                other,
+                                &["id", "kind", "layer", "properties"],
+                            )),
+                        }
+                    }
+                }
+
+                deserializer.deserialize_identifier(FieldVisitor)
+            }
+        }
+
+        struct ElementVisitor;
+
+        impl<'de> Visitor<'de> for ElementVisitor {
+            type Value = KirElement;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a KIR element")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut id = None;
+                let mut kind = None;
+                let mut layer = None;
+                let mut properties: Option<BTreeMap<String, Value>> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Id => {
+                            if id.is_some() {
+                                return Err(de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        Field::Kind => {
+                            if kind.is_some() {
+                                return Err(de::Error::duplicate_field("kind"));
+                            }
+                            kind = Some(map.next_value()?);
+                        }
+                        Field::Layer => {
+                            if layer.is_some() {
+                                return Err(de::Error::duplicate_field("layer"));
+                            }
+                            layer = Some(map.next_value()?);
+                        }
+                        Field::Properties => {
+                            if properties.is_some() {
+                                return Err(de::Error::duplicate_field("properties"));
+                            }
+                            properties = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let id: String = id.ok_or_else(|| de::Error::missing_field("id"))?;
+                let kind: String = kind.ok_or_else(|| de::Error::missing_field("kind"))?;
+                let properties = properties.unwrap_or_default();
+                let layer = layer.unwrap_or_else(|| inferred_layer(&id, &kind, &properties));
+                Ok(KirElement {
+                    id,
+                    kind,
+                    layer,
+                    properties,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "KirElement",
+            &["id", "kind", "layer", "properties"],
+            ElementVisitor,
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -380,11 +511,12 @@ impl KirDocument {
 
         if options.require_schema_version {
             match self.metadata.get(KIR_SCHEMA_VERSION_METADATA_KEY) {
-                Some(Value::String(version)) if version == KIR_SCHEMA_VERSION => {}
+                Some(Value::String(version)) if SUPPORTED_KIR_SCHEMA_VERSIONS.contains(&version.as_str()) => {}
                 Some(Value::String(version)) => diagnostics.push(KirValidationDiagnostic {
                     code: "kir.document.schema_version.unsupported",
                     message: format!(
-                        "KIR document schema version `{version}` is not supported; expected `{KIR_SCHEMA_VERSION}`"
+                        "KIR document schema version `{version}` is not supported; expected one of {}",
+                        SUPPORTED_KIR_SCHEMA_VERSIONS.join(", ")
                     ),
                     element_id: None,
                 }),
@@ -817,6 +949,51 @@ fn qualified_name_from_element_id(id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub fn inferred_layer(id: &str, kind: &str, properties: &BTreeMap<String, Value>) -> u8 {
+    if properties
+        .get("is_library_element")
+        .is_some_and(|value| value.as_bool() == Some(true))
+    {
+        return 1;
+    }
+    if let Some(Value::String(group)) = properties.get("pilot_library_group") {
+        return match group.as_str() {
+            "Kernel Libraries" | "KerML Kernel" | "Kernel" => 0,
+            _ => 1,
+        };
+    }
+    if let Some(Value::String(layer)) = properties.get("metamodel_layer") {
+        return match layer.as_str() {
+            "kernel" | "core" | "kerml" => 0,
+            "systems" | "domain" | "stdlib" | "library" => 1,
+            "model" | "user" => 2,
+            _ => 2,
+        };
+    }
+
+    if kind.starts_with("Core::")
+        || kind.starts_with("KerML::Kernel::")
+        || kind.starts_with("Kernel::")
+    {
+        return 0;
+    }
+    if kind.starts_with("SysML::Libraries::")
+        || kind.starts_with("Model::Libraries::")
+        || kind.starts_with("Library::")
+    {
+        return 1;
+    }
+    if id.starts_with("Core::")
+        || id.starts_with("KerML::")
+        || id.starts_with("ScalarValues::")
+        || id.starts_with("Base::")
+    {
+        return 1;
+    }
+
+    2
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
@@ -882,6 +1059,50 @@ mod tests {
         assert!(
             matches!(error, KirError::Validation(diagnostics) if diagnostics[0].code == "kir.element.layer.unsupported")
         );
+    }
+
+    #[test]
+    fn kir_element_serialization_omits_layer() {
+        let element = KirElement {
+            id: "type.Demo.Vehicle".to_string(),
+            kind: "PartDefinition".to_string(),
+            layer: 2,
+            properties: Default::default(),
+        };
+
+        let encoded = serde_json::to_value(element).unwrap();
+
+        assert!(encoded.get("layer").is_none());
+        assert_eq!(encoded["kind"], "PartDefinition");
+    }
+
+    #[test]
+    fn kir_element_deserialization_accepts_legacy_layer() {
+        let element: KirElement = serde_json::from_value(serde_json::json!({
+            "id": "type.Demo.Vehicle",
+            "kind": "PartDefinition",
+            "layer": 2
+        }))
+        .unwrap();
+
+        assert_eq!(element.layer, 2);
+    }
+
+    #[test]
+    fn kir_element_deserialization_infers_layer_when_missing() {
+        let kernel: KirElement = serde_json::from_value(serde_json::json!({
+            "id": "type.Kernel.Element",
+            "kind": "Core::Core::Type"
+        }))
+        .unwrap();
+        let model: KirElement = serde_json::from_value(serde_json::json!({
+            "id": "type.Demo.Vehicle",
+            "kind": "PartDefinition"
+        }))
+        .unwrap();
+
+        assert_eq!(kernel.layer, 0);
+        assert_eq!(model.layer, 2);
     }
 
     #[test]
@@ -1085,7 +1306,11 @@ mod tests {
     fn representative_example_is_valid_persisted_kir() {
         let document = KirDocument::representative_example().unwrap();
 
-        assert_eq!(document.schema_version(), Some(super::KIR_SCHEMA_VERSION));
+        assert!(
+            document
+                .schema_version()
+                .is_some_and(|version| super::SUPPORTED_KIR_SCHEMA_VERSIONS.contains(&version))
+        );
         assert!(
             document
                 .elements
