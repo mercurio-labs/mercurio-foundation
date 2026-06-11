@@ -281,7 +281,9 @@ pub use proposal::{
     Proposal, ProposalStatus, PullRequestBinding, PullRequestState, SemanticImpact,
     SemanticImpactStatus, SemanticImpactSummary,
 };
-pub use python_codegen::{PythonWrapperGeneration, generate_python_wrappers};
+pub use python_codegen::{
+    PythonWrapperGeneration, generate_python_wrappers, generate_rust_stdlib_consts,
+};
 pub use query::{
     FilterExpr, OrderBy, Projection, Query, QueryEngine, QueryError, QueryResultSet, QuerySource,
     SortDirection, TermPattern, TriplePattern, elements_with_metadata, parse_query,

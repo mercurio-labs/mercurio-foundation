@@ -55,6 +55,62 @@ pub fn generate_python_wrappers(
     }
 }
 
+pub fn generate_rust_stdlib_consts(document: &KirDocument, metamodel_id: &str) -> String {
+    let mut output = format!("// AUTO-GENERATED from {metamodel_id} - do not edit\n\n");
+    output.push_str(&rust_catalog_module(document, "isq", "ISQ"));
+    output.push('\n');
+    output.push_str(&rust_catalog_module(document, "si", "SI"));
+    output.push('\n');
+    output.push_str(&rust_catalog_module(
+        document,
+        "scalar_values",
+        "ScalarValues",
+    ));
+    output
+}
+
+fn rust_catalog_module(document: &KirDocument, module_name: &str, prefix: &str) -> String {
+    let mut entries = BTreeMap::new();
+    for element in &document.elements {
+        let qualified_name = stdlib_qualified_name(element);
+        let Some(qualified_name) = qualified_name.as_deref() else {
+            continue;
+        };
+        if qualified_name == prefix || !qualified_name.starts_with(&format!("{prefix}::")) {
+            continue;
+        }
+        let Some(leaf) = qualified_name.rsplit("::").next() else {
+            continue;
+        };
+        entries.insert(rust_identifier(leaf), qualified_name.to_string());
+    }
+
+    let mut output = format!("pub mod {module_name} {{\n");
+    output.push_str("    use crate::builder::StdlibRef;\n");
+    output.push_str("    use mercurio_core::QualifiedName;\n\n");
+    if entries.is_empty() {
+        output.push_str("    // No entries found in bundled stdlib.\n");
+    }
+    for (name, qualified_name) in entries {
+        output.push_str(&format!(
+            "    pub fn {name}() -> StdlibRef {{ StdlibRef(QualifiedName::parse({qualified_name:?})) }}\n"
+        ));
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn stdlib_qualified_name(element: &KirElement) -> Option<String> {
+    if element.id.contains("::") {
+        return Some(element.id.clone());
+    }
+    element
+        .properties
+        .get("qualified_name")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
 fn init_py(module_name: &str, profile: &LanguageProfile) -> String {
     format!(
         r#""""Generated Mercurio wrappers for {profile_id}."""
@@ -859,6 +915,46 @@ fn python_identifier(value: &str) -> String {
         result.push('_');
     }
     result
+}
+
+fn rust_identifier(value: &str) -> String {
+    let mut result = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        let valid = ch == '_' || ch.is_ascii_alphanumeric();
+        if index == 0 && ch.is_ascii_digit() {
+            result.push('_');
+        }
+        result.push(if valid { ch.to_ascii_lowercase() } else { '_' });
+    }
+    while result.contains("__") {
+        result = result.replace("__", "_");
+    }
+    result = result.trim_matches('_').to_string();
+    if result.is_empty() {
+        result = "element".to_string();
+    }
+    if result
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_digit())
+    {
+        result.insert(0, '_');
+    }
+    if rust_keywords().contains(result.as_str()) {
+        result.push('_');
+    }
+    result
+}
+
+fn rust_keywords() -> BTreeSet<&'static str> {
+    [
+        "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
+        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+        "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
+        "use", "where", "while", "async", "await", "dyn",
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn python_keywords() -> BTreeSet<&'static str> {

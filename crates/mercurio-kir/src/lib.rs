@@ -436,6 +436,12 @@ impl KirDocument {
         Ok(document.normalized_for_persistence())
     }
 
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, KirError> {
+        let input = std::str::from_utf8(bytes)
+            .map_err(|_| KirError::Model("KIR bytes are not valid UTF-8".to_string()))?;
+        Self::from_str(input)
+    }
+
     pub fn from_path(path: &Path) -> Result<Self, KirError> {
         let input = std::fs::read_to_string(path)?;
         Self::from_str(&input)
