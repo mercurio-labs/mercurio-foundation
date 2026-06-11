@@ -6,6 +6,10 @@
     "mercurio-model",
     "mercurio-runtime"
   ],
+  "allowed_support_crates": [
+    "mercurio-simulation-core",
+    "mercurio-views"
+  ],
   "known_migration_crates": [],
   "forbidden_dependencies": {
     "mercurio-foundation": [
@@ -71,6 +75,31 @@
       "mercurio-reasoner-host",
       "mercurio-reasoning-services",
       "mercurio-views",
+      "mercurio-wasm"
+    ],
+    "mercurio-simulation-core": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
+      "mercurio-views",
+      "mercurio-wasm"
+    ],
+    "mercurio-views": [
+      "mercurio-adapter",
+      "mercurio-ai",
+      "mercurio-console-api",
+      "mercurio-plugin-api",
+      "mercurio-product",
+      "mercurio-python",
+      "mercurio-reasoner-api",
+      "mercurio-reasoner-host",
+      "mercurio-reasoning-services",
       "mercurio-wasm"
     ]
   },
