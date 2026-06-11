@@ -520,7 +520,7 @@ FMUs should execute math-heavy dynamic behavior. Mercurio should preserve semant
 
 The first simulation implementation is complete when:
 
-- `mercurio-core` exposes `simulate_scenario`
+- `mercurio-foundation` exposes `simulate_scenario`
 - a hand-authored KIR state-machine fixture runs deterministically
 - guard evaluation uses runtime `expression_ir`
 - simple emitted-event effects appear in trace output

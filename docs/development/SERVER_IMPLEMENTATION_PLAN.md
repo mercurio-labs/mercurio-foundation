@@ -4,7 +4,7 @@ Status: active implementation plan with product-repository boundary.
 
 Historical note: Mercurio Core is now library-only. The privileged HTTP/console API
 implementation lives in `mercurio-product/mercurio-console-api`. Keep reusable
-semantic and packaging logic in `mercurio-core`; keep deployment and HTTP route
+semantic and packaging logic in `mercurio-foundation`; keep deployment and HTTP route
 policy in the product repository.
 
 ## Goal
@@ -126,7 +126,7 @@ Responsibilities:
 
 - materialize or stream a source tree at a commit
 - apply optional proposal overlays
-- compile source files through `mercurio-core`
+- compile source files through `mercurio-foundation`
 - merge library and user KIR into consolidated KIR
 - return diagnostics with source spans
 - record provenance needed for cache keys
