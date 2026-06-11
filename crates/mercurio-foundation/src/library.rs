@@ -2261,7 +2261,7 @@ mod tests {
     #[test]
     fn model_directory_provider_compiles_core_sources() {
         let temp_root = std::env::temp_dir().join(format!(
-            "mercurio-core-directory-library-{}",
+            "mercurio-foundation-directory-library-{}",
             std::process::id()
         ));
         let source_dir = temp_root.join("library");
@@ -3103,8 +3103,10 @@ mod tests {
 
     #[test]
     fn kpar_file_provider_compiles_core_sources() {
-        let temp_root =
-            std::env::temp_dir().join(format!("mercurio-core-kpar-library-{}", std::process::id()));
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-foundation-kpar-library-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&temp_root).unwrap();
         let kpar_path = temp_root.join("kernel-lib.kpar");
         write_test_kpar(

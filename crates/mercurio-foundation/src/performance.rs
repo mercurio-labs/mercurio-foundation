@@ -259,7 +259,7 @@ pub fn run_core_scalability_metric(
     let performance = run_kir_performance(KirPerformanceConfig {
         model_sizes: config.model_sizes.clone(),
         edit_count: config.edit_count,
-        output_dir: std::env::temp_dir().join("mercurio-core-scalability"),
+        output_dir: std::env::temp_dir().join("mercurio-foundation-scalability"),
         keep_files: false,
         emf_command: None,
         max_runtime_size: Some(100_000),
