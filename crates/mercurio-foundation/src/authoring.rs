@@ -97,6 +97,7 @@ pub struct Definition {
     pub name: String,
     pub specializes: Vec<QualifiedName>,
     pub members: Vec<Declaration>,
+    pub raw_body: Option<String>,
     pub docs: Vec<String>,
     pub modifiers: Vec<String>,
 }
@@ -116,6 +117,7 @@ pub struct Usage {
     pub subsets: Vec<QualifiedName>,
     pub redefines: Vec<QualifiedName>,
     pub members: Vec<Declaration>,
+    pub raw_body: Option<String>,
     pub docs: Vec<String>,
     pub modifiers: Vec<String>,
 }
@@ -393,17 +395,18 @@ impl QualifiedName {
         let segments = value
             .split(['.', ':'])
             .filter(|segment| !segment.is_empty())
+            .map(unquote_sysml_name)
             .collect::<Vec<_>>();
         if value.contains("::") {
             return Self(
                 value
                     .split("::")
                     .filter(|segment| !segment.is_empty())
-                    .map(str::to_string)
+                    .map(unquote_sysml_name)
                     .collect(),
             );
         }
-        Self(segments.into_iter().map(str::to_string).collect())
+        Self(segments)
     }
 
     pub fn as_dot_string(&self) -> String {
@@ -566,29 +569,93 @@ impl AuthoringProject {
                         qualified_name: element,
                         new_name: value_as_string(&value, "declared_name")?,
                     }),
+                    "is_language_extension_keyword" => {
+                        let (modifier, enabled) = modifier_edit_for_attribute(
+                            &attribute,
+                            value_as_bool(&value, &attribute)?,
+                        );
+                        self.apply_modifier_flag_edit(&element, &attribute, modifier, enabled)
+                    }
+                    "language_extensions" => self.apply_language_extensions_edit(
+                        &element,
+                        value_as_string_list(&value, "language_extensions")?,
+                    ),
+                    "transition_source" | "transition_target" | "trigger" | "trigger_kind" => self
+                        .apply_usage_modifier_value_edit(
+                            &element,
+                            &attribute,
+                            &attribute,
+                            Some(value_as_string(&value, &attribute)?),
+                        ),
+                    "source_is_initial" => {
+                        let enabled = value_as_bool(&value, &attribute)?;
+                        self.apply_modifier_flag_edit(
+                            &element,
+                            &attribute,
+                            "source_is_initial",
+                            enabled,
+                        )
+                    }
+                    "declared_short_name" | "short_name" => self.apply_short_name_edit(
+                        &element,
+                        &attribute,
+                        Some(value_as_string(&value, &attribute)?),
+                    ),
+                    "raw_body" | "body" => self.apply_raw_body_edit(
+                        &element,
+                        &attribute,
+                        Some(value_as_string(&value, &attribute)?),
+                    ),
                     "specializes" => self.apply_mutation(Mutation::UpdateSpecializations {
                         qualified_name: element,
                         specializes: value_as_qname_list(&value, "specializes")?,
                     }),
+                    "annotated_elements" => self.apply_annotated_elements_edit(
+                        &element,
+                        value_as_qname_list(&value, "annotated_elements")?,
+                    ),
+                    "additional_types" | "subsets" | "redefines" => self
+                        .apply_usage_qname_list_edit(
+                            &element,
+                            &attribute,
+                            value_as_qname_list(&value, &attribute)?,
+                        ),
                     "type" => self.apply_mutation(Mutation::UpdateUsageType {
                         qualified_name: element,
                         ty: Some(value_as_qname(&value, "type")?),
                     }),
-                    "is_abstract" => self.apply_modifier_flag_edit(
-                        &element,
-                        &attribute,
-                        "abstract",
-                        value_as_bool(&value, "is_abstract")?,
-                    ),
-                    "is_end" => self.apply_modifier_flag_edit(
-                        &element,
-                        &attribute,
-                        "end",
-                        value_as_bool(&value, "is_end")?,
-                    ),
+                    "is_abstract" | "is_end" | "is_derived" | "is_individual" | "is_ordered"
+                    | "is_unique" | "is_variable" => {
+                        let (modifier, enabled) = modifier_edit_for_attribute(
+                            &attribute,
+                            value_as_bool(&value, &attribute)?,
+                        );
+                        self.apply_modifier_flag_edit(&element, &attribute, modifier, enabled)
+                    }
                     "direction" => {
                         self.apply_direction_edit(&element, Some(value_as_direction(&value)?))
                     }
+                    "multiplicity" => self.apply_usage_multiplicity_edit(
+                        &element,
+                        Some(value_as_multiplicity(&value)?),
+                    ),
+                    "reference_target" => {
+                        if value.is_array() {
+                            self.apply_usage_reference_targets_edit(
+                                &element,
+                                value_as_qname_list(&value, "reference_target")?,
+                            )
+                        } else {
+                            self.apply_usage_reference_target_edit(
+                                &element,
+                                Some(value_as_qname(&value, "reference_target")?),
+                            )
+                        }
+                    }
+                    "reference_targets" => self.apply_usage_reference_targets_edit(
+                        &element,
+                        value_as_qname_list(&value, "reference_targets")?,
+                    ),
                     "target" => {
                         self.apply_target_edit(&element, Some(value_as_qname(&value, "target")?))
                     }
@@ -619,15 +686,46 @@ impl AuthoringProject {
                         qualified_name: element,
                         specializes: Vec::new(),
                     }),
+                    "annotated_elements" => {
+                        self.apply_annotated_elements_edit(&element, Vec::new())
+                    }
+                    "is_language_extension_keyword" => {
+                        let (modifier, enabled) = modifier_clear_for_attribute(&attribute);
+                        self.apply_modifier_flag_edit(&element, &attribute, modifier, enabled)
+                    }
+                    "language_extensions" => {
+                        self.apply_language_extensions_edit(&element, Vec::new())
+                    }
+                    "transition_source" | "transition_target" | "trigger" | "trigger_kind" => {
+                        self.apply_usage_modifier_value_edit(&element, &attribute, &attribute, None)
+                    }
+                    "source_is_initial" => self.apply_modifier_flag_edit(
+                        &element,
+                        &attribute,
+                        "source_is_initial",
+                        false,
+                    ),
+                    "declared_short_name" | "short_name" => {
+                        self.apply_short_name_edit(&element, &attribute, None)
+                    }
+                    "raw_body" | "body" => self.apply_raw_body_edit(&element, &attribute, None),
+                    "additional_types" | "subsets" | "redefines" => {
+                        self.apply_usage_qname_list_edit(&element, &attribute, Vec::new())
+                    }
                     "type" => self.apply_mutation(Mutation::UpdateUsageType {
                         qualified_name: element,
                         ty: None,
                     }),
-                    "is_abstract" => {
-                        self.apply_modifier_flag_edit(&element, &attribute, "abstract", false)
+                    "is_abstract" | "is_end" | "is_derived" | "is_individual" | "is_ordered"
+                    | "is_unique" | "is_variable" => {
+                        let (modifier, enabled) = modifier_clear_for_attribute(&attribute);
+                        self.apply_modifier_flag_edit(&element, &attribute, modifier, enabled)
                     }
-                    "is_end" => self.apply_modifier_flag_edit(&element, &attribute, "end", false),
                     "direction" => self.apply_direction_edit(&element, None),
+                    "multiplicity" => self.apply_usage_multiplicity_edit(&element, None),
+                    "reference_target" | "reference_targets" => {
+                        self.apply_usage_reference_targets_edit(&element, Vec::new())
+                    }
                     "target" => self.apply_target_edit(&element, None),
                     "imports" => self.apply_imports_replace(&element, Vec::new()),
                     "doc" | "text" => self.apply_doc_edit(&element, DocEdit::ClearText),
@@ -657,6 +755,42 @@ impl AuthoringProject {
                             qualified_name: element,
                             specializes: values,
                         })
+                    }
+                    "annotated_elements" => {
+                        let mut values = self.qname_list_attribute_values(&element, &attribute)?;
+                        for item in value_as_qname_list(&value, "annotated_elements")? {
+                            if !values.contains(&item) {
+                                values.push(item);
+                            }
+                        }
+                        self.apply_annotated_elements_edit(&element, values)
+                    }
+                    "language_extensions" => {
+                        let mut values = self.string_list_attribute_values(&element, &attribute)?;
+                        for item in value_as_string_list(&value, "language_extensions")? {
+                            if !values.contains(&item) {
+                                values.push(item);
+                            }
+                        }
+                        self.apply_language_extensions_edit(&element, values)
+                    }
+                    "additional_types" | "subsets" | "redefines" => {
+                        let mut values = self.qname_list_attribute_values(&element, &attribute)?;
+                        for item in value_as_qname_list(&value, &attribute)? {
+                            if !values.contains(&item) {
+                                values.push(item);
+                            }
+                        }
+                        self.apply_usage_qname_list_edit(&element, &attribute, values)
+                    }
+                    "reference_target" | "reference_targets" => {
+                        let mut values = self.qname_list_attribute_values(&element, &attribute)?;
+                        for item in value_as_qname_list(&value, &attribute)? {
+                            if !values.contains(&item) {
+                                values.push(item);
+                            }
+                        }
+                        self.apply_usage_reference_targets_edit(&element, values)
                     }
                     "imports" => {
                         let mut values = self.qname_list_attribute_values(&element, &attribute)?;
@@ -689,6 +823,30 @@ impl AuthoringProject {
                             qualified_name: element,
                             specializes: values,
                         })
+                    }
+                    "annotated_elements" => {
+                        let mut values = self.qname_list_attribute_values(&element, &attribute)?;
+                        let removals = value_as_qname_list(&value, "annotated_elements")?;
+                        values.retain(|item| !removals.contains(item));
+                        self.apply_annotated_elements_edit(&element, values)
+                    }
+                    "language_extensions" => {
+                        let mut values = self.string_list_attribute_values(&element, &attribute)?;
+                        let removals = value_as_string_list(&value, "language_extensions")?;
+                        values.retain(|item| !removals.contains(item));
+                        self.apply_language_extensions_edit(&element, values)
+                    }
+                    "additional_types" | "subsets" | "redefines" => {
+                        let mut values = self.qname_list_attribute_values(&element, &attribute)?;
+                        let removals = value_as_qname_list(&value, &attribute)?;
+                        values.retain(|item| !removals.contains(item));
+                        self.apply_usage_qname_list_edit(&element, &attribute, values)
+                    }
+                    "reference_target" | "reference_targets" => {
+                        let mut values = self.qname_list_attribute_values(&element, &attribute)?;
+                        let removals = value_as_qname_list(&value, &attribute)?;
+                        values.retain(|item| !removals.contains(item));
+                        self.apply_usage_reference_targets_edit(&element, values)
                     }
                     "imports" => {
                         let mut values = self.qname_list_attribute_values(&element, &attribute)?;
@@ -801,11 +959,13 @@ impl AuthoringProject {
                 name,
                 specializes,
             } => {
+                let name = unquote_sysml_name(&name);
                 let definition = Declaration::Definition(Definition {
                     keyword,
                     name: name.clone(),
                     specializes,
                     members: Vec::new(),
+                    raw_body: None,
                     docs: Vec::new(),
                     modifiers: Vec::new(),
                 });
@@ -823,6 +983,12 @@ impl AuthoringProject {
                 ty,
                 specializes,
             } => {
+                let name = unquote_sysml_name(&name);
+                let modifiers = if keyword == "metadata" {
+                    vec!["metadata_usage".to_string()]
+                } else {
+                    Vec::new()
+                };
                 let usage = Declaration::Usage(Usage {
                     keyword,
                     name: name.clone(),
@@ -837,8 +1003,9 @@ impl AuthoringProject {
                     subsets: Vec::new(),
                     redefines: Vec::new(),
                     members: Vec::new(),
+                    raw_body: None,
                     docs: Vec::new(),
-                    modifiers: Vec::new(),
+                    modifiers,
                 });
                 let (file, owner_qname, instruction) =
                     self.push_into_container(container, usage)?;
@@ -886,6 +1053,7 @@ impl AuthoringProject {
                     subsets: Vec::new(),
                     redefines: Vec::new(),
                     members: Vec::new(),
+                    raw_body: None,
                     docs: Vec::new(),
                     modifiers: Vec::new(),
                 });
@@ -945,6 +1113,7 @@ impl AuthoringProject {
                 qualified_name,
                 new_name,
             } => {
+                let new_name = unquote_sysml_name(&new_name);
                 let located = self.locate_declaration(&qualified_name)?;
                 let old_qname = qualified_name.as_dot_string();
                 let new_qname = if let Some(parent) = &located.parent_qname {
@@ -1407,6 +1576,14 @@ impl AuthoringProject {
     ) -> Result<(), AuthoringError> {
         let attributes = self.semantic_attributes(element)?;
         let Some(row) = attributes.iter().find(|row| row.name == attribute) else {
+            if matches!(attribute, "reference_target" | "reference_targets")
+                && self
+                    .files
+                    .values()
+                    .any(|file| locate_usage_ref(&file.module, element).is_some())
+            {
+                return Ok(());
+            }
             return Err(AuthoringError::Unsupported(format!(
                 "attribute `{attribute}` is not supported on `{}`",
                 element.as_dot_string()
@@ -1442,6 +1619,28 @@ impl AuthoringProject {
             .or(row.effective_value)
             .unwrap_or_else(|| Value::Array(Vec::new()));
         value_as_qname_list(&values, attribute)
+    }
+
+    fn string_list_attribute_values(
+        &self,
+        element: &QualifiedName,
+        attribute: &str,
+    ) -> Result<Vec<String>, AuthoringError> {
+        let attributes = self.semantic_attributes(element)?;
+        let row = attributes
+            .into_iter()
+            .find(|row| row.name == attribute)
+            .ok_or_else(|| {
+                AuthoringError::Unsupported(format!(
+                    "attribute `{attribute}` is not supported on `{}`",
+                    element.as_dot_string()
+                ))
+            })?;
+        let values = row
+            .direct_value
+            .or(row.effective_value)
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+        value_as_string_list(&values, attribute)
     }
 
     fn apply_modifier_flag_edit(
@@ -1493,6 +1692,108 @@ impl AuthoringProject {
         )
     }
 
+    fn apply_short_name_edit(
+        &mut self,
+        element: &QualifiedName,
+        attribute: &str,
+        short_name: Option<String>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let changed = match declaration {
+            Declaration::Definition(definition) => {
+                set_short_name_modifier(&mut definition.modifiers, short_name.as_deref())
+            }
+            Declaration::Usage(usage) => {
+                set_short_name_modifier(&mut usage.modifiers, short_name.as_deref())
+            }
+            Declaration::Alias(alias) => {
+                set_short_name_modifier(&mut alias.modifiers, short_name.as_deref())
+            }
+            other => {
+                return Err(AuthoringError::Unsupported(format!(
+                    "attribute `{attribute}` is not supported on `{}`",
+                    declaration_kind_label(other)
+                )));
+            }
+        };
+        if !changed {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "attribute `{attribute}` on `{}` is already set to `{}`",
+                element.as_dot_string(),
+                short_name.as_deref().unwrap_or("<none>")
+            )));
+        }
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_raw_body_edit(
+        &mut self,
+        element: &QualifiedName,
+        attribute: &str,
+        raw_body: Option<String>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let target = match declaration {
+            Declaration::Definition(definition) => &mut definition.raw_body,
+            Declaration::Usage(usage) => &mut usage.raw_body,
+            other => {
+                return Err(AuthoringError::Unsupported(format!(
+                    "attribute `{attribute}` is not supported on `{}`",
+                    declaration_kind_label(other)
+                )));
+            }
+        };
+        let normalized = raw_body.map(|body| body.trim().to_string());
+        if *target == normalized {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "attribute `{attribute}` on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        *target = normalized;
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
     fn apply_direction_edit(
         &mut self,
         element: &QualifiedName,
@@ -1522,6 +1823,286 @@ impl AuthoringProject {
                 direction.as_deref().unwrap_or("<none>")
             )));
         }
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_usage_qname_list_edit(
+        &mut self,
+        element: &QualifiedName,
+        attribute: &str,
+        values: Vec<QualifiedName>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let usage = match declaration {
+            Declaration::Usage(usage) => usage,
+            _ => {
+                return Err(AuthoringError::Unsupported(format!(
+                    "attribute `{attribute}` is only supported on usages"
+                )));
+            }
+        };
+        let target = match attribute {
+            "additional_types" => &mut usage.additional_types,
+            "subsets" => &mut usage.subsets,
+            "redefines" => &mut usage.redefines,
+            other => {
+                return Err(AuthoringError::Unsupported(format!(
+                    "semantic list edit is not supported for attribute `{other}`"
+                )));
+            }
+        };
+        if *target == values {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "attribute `{attribute}` on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        *target = values;
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_annotated_elements_edit(
+        &mut self,
+        element: &QualifiedName,
+        values: Vec<QualifiedName>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let definition = match declaration {
+            Declaration::Definition(definition) if definition.keyword == "metadata" => definition,
+            Declaration::Definition(_) => {
+                return Err(AuthoringError::Unsupported(
+                    "attribute `annotated_elements` is only supported on metadata definitions"
+                        .to_string(),
+                ));
+            }
+            _ => {
+                return Err(AuthoringError::Unsupported(
+                    "attribute `annotated_elements` is only supported on definitions".to_string(),
+                ));
+            }
+        };
+        if annotated_elements_from_modifiers(&definition.modifiers) == values {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "attribute `annotated_elements` on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        set_annotated_elements(&mut definition.modifiers, &values);
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_language_extensions_edit(
+        &mut self,
+        element: &QualifiedName,
+        values: Vec<String>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let modifiers = declaration_modifiers_mut(declaration);
+        if language_extensions_from_modifiers(modifiers) == values {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "attribute `language_extensions` on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        set_language_extensions(modifiers, &values);
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_usage_reference_target_edit(
+        &mut self,
+        element: &QualifiedName,
+        target: Option<QualifiedName>,
+    ) -> Result<MutationResult, AuthoringError> {
+        self.apply_usage_reference_targets_edit(element, target.into_iter().collect())
+    }
+
+    fn apply_usage_reference_targets_edit(
+        &mut self,
+        element: &QualifiedName,
+        targets: Vec<QualifiedName>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let usage = locate_usage_mut(&mut file.module, element).ok_or_else(|| {
+            AuthoringError::Unsupported(
+                "attribute `reference_target` is only supported on usages".to_string(),
+            )
+        })?;
+        if usage_reference_targets(usage) == targets {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "reference target on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        usage.reference_target = targets.first().cloned();
+        set_reference_targets(&mut usage.modifiers, &targets);
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_usage_modifier_value_edit(
+        &mut self,
+        element: &QualifiedName,
+        attribute: &str,
+        key: &str,
+        value: Option<String>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let usage = match declaration {
+            Declaration::Usage(usage) => usage,
+            _ => {
+                return Err(AuthoringError::Unsupported(format!(
+                    "attribute `{attribute}` is only supported on usages"
+                )));
+            }
+        };
+        if modifier_value(&usage.modifiers, key).map(str::to_string) == value {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "attribute `{attribute}` on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        set_modifier_value(&mut usage.modifiers, key, value.as_deref());
+        let mut changed_files = BTreeSet::new();
+        changed_files.insert(located.file.clone());
+        let mut changed_declarations = BTreeSet::new();
+        changed_declarations.insert(element.as_dot_string());
+        self.finalize_change(
+            before,
+            changed_files,
+            changed_declarations,
+            vec![RewriteInstruction::ReplaceNode {
+                file: located.file,
+                anchor_qname: element.as_dot_string(),
+                render_qname: element.as_dot_string(),
+            }],
+        )
+    }
+
+    fn apply_usage_multiplicity_edit(
+        &mut self,
+        element: &QualifiedName,
+        multiplicity: Option<MultiplicityRange>,
+    ) -> Result<MutationResult, AuthoringError> {
+        let before = self.compile_user_kir()?;
+        let located = self.locate_declaration(element)?;
+        let file = self
+            .files
+            .get_mut(&located.file)
+            .ok_or_else(|| AuthoringError::MissingFile(located.file.clone()))?;
+        let declaration = locate_declaration_mut(&mut file.module, element)
+            .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
+        let usage = match declaration {
+            Declaration::Usage(usage) => usage,
+            _ => {
+                return Err(AuthoringError::Unsupported(
+                    "attribute `multiplicity` is only supported on usages".to_string(),
+                ));
+            }
+        };
+        if usage.multiplicity == multiplicity {
+            return Err(AuthoringError::InvalidMutation(format!(
+                "multiplicity on `{}` is already unchanged",
+                element.as_dot_string()
+            )));
+        }
+        usage.multiplicity = multiplicity;
         let mut changed_files = BTreeSet::new();
         changed_files.insert(located.file.clone());
         let mut changed_declarations = BTreeSet::new();
@@ -1833,7 +2414,7 @@ impl Package {
             header.push(' ');
         }
         header.push_str("package ");
-        header.push_str(&self.name.as_colon_string());
+        header.push_str(&render_qname(&self.name));
         header.push_str(" {");
         lines.push(format!("{prefix}{header}"));
         if !self.members.is_empty() {
@@ -1855,21 +2436,23 @@ impl Definition {
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
-        header.push_str(&self.keyword);
+        header.push_str(&render_keyword(&self.keyword, &self.modifiers));
         header.push_str(" def ");
-        header.push_str(&self.name);
+        header.push_str(&render_angle_adornment_prefix(&self.modifiers));
+        header.push_str(&render_name_segment(&self.name));
         if !self.specializes.is_empty() {
             header.push_str(" specializes ");
             header.push_str(
                 &self
                     .specializes
                     .iter()
-                    .map(QualifiedName::as_colon_string)
+                    .map(render_qname)
                     .collect::<Vec<_>>()
                     .join(", "),
             );
         }
-        if self.members.is_empty() {
+        let annotated_elements = annotated_elements_from_modifiers(&self.modifiers);
+        if self.members.is_empty() && self.raw_body.is_none() && annotated_elements.is_empty() {
             header.push(';');
             lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
@@ -1877,13 +2460,19 @@ impl Definition {
 
         header.push_str(" {");
         lines.push(format!("{prefix}{header}"));
-        let body = self
-            .members
-            .iter()
-            .map(|member| member.render(indent + 2))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        lines.push(body);
+        let body = if self.keyword == "metadata" && !annotated_elements.is_empty() {
+            render_metadata_definition_body(
+                &annotated_elements,
+                &self.members,
+                self.raw_body.as_deref(),
+                indent + 2,
+            )
+        } else {
+            render_member_and_raw_body(&self.members, self.raw_body.as_deref(), indent + 2)
+        };
+        if !body.is_empty() {
+            lines.push(body);
+        }
         lines.push(format!("{prefix}}}"));
         lines.join("\n")
     }
@@ -1894,6 +2483,47 @@ impl Usage {
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
+        if self.keyword == "metadata" && is_metadata_usage_modifier(&self.modifiers) {
+            header.push_str("metadata ");
+            header.push_str(&render_angle_adornment_prefix(&self.modifiers));
+            if !self.is_implicit_name {
+                header.push_str(&render_name_segment(&self.name));
+            }
+            if let Some(ty) = &self.ty {
+                if !self.is_implicit_name {
+                    header.push_str(": ");
+                } else {
+                    header.push_str(": ");
+                }
+                header.push_str(&render_qname(ty));
+            }
+            let reference_targets = usage_reference_targets(self);
+            if !reference_targets.is_empty() {
+                header.push_str(" about ");
+                header.push_str(
+                    &reference_targets
+                        .iter()
+                        .map(render_qname)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+            }
+            append_usage_relations(&mut header, self);
+            if self.members.is_empty() && self.raw_body.is_none() {
+                header.push(';');
+                lines.push(format!("{prefix}{header}"));
+                return lines.join("\n");
+            }
+            header.push_str(" {");
+            lines.push(format!("{prefix}{header}"));
+            let body =
+                render_member_and_raw_body(&self.members, self.raw_body.as_deref(), indent + 2);
+            if !body.is_empty() {
+                lines.push(body);
+            }
+            lines.push(format!("{prefix}}}"));
+            return lines.join("\n");
+        }
         if self.keyword == "metadata" {
             header.push('@');
             header.push_str(&self.name.replace('.', "::"));
@@ -1923,10 +2553,30 @@ impl Usage {
             lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
         }
-        header.push_str(&self.keyword);
+        if let Some(rendered) = render_relationship_shorthand(self) {
+            header.push_str(&rendered);
+            lines.push(format!("{prefix}{header}"));
+            return lines.join("\n");
+        }
+        if let Some(rendered) = render_transition_shorthand(self) {
+            header.push_str(&rendered);
+            lines.push(format!("{prefix}{header}"));
+            return lines.join("\n");
+        }
+        if self.keyword == "perform" && self.members.is_empty() && self.ty.is_none() {
+            header.push_str("perform action ");
+            if !self.is_implicit_name {
+                header.push_str(&render_name_segment(&self.name));
+            }
+            header.push(';');
+            lines.push(format!("{prefix}{header}"));
+            return lines.join("\n");
+        }
+        header.push_str(&render_keyword(&self.keyword, &self.modifiers));
         header.push(' ');
+        header.push_str(&render_angle_adornment_prefix(&self.modifiers));
         if !self.is_implicit_name {
-            header.push_str(&self.name);
+            header.push_str(&render_name_segment(&self.name));
         }
         if let Some(ty) = &self.ty {
             if !self.is_implicit_name {
@@ -1934,7 +2584,7 @@ impl Usage {
             } else {
                 header.push_str(": ");
             }
-            header.push_str(&ty.as_colon_string());
+            header.push_str(&render_qname(ty));
         }
         if let Some(multiplicity) = &self.multiplicity {
             header.push('[');
@@ -1947,7 +2597,7 @@ impl Usage {
                 &self
                     .additional_types
                     .iter()
-                    .map(QualifiedName::as_colon_string)
+                    .map(render_qname)
                     .collect::<Vec<_>>()
                     .join(", "),
             );
@@ -1958,7 +2608,7 @@ impl Usage {
                 &self
                     .specializes
                     .iter()
-                    .map(QualifiedName::as_colon_string)
+                    .map(render_qname)
                     .collect::<Vec<_>>()
                     .join(", "),
             );
@@ -1969,7 +2619,7 @@ impl Usage {
                 &self
                     .subsets
                     .iter()
-                    .map(QualifiedName::as_colon_string)
+                    .map(render_qname)
                     .collect::<Vec<_>>()
                     .join(", "),
             );
@@ -1980,7 +2630,7 @@ impl Usage {
                 &self
                     .redefines
                     .iter()
-                    .map(QualifiedName::as_colon_string)
+                    .map(render_qname)
                     .collect::<Vec<_>>()
                     .join(", "),
             );
@@ -1993,7 +2643,7 @@ impl Usage {
             header.push_str(" = ");
             header.push_str(expression);
         }
-        if self.members.is_empty() {
+        if self.members.is_empty() && self.raw_body.is_none() {
             header.push(';');
             lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
@@ -2001,13 +2651,10 @@ impl Usage {
 
         header.push_str(" {");
         lines.push(format!("{prefix}{header}"));
-        let body = self
-            .members
-            .iter()
-            .map(|member| member.render(indent + 2))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        lines.push(body);
+        let body = render_member_and_raw_body(&self.members, self.raw_body.as_deref(), indent + 2);
+        if !body.is_empty() {
+            lines.push(body);
+        }
         lines.push(format!("{prefix}}}"));
         lines.join("\n")
     }
@@ -2019,9 +2666,10 @@ impl Alias {
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
         header.push_str("alias ");
-        header.push_str(&self.name);
+        header.push_str(&render_angle_adornment_prefix(&self.modifiers));
+        header.push_str(&render_name_segment(&self.name));
         header.push_str(" = ");
-        header.push_str(&self.target.as_colon_string());
+        header.push_str(&render_qname(&self.target));
         header.push(';');
         lines.push(format!("{prefix}{header}"));
         lines.join("\n")
@@ -2062,7 +2710,7 @@ impl Declaration {
                 let mut lines = render_docs(&import.docs, indent);
                 let mut header = render_modifier_prefix(&import.modifiers);
                 header.push_str("import ");
-                header.push_str(&import.path.as_colon_string());
+                header.push_str(&render_qname(&import.path));
                 header.push(';');
                 lines.push(format!("{prefix}{header}"));
                 lines.join("\n")
@@ -2090,12 +2738,28 @@ fn definition_from_ast_like(
             .iter()
             .map(Declaration::from_ast)
             .collect(),
+        raw_body: None,
         docs: definition.docs.clone(),
         modifiers: definition.modifiers.clone(),
     }
 }
 
 fn usage_from_ast_like(usage: &crate::frontend::ast::GenericUsageDecl) -> Usage {
+    let mut modifiers = usage.modifiers.clone();
+    if usage.keyword == "metadata"
+        && usage.metadata_properties.is_empty()
+        && (usage.ty.is_some()
+            || usage.reference_target.is_some()
+            || !usage.body_members.is_empty()
+            || modifiers
+                .iter()
+                .any(|modifier| modifier == "metadata_usage"))
+        && !modifiers
+            .iter()
+            .any(|modifier| modifier == "metadata_usage")
+    {
+        modifiers.push("metadata_usage".to_string());
+    }
     Usage {
         keyword: usage.keyword.clone(),
         name: usage.name.clone(),
@@ -2136,8 +2800,9 @@ fn usage_from_ast_like(usage: &crate::frontend::ast::GenericUsageDecl) -> Usage 
             .iter()
             .map(Declaration::from_ast)
             .collect(),
+        raw_body: None,
         docs: usage.docs.clone(),
-        modifiers: usage.modifiers.clone(),
+        modifiers,
     }
 }
 
@@ -2534,6 +3199,59 @@ fn locate_declaration_in_members_ref<'a>(
     None
 }
 
+fn locate_usage_ref<'a>(
+    module: &'a AuthoringModule,
+    qualified_name: &QualifiedName,
+) -> Option<&'a Usage> {
+    if let Some(package) = &module.package
+        && let Some(found) = locate_usage_in_members_ref(
+            &package.members,
+            &package.name.as_dot_string(),
+            qualified_name,
+        )
+    {
+        return Some(found);
+    }
+    locate_usage_in_members_ref(&module.members, "", qualified_name)
+}
+
+fn locate_usage_in_members_ref<'a>(
+    declarations: &'a [Declaration],
+    owner: &str,
+    qualified_name: &QualifiedName,
+) -> Option<&'a Usage> {
+    for declaration in declarations {
+        let qname = match declaration {
+            Declaration::Package(package) => qualify_name(owner, &package.name.as_dot_string()),
+            Declaration::Definition(definition) => qualify_name(owner, &definition.name),
+            Declaration::Usage(usage) => qualify_name(owner, &usage.name),
+            Declaration::Alias(alias) => qualify_name(owner, &alias.name),
+            Declaration::Import(_) => continue,
+        };
+        if qname == qualified_name.as_dot_string()
+            && let Declaration::Usage(usage) = declaration
+        {
+            return Some(usage);
+        }
+        let nested = match declaration {
+            Declaration::Package(package) => {
+                locate_usage_in_members_ref(&package.members, &qname, qualified_name)
+            }
+            Declaration::Definition(definition) => {
+                locate_usage_in_members_ref(&definition.members, &qname, qualified_name)
+            }
+            Declaration::Usage(usage) => {
+                locate_usage_in_members_ref(&usage.members, &qname, qualified_name)
+            }
+            Declaration::Alias(_) | Declaration::Import(_) => None,
+        };
+        if let Some(found) = nested {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn locate_declaration_mut<'a>(
     module: &'a mut AuthoringModule,
     qualified_name: &QualifiedName,
@@ -2576,6 +3294,60 @@ fn locate_declaration_in_members_mut<'a>(
             }
             Declaration::Usage(usage) => {
                 locate_declaration_in_members_mut(&mut usage.members, &qname, qualified_name)
+            }
+            Declaration::Alias(_) | Declaration::Import(_) => None,
+        };
+        if nested.is_some() {
+            return nested;
+        }
+    }
+    None
+}
+
+fn locate_usage_mut<'a>(
+    module: &'a mut AuthoringModule,
+    qualified_name: &QualifiedName,
+) -> Option<&'a mut Usage> {
+    if let Some(package_owner) = module
+        .package
+        .as_ref()
+        .map(|package| package.name.as_dot_string())
+        && let Some(package) = module.package.as_mut()
+        && let Some(found) =
+            locate_usage_in_members_mut(&mut package.members, &package_owner, qualified_name)
+    {
+        return Some(found);
+    }
+    locate_usage_in_members_mut(&mut module.members, "", qualified_name)
+}
+
+fn locate_usage_in_members_mut<'a>(
+    declarations: &'a mut [Declaration],
+    owner: &str,
+    qualified_name: &QualifiedName,
+) -> Option<&'a mut Usage> {
+    for declaration in declarations {
+        let qname = match declaration {
+            Declaration::Package(package) => qualify_name(owner, &package.name.as_dot_string()),
+            Declaration::Definition(definition) => qualify_name(owner, &definition.name),
+            Declaration::Usage(usage) => qualify_name(owner, &usage.name),
+            Declaration::Alias(alias) => qualify_name(owner, &alias.name),
+            Declaration::Import(_) => continue,
+        };
+        if qname == qualified_name.as_dot_string()
+            && let Declaration::Usage(usage) = declaration
+        {
+            return Some(usage);
+        }
+        let nested = match declaration {
+            Declaration::Package(package) => {
+                locate_usage_in_members_mut(&mut package.members, &qname, qualified_name)
+            }
+            Declaration::Definition(definition) => {
+                locate_usage_in_members_mut(&mut definition.members, &qname, qualified_name)
+            }
+            Declaration::Usage(usage) => {
+                locate_usage_in_members_mut(&mut usage.members, &qname, qualified_name)
             }
             Declaration::Alias(_) | Declaration::Import(_) => None,
         };
@@ -2646,6 +3418,8 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 Some(Value::String(definition.name.clone())),
                 true,
             ),
+            semantic_short_name_attribute(&definition.modifiers),
+            semantic_effective_short_name_attribute(&definition.modifiers, &definition.name),
             semantic_doc_attribute("doc", &definition.docs),
             semantic_doc_attribute(
                 "text",
@@ -2659,6 +3433,10 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                     .into_iter()
                     .collect::<Vec<_>>(),
             ),
+            semantic_language_extensions_attribute(&definition.modifiers),
+            semantic_language_extension_keyword_attribute(&definition.modifiers),
+            semantic_raw_body_attribute(&definition.raw_body),
+            semantic_annotated_elements_attribute(&definition.modifiers),
             semantic_list_attribute("specializes", &definition.specializes),
             semantic_scalar_attribute(
                 "is_abstract",
@@ -2673,6 +3451,8 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                     .iter()
                     .any(|modifier| modifier == "abstract"),
             ),
+            semantic_modifier_attribute("is_derived", "derived", &definition.modifiers),
+            semantic_modifier_attribute("is_individual", "individual", &definition.modifiers),
         ],
         Declaration::Usage(usage) => vec![
             semantic_scalar_attribute(
@@ -2680,6 +3460,8 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 Some(Value::String(usage.name.clone())),
                 true,
             ),
+            semantic_short_name_attribute(&usage.modifiers),
+            semantic_effective_short_name_attribute(&usage.modifiers, &usage.name),
             semantic_doc_attribute("doc", &usage.docs),
             semantic_doc_attribute(
                 "text",
@@ -2689,6 +3471,9 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 "id",
                 &id_from_docs(&usage.docs).into_iter().collect::<Vec<_>>(),
             ),
+            semantic_language_extensions_attribute(&usage.modifiers),
+            semantic_language_extension_keyword_attribute(&usage.modifiers),
+            semantic_raw_body_attribute(&usage.raw_body),
             SemanticAttribute {
                 name: "type".to_string(),
                 origin_kind: if usage.ty.is_some() {
@@ -2714,6 +3499,18 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 usage.multiplicity.is_some(),
             ),
             semantic_list_attribute("specializes", &usage.specializes),
+            semantic_list_attribute("additional_types", &usage.additional_types),
+            semantic_list_attribute("subsets", &usage.subsets),
+            semantic_list_attribute("redefines", &usage.redefines),
+            semantic_scalar_attribute(
+                "reference_target",
+                usage
+                    .reference_target
+                    .as_ref()
+                    .map(|target| Value::String(target.as_colon_string())),
+                usage.reference_target.is_some(),
+            ),
+            semantic_list_attribute("reference_targets", &usage_reference_targets(usage)),
             semantic_scalar_attribute(
                 "is_abstract",
                 Some(Value::Bool(
@@ -2734,6 +3531,24 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 )),
                 usage.modifiers.iter().any(|modifier| modifier == "end"),
             ),
+            semantic_modifier_attribute("is_derived", "derived", &usage.modifiers),
+            semantic_modifier_attribute("is_individual", "individual", &usage.modifiers),
+            semantic_modifier_attribute("is_ordered", "ordered", &usage.modifiers),
+            semantic_modifier_attribute("is_variable", "variable", &usage.modifiers),
+            semantic_unique_attribute(&usage.modifiers),
+            semantic_modifier_value_attribute(
+                "transition_source",
+                "transition_source",
+                &usage.modifiers,
+            ),
+            semantic_modifier_value_attribute(
+                "transition_target",
+                "transition_target",
+                &usage.modifiers,
+            ),
+            semantic_modifier_value_attribute("trigger", "trigger", &usage.modifiers),
+            semantic_modifier_value_attribute("trigger_kind", "trigger_kind", &usage.modifiers),
+            semantic_modifier_attribute("source_is_initial", "source_is_initial", &usage.modifiers),
             SemanticAttribute {
                 name: "direction".to_string(),
                 origin_kind: usage
@@ -2760,6 +3575,8 @@ fn semantic_attributes_for_declaration(declaration: &Declaration) -> Vec<Semanti
                 Some(Value::String(alias.name.clone())),
                 true,
             ),
+            semantic_short_name_attribute(&alias.modifiers),
+            semantic_effective_short_name_attribute(&alias.modifiers, &alias.name),
             semantic_scalar_attribute(
                 "target",
                 Some(Value::String(alias.target.as_colon_string())),
@@ -2792,6 +3609,125 @@ fn semantic_doc_attribute(name: &str, docs: &[String]) -> SemanticAttribute {
         direct_value: value.clone(),
         effective_value: value,
     }
+}
+
+fn semantic_raw_body_attribute(raw_body: &Option<String>) -> SemanticAttribute {
+    semantic_scalar_attribute(
+        "raw_body",
+        raw_body.as_ref().map(|body| Value::String(body.clone())),
+        raw_body.is_some(),
+    )
+}
+
+fn semantic_language_extensions_attribute(modifiers: &[String]) -> SemanticAttribute {
+    let values = language_extensions_from_modifiers(modifiers);
+    SemanticAttribute {
+        name: "language_extensions".to_string(),
+        origin_kind: if values.is_empty() {
+            "declared".to_string()
+        } else {
+            "direct".to_string()
+        },
+        direct_value: Some(Value::Array(
+            values
+                .iter()
+                .map(|value| Value::String(value.clone()))
+                .collect(),
+        )),
+        effective_value: Some(Value::Array(
+            values
+                .iter()
+                .map(|value| Value::String(value.clone()))
+                .collect(),
+        )),
+    }
+}
+
+fn semantic_language_extension_keyword_attribute(modifiers: &[String]) -> SemanticAttribute {
+    let enabled = modifiers
+        .iter()
+        .any(|modifier| modifier == "hashed_keyword");
+    semantic_scalar_attribute(
+        "is_language_extension_keyword",
+        Some(Value::Bool(enabled)),
+        enabled,
+    )
+}
+
+fn semantic_annotated_elements_attribute(modifiers: &[String]) -> SemanticAttribute {
+    let values = annotated_elements_from_modifiers(modifiers);
+    SemanticAttribute {
+        name: "annotated_elements".to_string(),
+        origin_kind: if values.is_empty() {
+            "declared".to_string()
+        } else {
+            "direct".to_string()
+        },
+        direct_value: Some(Value::Array(
+            values
+                .iter()
+                .map(|value| Value::String(value.as_colon_string()))
+                .collect(),
+        )),
+        effective_value: Some(Value::Array(
+            values
+                .iter()
+                .map(|value| Value::String(value.as_colon_string()))
+                .collect(),
+        )),
+    }
+}
+
+fn semantic_modifier_attribute(
+    name: &str,
+    modifier: &str,
+    modifiers: &[String],
+) -> SemanticAttribute {
+    let enabled = modifiers.iter().any(|existing| existing == modifier);
+    semantic_scalar_attribute(name, Some(Value::Bool(enabled)), enabled)
+}
+
+fn semantic_modifier_value_attribute(
+    name: &str,
+    key: &str,
+    modifiers: &[String],
+) -> SemanticAttribute {
+    semantic_scalar_attribute(
+        name,
+        modifier_value(modifiers, key).map(|value| Value::String(value.to_string())),
+        modifier_value(modifiers, key).is_some(),
+    )
+}
+
+fn semantic_short_name_attribute(modifiers: &[String]) -> SemanticAttribute {
+    semantic_scalar_attribute(
+        "declared_short_name",
+        declared_short_name_from_modifiers(modifiers).map(|value| Value::String(value.to_string())),
+        declared_short_name_from_modifiers(modifiers).is_some(),
+    )
+}
+
+fn semantic_effective_short_name_attribute(
+    modifiers: &[String],
+    declared_name: &str,
+) -> SemanticAttribute {
+    let short_name = declared_short_name_from_modifiers(modifiers).unwrap_or(declared_name);
+    SemanticAttribute {
+        name: "short_name".to_string(),
+        origin_kind: if declared_short_name_from_modifiers(modifiers).is_some() {
+            "direct".to_string()
+        } else {
+            "derived".to_string()
+        },
+        direct_value: declared_short_name_from_modifiers(modifiers)
+            .map(|value| Value::String(value.to_string())),
+        effective_value: Some(Value::String(short_name.to_string())),
+    }
+}
+
+fn semantic_unique_attribute(modifiers: &[String]) -> SemanticAttribute {
+    let is_nonunique = modifiers.iter().any(|modifier| modifier == "nonunique");
+    semantic_scalar_attribute("is_unique", Some(Value::Bool(!is_nonunique)), is_nonunique)
 }
 
 fn semantic_scalar_attribute(
@@ -2852,6 +3788,60 @@ fn multiplicity_range_from_raw(raw: &str) -> MultiplicityRange {
     }
 }
 
+fn value_as_multiplicity(value: &Value) -> Result<MultiplicityRange, AuthoringError> {
+    let raw = value_as_string(value, "multiplicity")?;
+    let normalized = raw
+        .trim()
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or_else(|| raw.trim())
+        .trim();
+    if normalized.is_empty() {
+        return Err(AuthoringError::InvalidMutation(
+            "multiplicity cannot be empty".to_string(),
+        ));
+    }
+    Ok(multiplicity_range_from_raw(normalized))
+}
+
+fn unquote_sysml_name(value: &str) -> String {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix('\'')
+        .and_then(|inner| inner.strip_suffix('\''))
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
+fn render_qname(value: &QualifiedName) -> String {
+    value
+        .0
+        .iter()
+        .map(|segment| render_name_segment(segment))
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn render_name_segment(value: &str) -> String {
+    let unquoted = unquote_sysml_name(value);
+    if is_plain_sysml_identifier(&unquoted) {
+        unquoted
+    } else {
+        format!("'{}'", unquoted.replace('\'', "\\'"))
+    }
+}
+
+fn is_plain_sysml_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 fn normalize_attribute_name(name: &str) -> String {
     match name {
         "ownedFeature" => "features".to_string(),
@@ -2863,15 +3853,38 @@ fn normalize_attribute_name(name: &str) -> String {
         "declaredName" => "declared_name".to_string(),
         "declaredShortName" => "declared_short_name".to_string(),
         "shortName" => "short_name".to_string(),
+        "languageExtension"
+        | "languageExtensions"
+        | "language_extension"
+        | "language_extensions" => "language_extensions".to_string(),
+        "isLanguageExtensionKeyword" | "languageExtensionKeyword" => {
+            "is_language_extension_keyword".to_string()
+        }
         "isAbstract" => "is_abstract".to_string(),
         "isDerived" => "is_derived".to_string(),
         "isEnd" => "is_end".to_string(),
+        "isIndividual" => "is_individual".to_string(),
         "isOrdered" => "is_ordered".to_string(),
         "isUnique" => "is_unique".to_string(),
         "isVariable" => "is_variable".to_string(),
+        "rawBody" | "raw_body" | "body" => "raw_body".to_string(),
+        "annotatedElement" | "annotatedElements" | "annotated_elements" => {
+            "annotated_elements".to_string()
+        }
         "featuringType" => "featuring_type".to_string(),
         "imports" => "imports".to_string(),
         "type" => "type".to_string(),
+        "additionalTypes" | "additionalType" => "additional_types".to_string(),
+        "subsettedFeature" | "subsettedFeatures" | "subsets" => "subsets".to_string(),
+        "redefinedFeature" | "redefinedFeatures" | "redefines" => "redefines".to_string(),
+        "referenceTarget" | "reference_target" => "reference_target".to_string(),
+        "referenceTargets" | "reference_targets" | "about" | "aboutTargets" | "about_targets" => {
+            "reference_targets".to_string()
+        }
+        "transitionSource" | "transition_source" => "transition_source".to_string(),
+        "transitionTarget" | "transition_target" => "transition_target".to_string(),
+        "triggerKind" | "trigger_kind" => "trigger_kind".to_string(),
+        "sourceIsInitial" | "source_is_initial" | "initial" => "source_is_initial".to_string(),
         "target" => "target".to_string(),
         "direction" => "direction".to_string(),
         "name" => "declared_name".to_string(),
@@ -2903,6 +3916,16 @@ fn declaration_docs_mut(declaration: &mut Declaration) -> &mut Vec<String> {
         Declaration::Definition(definition) => &mut definition.docs,
         Declaration::Usage(usage) => &mut usage.docs,
         Declaration::Alias(alias) => &mut alias.docs,
+    }
+}
+
+fn declaration_modifiers_mut(declaration: &mut Declaration) -> &mut Vec<String> {
+    match declaration {
+        Declaration::Package(package) => &mut package.modifiers,
+        Declaration::Import(import) => &mut import.modifiers,
+        Declaration::Definition(definition) => &mut definition.modifiers,
+        Declaration::Usage(usage) => &mut usage.modifiers,
+        Declaration::Alias(alias) => &mut alias.modifiers,
     }
 }
 
@@ -2954,6 +3977,19 @@ fn value_as_string(value: &Value, attribute: &str) -> Result<String, AuthoringEr
     value.as_str().map(str::to_string).ok_or_else(|| {
         AuthoringError::InvalidMutation(format!("attribute `{attribute}` expects a string value"))
     })
+}
+
+fn value_as_string_list(value: &Value, attribute: &str) -> Result<Vec<String>, AuthoringError> {
+    match value {
+        Value::String(_) => Ok(vec![value_as_string(value, attribute)?]),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| value_as_string(item, attribute))
+            .collect(),
+        _ => Err(AuthoringError::InvalidMutation(format!(
+            "attribute `{attribute}` expects a string or string array"
+        ))),
+    }
 }
 
 fn value_as_qname(value: &Value, attribute: &str) -> Result<QualifiedName, AuthoringError> {
@@ -3008,6 +4044,115 @@ fn set_modifier_flag(modifiers: &mut Vec<String>, modifier: &str, enabled: bool)
     }
 }
 
+fn modifier_value<'a>(modifiers: &'a [String], key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    modifiers
+        .iter()
+        .find_map(|modifier| modifier.strip_prefix(&prefix))
+}
+
+fn set_modifier_value(modifiers: &mut Vec<String>, key: &str, value: Option<&str>) {
+    let prefix = format!("{key}=");
+    modifiers.retain(|modifier| !modifier.starts_with(&prefix));
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        modifiers.push(format!("{key}={value}"));
+    }
+}
+
+fn set_short_name_modifier(modifiers: &mut Vec<String>, short_name: Option<&str>) -> bool {
+    let current = declared_short_name_from_modifiers(modifiers).map(str::to_string);
+    if current.as_deref() == short_name {
+        return false;
+    }
+    modifiers.retain(|modifier| !is_angle_adornment_modifier(modifier));
+    if let Some(short_name) = short_name {
+        modifiers.push(short_name.to_string());
+    }
+    true
+}
+
+fn annotated_elements_from_modifiers(modifiers: &[String]) -> Vec<QualifiedName> {
+    modifiers
+        .iter()
+        .filter_map(|modifier| modifier.strip_prefix("annotated_element="))
+        .map(QualifiedName::parse)
+        .collect()
+}
+
+fn set_annotated_elements(modifiers: &mut Vec<String>, values: &[QualifiedName]) {
+    modifiers.retain(|modifier| !modifier.starts_with("annotated_element="));
+    modifiers.extend(
+        values
+            .iter()
+            .map(|value| format!("annotated_element={}", value.as_dot_string())),
+    );
+}
+
+fn reference_targets_from_modifiers(modifiers: &[String]) -> Vec<QualifiedName> {
+    modifiers
+        .iter()
+        .filter_map(|modifier| modifier.strip_prefix("reference_target="))
+        .map(QualifiedName::parse)
+        .collect()
+}
+
+fn set_reference_targets(modifiers: &mut Vec<String>, values: &[QualifiedName]) {
+    modifiers.retain(|modifier| !modifier.starts_with("reference_target="));
+    modifiers.extend(
+        values
+            .iter()
+            .map(|value| format!("reference_target={}", value.as_dot_string())),
+    );
+}
+
+fn usage_reference_targets(usage: &Usage) -> Vec<QualifiedName> {
+    let targets = reference_targets_from_modifiers(&usage.modifiers);
+    if targets.is_empty() {
+        usage.reference_target.iter().cloned().collect()
+    } else {
+        targets
+    }
+}
+
+fn language_extensions_from_modifiers(modifiers: &[String]) -> Vec<String> {
+    modifiers
+        .iter()
+        .filter_map(|modifier| modifier.strip_prefix("language_extension="))
+        .map(str::to_string)
+        .collect()
+}
+
+fn set_language_extensions(modifiers: &mut Vec<String>, values: &[String]) {
+    modifiers.retain(|modifier| !modifier.starts_with("language_extension="));
+    modifiers.extend(
+        values
+            .iter()
+            .map(|value| format!("language_extension={}", value.trim()))
+            .filter(|value| value != "language_extension="),
+    );
+}
+
+fn modifier_edit_for_attribute(attribute: &str, value: bool) -> (&'static str, bool) {
+    match attribute {
+        "is_language_extension_keyword" => ("hashed_keyword", value),
+        "is_abstract" => ("abstract", value),
+        "is_derived" => ("derived", value),
+        "is_end" => ("end", value),
+        "is_individual" => ("individual", value),
+        "is_ordered" => ("ordered", value),
+        "is_unique" => ("nonunique", !value),
+        "is_variable" => ("variable", value),
+        _ => unreachable!("unsupported modifier attribute `{attribute}`"),
+    }
+}
+
+fn modifier_clear_for_attribute(attribute: &str) -> (&'static str, bool) {
+    match attribute {
+        "is_unique" => ("nonunique", false),
+        _ => modifier_edit_for_attribute(attribute, false),
+    }
+}
+
 fn set_direction(modifiers: &mut Vec<String>, direction: Option<&str>) -> bool {
     let current = modifiers
         .iter()
@@ -3047,9 +4192,7 @@ fn remove_declaration(
 ) -> Option<Declaration> {
     let mut index = None;
     for (idx, declaration) in declarations.iter().enumerate() {
-        if declaration_name(declaration) == Some(qualified_name.tail().unwrap_or_default())
-            && declaration_matches_qname(declaration, "", qualified_name)
-        {
+        if declaration_name(declaration) == Some(qualified_name.tail().unwrap_or_default()) {
             index = Some(idx);
             break;
         }
@@ -3064,28 +4207,6 @@ fn declaration_name(declaration: &Declaration) -> Option<&str> {
         Declaration::Usage(usage) => Some(usage.name.as_str()),
         Declaration::Alias(alias) => Some(alias.name.as_str()),
         Declaration::Import(_) => None,
-    }
-}
-
-fn declaration_matches_qname(
-    declaration: &Declaration,
-    owner: &str,
-    qualified_name: &QualifiedName,
-) -> bool {
-    match declaration {
-        Declaration::Package(package) => {
-            qualify_name(owner, &package.name.as_dot_string()) == qualified_name.as_dot_string()
-        }
-        Declaration::Definition(definition) => {
-            qualify_name(owner, &definition.name) == qualified_name.as_dot_string()
-        }
-        Declaration::Usage(usage) => {
-            qualify_name(owner, &usage.name) == qualified_name.as_dot_string()
-        }
-        Declaration::Alias(alias) => {
-            qualify_name(owner, &alias.name) == qualified_name.as_dot_string()
-        }
-        Declaration::Import(_) => false,
     }
 }
 
@@ -3423,7 +4544,7 @@ fn set_usage_expression_in_members(
 
 fn relationship_usage(
     kind: &str,
-    _source: &QualifiedName,
+    source: &QualifiedName,
     target: &QualifiedName,
 ) -> Result<Usage, AuthoringError> {
     let keyword = kind.trim().to_ascii_lowercase();
@@ -3446,8 +4567,9 @@ fn relationship_usage(
         subsets: Vec::new(),
         redefines: Vec::new(),
         members: Vec::new(),
+        raw_body: None,
         docs: Vec::new(),
-        modifiers: Vec::new(),
+        modifiers: vec![format!("relationship_source={}", source.as_dot_string())],
     })
 }
 
@@ -3599,12 +4721,303 @@ fn render_docs(docs: &[String], indent: usize) -> Vec<String> {
         .collect()
 }
 
+fn render_member_and_raw_body(
+    members: &[Declaration],
+    raw_body: Option<&str>,
+    indent: usize,
+) -> String {
+    let mut blocks = members
+        .iter()
+        .map(|member| member.render(indent))
+        .collect::<Vec<_>>();
+    if let Some(raw_body) = raw_body {
+        let prefix = " ".repeat(indent);
+        let rendered = raw_body
+            .lines()
+            .map(|line| {
+                if line.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("{prefix}{}", line.trim_end())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !rendered.trim().is_empty() {
+            blocks.push(rendered);
+        }
+    }
+    blocks.join("\n\n")
+}
+
+fn render_metadata_definition_body(
+    annotated_elements: &[QualifiedName],
+    members: &[Declaration],
+    raw_body: Option<&str>,
+    indent: usize,
+) -> String {
+    let mut blocks = annotated_elements
+        .iter()
+        .map(|target| {
+            format!(
+                "{}:> annotatedElement : {};",
+                " ".repeat(indent),
+                render_qname(target)
+            )
+        })
+        .collect::<Vec<_>>();
+    let rest = render_member_and_raw_body(members, raw_body, indent);
+    if !rest.is_empty() {
+        blocks.push(rest);
+    }
+    blocks.join("\n")
+}
+
 fn render_modifier_prefix(modifiers: &[String]) -> String {
-    if modifiers.is_empty() {
+    let rendered = modifiers
+        .iter()
+        .filter(|modifier| !is_angle_adornment_modifier(modifier))
+        .filter(|modifier| !is_internal_render_modifier(modifier))
+        .map(|modifier| {
+            if let Some(extension) = modifier.strip_prefix("language_extension=") {
+                format!("#{}", render_language_extension_keyword(extension))
+            } else if is_angle_adornment_modifier(modifier) {
+                format!("<{}>", render_angle_adornment(modifier))
+            } else {
+                modifier.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
         String::new()
     } else {
-        format!("{} ", modifiers.join(" "))
+        format!("{} ", rendered.join(" "))
     }
+}
+
+fn render_keyword(keyword: &str, modifiers: &[String]) -> String {
+    let rendered_keyword = match keyword {
+        "use-case" => "use case",
+        other => other,
+    };
+    if modifiers
+        .iter()
+        .any(|modifier| modifier == "hashed_keyword")
+    {
+        format!("#{}", render_language_extension_keyword(rendered_keyword))
+    } else {
+        rendered_keyword.to_string()
+    }
+}
+
+fn render_language_extension_keyword(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
+}
+
+fn render_relationship_shorthand(usage: &Usage) -> Option<String> {
+    let source = relationship_source_from_modifiers(&usage.modifiers)?;
+    let target = usage.reference_target.as_ref()?;
+    let target = target.as_dot_string();
+    match usage.keyword.as_str() {
+        "flow" => Some(format!("flow from {source} to {target};")),
+        "succession" => Some(format!("succession flow from {source} to {target};")),
+        "allocation" | "allocate" => Some(format!(
+            "allocation {} allocate {source} to {target};",
+            render_name_segment(&usage.name)
+        )),
+        _ => None,
+    }
+}
+
+fn render_transition_shorthand(usage: &Usage) -> Option<String> {
+    if usage.keyword != "transition" {
+        return None;
+    }
+    let source = modifier_value(&usage.modifiers, "transition_source");
+    let target = modifier_value(&usage.modifiers, "transition_target");
+    let trigger = modifier_value(&usage.modifiers, "trigger");
+    let source_is_initial = usage
+        .modifiers
+        .iter()
+        .any(|modifier| modifier == "source_is_initial");
+    if source.is_none() && target.is_none() && trigger.is_none() {
+        return None;
+    }
+    if source_is_initial && trigger.is_none() {
+        let mut rendered = String::new();
+        if let Some(source) = source {
+            rendered.push_str("first ");
+            rendered.push_str(&render_qname(&QualifiedName::parse(source)));
+        }
+        if let Some(target) = target {
+            if !rendered.is_empty() {
+                rendered.push(' ');
+            }
+            rendered.push_str("then ");
+            rendered.push_str(&render_qname(&QualifiedName::parse(target)));
+        }
+        rendered.push(';');
+        return Some(rendered);
+    }
+    let mut rendered = String::from("transition");
+    if !usage.is_implicit_name && usage.name != "transition" {
+        rendered.push(' ');
+        rendered.push_str(&render_name_segment(&usage.name));
+    }
+    if let Some(source) = source {
+        rendered.push_str(" first ");
+        rendered.push_str(&render_qname(&QualifiedName::parse(source)));
+    }
+    if let Some(trigger) = trigger {
+        rendered.push_str(" accept ");
+        rendered.push_str(trigger);
+    }
+    if let Some(target) = target {
+        rendered.push_str(" then ");
+        rendered.push_str(&render_qname(&QualifiedName::parse(target)));
+    }
+    rendered.push(';');
+    Some(rendered)
+}
+
+fn append_usage_relations(header: &mut String, usage: &Usage) {
+    if let Some(multiplicity) = &usage.multiplicity {
+        header.push('[');
+        header.push_str(&multiplicity.raw);
+        header.push(']');
+    }
+    if !usage.additional_types.is_empty() {
+        header.push_str(" :> ");
+        header.push_str(
+            &usage
+                .additional_types
+                .iter()
+                .map(render_qname)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    if !usage.specializes.is_empty() {
+        header.push_str(" specializes ");
+        header.push_str(
+            &usage
+                .specializes
+                .iter()
+                .map(render_qname)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    if !usage.subsets.is_empty() {
+        header.push_str(" subsets ");
+        header.push_str(
+            &usage
+                .subsets
+                .iter()
+                .map(render_qname)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    if !usage.redefines.is_empty() {
+        header.push_str(" redefines ");
+        header.push_str(
+            &usage
+                .redefines
+                .iter()
+                .map(render_qname)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    if let Some(expression) = &usage.expression {
+        header.push_str(" = ");
+        header.push_str(expression);
+    }
+}
+
+fn relationship_source_from_modifiers(modifiers: &[String]) -> Option<&str> {
+    modifiers
+        .iter()
+        .find_map(|modifier| modifier.strip_prefix("relationship_source="))
+}
+
+fn is_metadata_usage_modifier(modifiers: &[String]) -> bool {
+    modifiers
+        .iter()
+        .any(|modifier| modifier == "metadata_usage")
+}
+
+fn is_internal_render_modifier(modifier: &str) -> bool {
+    modifier.starts_with("relationship_source=")
+        || modifier.starts_with("annotated_element=")
+        || modifier.starts_with("reference_target=")
+        || modifier.starts_with("transition_source=")
+        || modifier.starts_with("transition_target=")
+        || modifier.starts_with("trigger=")
+        || modifier.starts_with("trigger_kind=")
+        || modifier == "source_is_initial"
+        || modifier == "hashed_keyword"
+        || modifier == "metadata_usage"
+}
+
+fn render_angle_adornment_prefix(modifiers: &[String]) -> String {
+    let rendered = modifiers
+        .iter()
+        .filter(|modifier| is_angle_adornment_modifier(modifier))
+        .map(|modifier| format!("<{}>", render_angle_adornment(modifier)))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", rendered.join(" "))
+    }
+}
+
+fn declared_short_name_from_modifiers(modifiers: &[String]) -> Option<&str> {
+    modifiers
+        .iter()
+        .find(|modifier| is_angle_adornment_modifier(modifier))
+        .map(String::as_str)
+}
+
+fn is_angle_adornment_modifier(modifier: &str) -> bool {
+    !is_internal_render_modifier(modifier)
+        && !is_keyword_modifier(modifier)
+        && !modifier.contains('=')
+        && !modifier.contains(':')
+        && !modifier.contains(' ')
+}
+
+fn is_keyword_modifier(modifier: &str) -> bool {
+    matches!(
+        modifier,
+        "abstract"
+            | "all"
+            | "composite"
+            | "derived"
+            | "do"
+            | "end"
+            | "entry"
+            | "exit"
+            | "in"
+            | "individual"
+            | "inout"
+            | "nonunique"
+            | "ordered"
+            | "out"
+            | "private"
+            | "protected"
+            | "public"
+            | "readonly"
+            | "ref"
+            | "variation"
+            | "variable"
+    )
+}
+
+fn render_angle_adornment(value: &str) -> String {
+    value.replace('<', "").replace('>', "")
 }
 
 fn render_expr(expr: &Expr) -> String {
@@ -3962,6 +5375,7 @@ fn build_declaration_from_kir(
             name,
             specializes: specializations_from_properties(&element.properties, None),
             members: built_members,
+            raw_body: None,
             docs: docs_from_properties(&element.properties),
             modifiers: Vec::new(),
         })));
@@ -4021,6 +5435,7 @@ fn build_declaration_from_kir(
             subsets: property_qnames(&element.properties, "subsetted_features"),
             redefines: property_qnames(&element.properties, "redefined_features"),
             members: built_members,
+            raw_body: None,
             docs: docs_from_properties(&element.properties),
             modifiers: usage_modifiers_from_properties(&element.properties),
         })));
@@ -4217,6 +5632,7 @@ fn fake_declaration_from_header(
             name: clean_fake_name(name),
             specializes: Vec::new(),
             members,
+            raw_body: None,
             docs: Vec::new(),
             modifiers: Vec::new(),
         }));
@@ -4262,6 +5678,7 @@ fn fake_declaration_from_header(
         subsets: Vec::new(),
         redefines: Vec::new(),
         members,
+        raw_body: None,
         docs: Vec::new(),
         modifiers: Vec::new(),
     }))
@@ -4461,8 +5878,8 @@ fn pascal_case(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContainerSelector, Mutation, QualifiedName, create_empty_model,
-        load_authoring_project_from_kir,
+        AttributeWritePolicy, ContainerSelector, Mutation, QualifiedName, SemanticEdit,
+        create_empty_model, load_authoring_project_from_kir,
     };
     use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
     use serde_json::{Value, json};
@@ -4625,6 +6042,921 @@ mod tests {
         assert_eq!(write_back.mode, super::WriteBackMode::CanonicalRewrite);
         assert!(text.contains("part engine: Engine;"));
         assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn semantic_usage_list_edits_render_relationship_clauses() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        for name in ["Vehicle", "BaseFeature", "CrossFeature", "RedefinedFeature"] {
+            let result = project
+                .apply_mutation(Mutation::AddDefinition {
+                    container: ContainerSelector::Package {
+                        qualified_name: qname("Demo"),
+                    },
+                    keyword: "part".to_string(),
+                    name: name.to_string(),
+                    specializes: Vec::new(),
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+        let usage_result = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "part".to_string(),
+                name: "vehicle".to_string(),
+                ty: Some(qname("Vehicle")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&usage_result).unwrap();
+
+        let set_result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.vehicle"),
+                attribute: "additionalTypes".to_string(),
+                value: json!("BaseFeature"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        project.write_back_mutation(&set_result).unwrap();
+        let add_subset_result = project
+            .apply_semantic_edit(SemanticEdit::AddAttributeValue {
+                element: qname("Demo.vehicle"),
+                attribute: "subsettedFeatures".to_string(),
+                value: json!("CrossFeature"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        project.write_back_mutation(&add_subset_result).unwrap();
+        let add_redefines_result = project
+            .apply_semantic_edit(SemanticEdit::AddAttributeValue {
+                element: qname("Demo.vehicle"),
+                attribute: "redefinedFeatures".to_string(),
+                value: json!("RedefinedFeature"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&add_redefines_result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+
+        assert!(text.contains(
+            "part vehicle: Vehicle :> BaseFeature subsets CrossFeature redefines RedefinedFeature;"
+        ));
+        assert!(write_back.validation.ok);
+
+        let reference_result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.vehicle"),
+                attribute: "referenceTarget".to_string(),
+                value: json!("CrossFeature"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&reference_result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("references CrossFeature"));
+        assert!(write_back.validation.ok);
+
+        let clear_reference_result = project
+            .apply_semantic_edit(SemanticEdit::ClearAttribute {
+                element: qname("Demo.vehicle"),
+                attribute: "referenceTarget".to_string(),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        project
+            .write_back_mutation(&clear_reference_result)
+            .unwrap();
+
+        let remove_result = project
+            .apply_semantic_edit(SemanticEdit::RemoveAttributeValue {
+                element: qname("Demo.vehicle"),
+                attribute: "subsettedFeature".to_string(),
+                value: json!("CrossFeature"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&remove_result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(!text.contains("subsets CrossFeature"));
+        assert!(text.contains("redefines RedefinedFeature"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn semantic_multiplicity_edit_renders_usage_bounds() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        for name in ["Vehicle", "Wheel"] {
+            let result = project
+                .apply_mutation(Mutation::AddDefinition {
+                    container: ContainerSelector::Package {
+                        qualified_name: qname("Demo"),
+                    },
+                    keyword: "part".to_string(),
+                    name: name.to_string(),
+                    specializes: Vec::new(),
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+        let vehicle_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "part".to_string(),
+                name: "vehicle".to_string(),
+                ty: Some(qname("Vehicle")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&vehicle_usage).unwrap();
+        let wheel_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Declaration {
+                    qualified_name: qname("Demo.vehicle"),
+                },
+                keyword: "part".to_string(),
+                name: "wheel".to_string(),
+                ty: Some(qname("Wheel")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&wheel_usage).unwrap();
+
+        let set_result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.vehicle.wheel"),
+                attribute: "multiplicity".to_string(),
+                value: json!("[4]"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&set_result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("part wheel: Wheel[4];"));
+        assert!(write_back.validation.ok);
+
+        let clear_result = project
+            .apply_semantic_edit(SemanticEdit::ClearAttribute {
+                element: qname("Demo.vehicle.wheel"),
+                attribute: "multiplicity".to_string(),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&clear_result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("part wheel: Wheel;"));
+        assert!(!text.contains("Wheel[4]"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn semantic_modifier_edits_render_advanced_usage_modifiers() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let attribute_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "attribute".to_string(),
+                name: "Mass".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&attribute_def).unwrap();
+        let mass_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "attribute".to_string(),
+                name: "mass".to_string(),
+                ty: Some(qname("Mass")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&mass_usage).unwrap();
+
+        for (attribute, value) in [
+            ("isOrdered", json!(true)),
+            ("isUnique", json!(false)),
+            ("isDerived", json!(true)),
+            ("isVariable", json!(true)),
+        ] {
+            let result = project
+                .apply_semantic_edit(SemanticEdit::SetAttribute {
+                    element: qname("Demo.mass"),
+                    attribute: attribute.to_string(),
+                    value,
+                    policy: AttributeWritePolicy::UpsertDirect,
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+
+        let text = project.render_new_file("model.model").unwrap();
+        assert!(text.contains("ordered nonunique derived variable attribute mass: Mass;"));
+        let attributes = project.semantic_attributes(&qname("Demo.mass")).unwrap();
+        assert!(attributes.iter().any(|row| {
+            row.name == "is_unique" && row.effective_value == Some(Value::Bool(false))
+        }));
+
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.mass"),
+                attribute: "isUnique".to_string(),
+                value: json!(true),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("ordered derived variable attribute mass: Mass;"));
+        assert!(!text.contains("nonunique"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn semantic_short_name_edit_renders_angle_adornment() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let attribute_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "attribute".to_string(),
+                name: "Mass".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&attribute_def).unwrap();
+        let mass_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "attribute".to_string(),
+                name: "mass".to_string(),
+                ty: Some(qname("Mass")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&mass_usage).unwrap();
+
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.mass"),
+                attribute: "declaredShortName".to_string(),
+                value: json!("m"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("attribute <m> mass: Mass;"));
+        assert!(write_back.validation.ok);
+
+        let attributes = project.semantic_attributes(&qname("Demo.mass")).unwrap();
+        assert!(attributes.iter().any(|row| {
+            row.name == "declared_short_name"
+                && row.effective_value == Some(Value::String("m".to_string()))
+        }));
+
+        let clear_result = project
+            .apply_semantic_edit(SemanticEdit::ClearAttribute {
+                element: qname("Demo.mass"),
+                attribute: "declaredShortName".to_string(),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&clear_result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("attribute mass: Mass;"));
+        assert!(!text.contains("<m>"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn add_relationship_renders_flow_succession_and_allocation_shorthands() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        for name in ["Source", "Target"] {
+            let result = project
+                .apply_mutation(Mutation::AddDefinition {
+                    container: ContainerSelector::Package {
+                        qualified_name: qname("Demo"),
+                    },
+                    keyword: "part".to_string(),
+                    name: name.to_string(),
+                    specializes: Vec::new(),
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+
+        for kind in ["flow", "succession", "allocation"] {
+            let result = project
+                .apply_mutation(Mutation::AddRelationship {
+                    container: ContainerSelector::Package {
+                        qualified_name: qname("Demo"),
+                    },
+                    kind: kind.to_string(),
+                    source: qname("Source"),
+                    target: qname("Target"),
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+
+        let text = project.render_new_file("model.model").unwrap();
+        assert!(text.contains("flow from Source to Target;"));
+        assert!(text.contains("succession flow from Source to Target;"));
+        assert!(text.contains("allocation Target allocate Source to Target;"));
+        assert!(project.compile_kir_document().is_ok());
+    }
+
+    #[test]
+    fn perform_usage_renders_action_shorthand() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let action_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "action".to_string(),
+                name: "ProvidePower".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&action_def).unwrap();
+        let perform = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "perform".to_string(),
+                name: "providePower".to_string(),
+                ty: None,
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&perform).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("perform action providePower;"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn raw_action_body_edit_renders_and_validates() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let action_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "action".to_string(),
+                name: "ProvidePower".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&action_def).unwrap();
+
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.ProvidePower"),
+                attribute: "rawBody".to_string(),
+                value: json!("first start;\nthen done;"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("action def ProvidePower {"));
+        assert!(text.contains("first start;"));
+        assert!(text.contains("then done;"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn raw_constraint_body_edit_renders_and_validates() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let constraint_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "constraint".to_string(),
+                name: "MassConstraint".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&constraint_def).unwrap();
+        let constraint_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "constraint".to_string(),
+                name: "massConstraint".to_string(),
+                ty: Some(qname("MassConstraint")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&constraint_usage).unwrap();
+
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.MassConstraint"),
+                attribute: "rawBody".to_string(),
+                value: json!("in totalMass;\nin componentMasses;\ntotalMass == componentMasses"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        project.write_back_mutation(&result).unwrap();
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.massConstraint"),
+                attribute: "rawBody".to_string(),
+                value: json!("in totalMass = mass;\nin componentMasses = engine.mass;"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("constraint def MassConstraint {"));
+        assert!(text.contains("totalMass == componentMasses"));
+        assert!(text.contains("constraint massConstraint: MassConstraint {"));
+        assert!(text.contains("in totalMass = mass;"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn metadata_usage_renders_keyword_form_with_about_target() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let metadata_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "metadata".to_string(),
+                name: "Safety".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&metadata_def).unwrap();
+        let part_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "part".to_string(),
+                name: "Vehicle".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&part_def).unwrap();
+        let metadata_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "metadata".to_string(),
+                name: "vehicleSafety".to_string(),
+                ty: Some(qname("Safety")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&metadata_usage).unwrap();
+
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.vehicleSafety"),
+                attribute: "referenceTarget".to_string(),
+                value: json!("Vehicle"),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("metadata def Safety;"));
+        assert!(
+            text.contains("metadata vehicleSafety: Safety about Vehicle;"),
+            "{text}"
+        );
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn metadata_usage_renders_multiple_about_targets() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let metadata_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "metadata".to_string(),
+                name: "Safety".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&metadata_def).unwrap();
+        let metadata_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "metadata".to_string(),
+                name: "Safety".to_string(),
+                ty: None,
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&metadata_usage).unwrap();
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.Safety"),
+                attribute: "about".to_string(),
+                value: json!(["vehicle::seatBelt", "vehicle::airBag", "vehicle::bumper"]),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+
+        assert!(text.contains(
+            "metadata Safety about vehicle::seatBelt, vehicle::airBag, vehicle::bumper;"
+        ));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn metadata_definition_renders_structured_annotated_elements() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let metadata_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "metadata".to_string(),
+                name: "SecurityFeature".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&metadata_def).unwrap();
+
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.SecurityFeature"),
+                attribute: "annotatedElements".to_string(),
+                value: json!(["SysML::PartDefinition", "SysML::PartUsage"]),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("metadata def SecurityFeature {"));
+        assert!(text.contains(":> annotatedElement : SysML::PartDefinition;"));
+        assert!(text.contains(":> annotatedElement : SysML::PartUsage;"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn language_extension_keywords_render_hash_forms() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let scenario = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "scenario".to_string(),
+                name: "DeviceFailure".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&scenario).unwrap();
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.DeviceFailure"),
+                attribute: "isLanguageExtensionKeyword".to_string(),
+                value: json!(true),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        project.write_back_mutation(&result).unwrap();
+        let service_port = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "port".to_string(),
+                name: "ServiceDiscovery".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&service_port).unwrap();
+        let result = project
+            .apply_semantic_edit(SemanticEdit::SetAttribute {
+                element: qname("Demo.ServiceDiscovery"),
+                attribute: "languageExtensions".to_string(),
+                value: json!(["service"]),
+                policy: AttributeWritePolicy::UpsertDirect,
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&result).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("#scenario def DeviceFailure;"));
+        assert!(text.contains("#service port def ServiceDiscovery;"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn use_case_keyword_renders_two_word_source_form() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let use_case_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "use-case".to_string(),
+                name: "TransportPassenger".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&use_case_def).unwrap();
+        let use_case_usage = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "use-case".to_string(),
+                name: "transportPassenger".to_string(),
+                ty: Some(qname("TransportPassenger")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&use_case_usage).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+        assert!(text.contains("use case def TransportPassenger;"));
+        assert!(text.contains("use case transportPassenger: TransportPassenger;"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn transition_usage_renders_state_shorthand() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let state_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "state".to_string(),
+                name: "VehicleStates".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&state_def).unwrap();
+        let transition = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Declaration {
+                    qualified_name: qname("Demo.VehicleStates"),
+                },
+                keyword: "transition".to_string(),
+                name: "off_to_starting".to_string(),
+                ty: None,
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&transition).unwrap();
+        for (attribute, value) in [
+            ("transitionSource", "off"),
+            ("trigger", "VehicleStartSignal"),
+            ("transitionTarget", "starting"),
+        ] {
+            let result = project
+                .apply_semantic_edit(SemanticEdit::SetAttribute {
+                    element: qname("Demo.VehicleStates.off_to_starting"),
+                    attribute: attribute.to_string(),
+                    value: json!(value),
+                    policy: AttributeWritePolicy::UpsertDirect,
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+        let text = project.render_new_file("model.model").unwrap();
+        assert!(text.contains(
+            "transition off_to_starting first off accept VehicleStartSignal then starting;"
+        ));
+        assert!(project.compile_user_kir().is_ok());
+    }
+
+    #[test]
+    fn quoted_names_render_for_packages_definitions_and_usages() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("'Subsetting Example'"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let vehicle_part = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Subsetting Example"),
+                },
+                keyword: "part".to_string(),
+                name: "Vehicle Part".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&vehicle_part).unwrap();
+        let vehicle = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Subsetting Example"),
+                },
+                keyword: "part".to_string(),
+                name: "'Vehicle Definition'".to_string(),
+                specializes: vec![qname("Subsetting Example.Vehicle Part")],
+            })
+            .unwrap();
+        project.write_back_mutation(&vehicle).unwrap();
+        let wheel = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Declaration {
+                    qualified_name: qname("Subsetting Example.Vehicle Definition"),
+                },
+                keyword: "part".to_string(),
+                name: "front wheel".to_string(),
+                ty: Some(qname("Vehicle Part")),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        let write_back = project.write_back_mutation(&wheel).unwrap();
+        let text = write_back.edited_files.get("model.model").unwrap();
+
+        assert!(text.contains("package 'Subsetting Example'"));
+        assert!(text.contains("part def 'Vehicle Part';"));
+        assert!(text.contains(
+            "part def 'Vehicle Definition' specializes 'Subsetting Example'::'Vehicle Part'"
+        ));
+        assert!(text.contains("part 'front wheel': 'Vehicle Part';"));
+        assert!(write_back.validation.ok);
+    }
+
+    #[test]
+    fn transition_usage_renders_initial_state_shorthand() {
+        let mut project = create_empty_model();
+        let package_result = project
+            .apply_mutation(Mutation::AddPackage {
+                target_file: "model.model".to_string(),
+                package_name: qname("Demo"),
+            })
+            .unwrap();
+        project.write_back_mutation(&package_result).unwrap();
+        let state_def = project
+            .apply_mutation(Mutation::AddDefinition {
+                container: ContainerSelector::Package {
+                    qualified_name: qname("Demo"),
+                },
+                keyword: "state".to_string(),
+                name: "VehicleStates".to_string(),
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&state_def).unwrap();
+        let transition = project
+            .apply_mutation(Mutation::AddUsage {
+                container: ContainerSelector::Declaration {
+                    qualified_name: qname("Demo.VehicleStates"),
+                },
+                keyword: "transition".to_string(),
+                name: "start".to_string(),
+                ty: None,
+                specializes: Vec::new(),
+            })
+            .unwrap();
+        project.write_back_mutation(&transition).unwrap();
+        for (attribute, value) in [
+            ("transitionSource", json!("start")),
+            ("sourceIsInitial", json!(true)),
+            ("transitionTarget", json!("off")),
+        ] {
+            let result = project
+                .apply_semantic_edit(SemanticEdit::SetAttribute {
+                    element: qname("Demo.VehicleStates.start"),
+                    attribute: attribute.to_string(),
+                    value,
+                    policy: AttributeWritePolicy::UpsertDirect,
+                })
+                .unwrap();
+            project.write_back_mutation(&result).unwrap();
+        }
+        let text = project.render_all_files().remove("model.model").unwrap();
+
+        assert!(text.contains("first start then off;"));
+        assert!(!text.contains("transition start first start then off;"));
     }
 
     #[test]
