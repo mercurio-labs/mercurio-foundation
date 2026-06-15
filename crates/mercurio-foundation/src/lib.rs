@@ -332,9 +332,11 @@ pub use views::{
     requirements_table_view, search_view,
 };
 pub use workspace::{
-    ResolvedWorkspaceContext, ResolvedWorkspaceLibrary, WorkspaceConfig, WorkspaceConfigError,
-    WorkspaceContextOptions, WorkspaceLibraryConfig, WorkspaceLibraryRole, WorkspacePluginConfig,
-    discover_workspace_config_path, resolve_workspace_context,
+    ProjectDescriptor, ProjectExtensionDescriptor, ProjectModelConfig, ResolvedWorkspaceContext,
+    ResolvedWorkspaceLibrary, WorkspaceConfig, WorkspaceConfigError, WorkspaceContextOptions,
+    WorkspaceLibraryConfig, WorkspaceLibraryRole, WorkspacePluginConfig,
+    discover_project_extension_descriptor_path, discover_workspace_config_path,
+    resolve_project_descriptor_context, resolve_workspace_context,
     resolve_workspace_context_from_config_path, resolve_workspace_context_with_options,
 };
 pub use workspace_cache::{

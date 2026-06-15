@@ -8,6 +8,8 @@ use crate::library::{
     ResolvedLibraryArtifact,
 };
 
+pub const PROJECT_EXTENSION_DESCRIPTOR_FILE_NAME: &str = "mercurio.extensions.json";
+
 fn is_model_source_file(path: &Path) -> bool {
     path.extension().and_then(|value| value.to_str()).is_some()
 }
@@ -25,6 +27,90 @@ pub struct WorkspaceConfig {
     pub plugins: Vec<WorkspacePluginConfig>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDescriptor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(
+        default = "default_project_descriptor_version",
+        deserialize_with = "deserialize_compatible_descriptor_version"
+    )]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "ProjectModelConfig::is_empty")]
+    pub model: ProjectModelConfig,
+    #[serde(default, alias = "libraries")]
+    pub dependencies: Vec<WorkspaceLibraryConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub project_plugins: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectModelConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entrypoints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metamodel: Option<String>,
+}
+
+impl ProjectModelConfig {
+    fn is_empty(&self) -> bool {
+        self.source_roots.is_empty() && self.entrypoints.is_empty() && self.metamodel.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectExtensionDescriptor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(default = "default_project_extension_descriptor_version")]
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub project_plugins: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<serde_json::Value>,
+}
+
+impl ProjectExtensionDescriptor {
+    pub fn from_path(path: &Path) -> Result<Self, WorkspaceConfigError> {
+        let input = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&input)?)
+    }
+
+    pub fn from_project_descriptor_legacy(descriptor: &ProjectDescriptor) -> Option<Self> {
+        if descriptor.project_plugins.is_empty()
+            && descriptor.capabilities.is_empty()
+            && descriptor.views.is_empty()
+        {
+            return None;
+        }
+
+        Some(Self {
+            schema: Some("dev.mercurio.extensions.v1".to_string()),
+            version: default_project_extension_descriptor_version(),
+            project_plugins: descriptor.project_plugins.clone(),
+            capabilities: descriptor.capabilities.clone(),
+            views: descriptor.views.clone(),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub enum WorkspaceConfigError {
     Io(std::io::Error),
@@ -38,6 +124,8 @@ pub struct ResolvedWorkspaceContext {
     pub workspace_root: PathBuf,
     pub config_path: Option<PathBuf>,
     pub config: Option<WorkspaceConfig>,
+    pub extension_path: Option<PathBuf>,
+    pub extension: Option<ProjectExtensionDescriptor>,
     pub resolved_libraries: Vec<ResolvedWorkspaceLibrary>,
     pub library_context_document: KirDocument,
 }
@@ -149,6 +237,22 @@ impl WorkspaceConfig {
     }
 }
 
+impl ProjectDescriptor {
+    pub fn from_path(path: &Path) -> Result<Self, WorkspaceConfigError> {
+        let input = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&input)?)
+    }
+
+    pub fn to_workspace_config(&self) -> WorkspaceConfig {
+        WorkspaceConfig {
+            version: self.version,
+            name: self.name.clone(),
+            libraries: self.dependencies.clone(),
+            plugins: Vec::new(),
+        }
+    }
+}
+
 pub fn resolve_workspace_context(
     open_path: &Path,
 ) -> Result<ResolvedWorkspaceContext, WorkspaceConfigError> {
@@ -166,6 +270,36 @@ pub fn resolve_workspace_context_from_config_path(
             cache_root: None,
         },
     )
+}
+
+pub fn resolve_project_descriptor_context(
+    descriptor_path: impl AsRef<Path>,
+) -> Result<ResolvedWorkspaceContext, WorkspaceConfigError> {
+    let descriptor_path = descriptor_path.as_ref();
+    let descriptor = ProjectDescriptor::from_path(descriptor_path)?;
+    let config = descriptor.to_workspace_config();
+    let workspace_root = descriptor_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let (library_context_document, resolved_libraries) =
+        resolve_library_context_document(Some(&config), Some(&workspace_root), None)?;
+    let extension_path = discover_project_extension_descriptor_path(&workspace_root);
+    let extension = extension_path
+        .as_deref()
+        .map(ProjectExtensionDescriptor::from_path)
+        .transpose()?
+        .or_else(|| ProjectExtensionDescriptor::from_project_descriptor_legacy(&descriptor));
+
+    Ok(ResolvedWorkspaceContext {
+        workspace_root,
+        config_path: Some(descriptor_path.to_path_buf()),
+        config: Some(config),
+        extension_path,
+        extension,
+        resolved_libraries,
+        library_context_document,
+    })
 }
 
 pub fn resolve_workspace_context_with_options(
@@ -195,9 +329,16 @@ pub fn resolve_workspace_context_with_options(
         workspace_root,
         config_path,
         config,
+        extension_path: None,
+        extension: None,
         resolved_libraries,
         library_context_document,
     })
+}
+
+pub fn discover_project_extension_descriptor_path(workspace_root: &Path) -> Option<PathBuf> {
+    let candidate = workspace_root.join(PROJECT_EXTENSION_DESCRIPTOR_FILE_NAME);
+    candidate.is_file().then_some(candidate)
 }
 
 pub fn discover_workspace_config_path(open_path: &Path, config_file_name: &str) -> Option<PathBuf> {
@@ -520,6 +661,31 @@ fn default_workspace_config_version() -> u32 {
     1
 }
 
+fn default_project_descriptor_version() -> u32 {
+    1
+}
+
+fn default_project_extension_descriptor_version() -> u32 {
+    1
+}
+
+fn deserialize_compatible_descriptor_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum VersionValue {
+        Number(u32),
+        Text(String),
+    }
+
+    match VersionValue::deserialize(deserializer)? {
+        VersionValue::Number(value) => Ok(value),
+        VersionValue::Text(value) => Ok(value.parse::<u32>().unwrap_or(1)),
+    }
+}
+
 fn default_workspace_library_id() -> String {
     "stdlib".to_string()
 }
@@ -537,9 +703,11 @@ mod tests {
     use serde_json::Value;
 
     use super::{
+        PROJECT_EXTENSION_DESCRIPTOR_FILE_NAME, ProjectDescriptor, ProjectExtensionDescriptor,
         ResolvedWorkspaceContext, WorkspaceConfig, WorkspaceConfigError, WorkspaceContextOptions,
-        WorkspaceLibraryRole, discover_workspace_config_path, resolve_workspace_context,
-        resolve_workspace_context_with_options,
+        WorkspaceLibraryRole, discover_project_extension_descriptor_path,
+        discover_workspace_config_path, resolve_project_descriptor_context,
+        resolve_workspace_context, resolve_workspace_context_with_options,
     };
     use crate::ir::{KirDocument, KirElement};
 
@@ -660,6 +828,262 @@ mod tests {
         assert_eq!(config.version, 1);
         assert!(config.libraries.is_empty());
         assert!(config.plugins.is_empty());
+    }
+
+    #[test]
+    fn project_descriptor_accepts_v2_dependencies_shape() {
+        let descriptor: ProjectDescriptor = serde_json::from_str(
+            r#"{
+  "schema": "dev.mercurio.project.v2",
+  "version": 2,
+  "id": "org.example.sensor-system",
+  "name": "Sensor System",
+  "model": {
+    "sourceRoots": ["model"],
+    "entrypoints": ["model/sensor_system.sysml"],
+    "metamodel": "sysml-2.0-metamodel-0.57.0"
+  },
+  "dependencies": [
+    {
+      "id": "stdlib",
+      "role": "baseline",
+      "provider": {
+        "kind": "bundled_stdlib"
+      }
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(descriptor.version, 2);
+        assert_eq!(descriptor.id.as_deref(), Some("org.example.sensor-system"));
+        assert_eq!(descriptor.model.source_roots, vec!["model".to_string()]);
+        assert_eq!(
+            descriptor.model.entrypoints,
+            vec!["model/sensor_system.sysml".to_string()]
+        );
+        assert_eq!(descriptor.dependencies.len(), 1);
+        assert_eq!(descriptor.dependencies[0].id, "stdlib");
+        assert_eq!(
+            descriptor.dependencies[0].role,
+            WorkspaceLibraryRole::Baseline
+        );
+    }
+
+    #[test]
+    fn project_descriptor_accepts_legacy_extension_fields() {
+        let descriptor: ProjectDescriptor = serde_json::from_str(
+            r#"{
+  "id": "org.example.structural-connectivity",
+  "name": "Structural Connectivity Example",
+  "version": "0.1.0",
+  "capabilities": [
+    "plugins/structural-connectivity/mercurio.plugin.json"
+  ],
+  "projectPlugins": [
+    "plugins/pacti-contract-analysis"
+  ],
+  "views": [
+    {
+      "label": "Simulation",
+      "entry": "sim/launch.py"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(descriptor.version, 1);
+        assert_eq!(
+            descriptor.id.as_deref(),
+            Some("org.example.structural-connectivity")
+        );
+        assert_eq!(
+            descriptor.capabilities,
+            vec!["plugins/structural-connectivity/mercurio.plugin.json".to_string()]
+        );
+        assert_eq!(
+            descriptor.project_plugins,
+            vec!["plugins/pacti-contract-analysis".to_string()]
+        );
+        assert_eq!(descriptor.views.len(), 1);
+    }
+
+    #[test]
+    fn project_descriptor_accepts_libraries_as_dependency_alias() {
+        let descriptor: ProjectDescriptor = serde_json::from_str(
+            r#"{
+  "name": "Project Plugin Pacti Analysis",
+  "libraries": [
+    {
+      "id": "stdlib",
+      "role": "baseline",
+      "provider": {
+        "kind": "bundled_stdlib"
+      }
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(descriptor.version, 1);
+        assert_eq!(descriptor.dependencies.len(), 1);
+        assert_eq!(descriptor.dependencies[0].id, "stdlib");
+    }
+
+    #[test]
+    fn resolves_project_descriptor_dependencies_as_library_context() {
+        let root = temp_dir("project_descriptor_context");
+        let descriptor_path = root.join(".project.json");
+        let dependency_path = root.join("dependency.kir.json");
+        let dependency = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![KirElement {
+                id: "Dependency::Thing".to_string(),
+                kind: "PartDefinition".to_string(),
+                layer: 1,
+                properties: BTreeMap::new(),
+            }],
+        };
+        dependency.write_pretty_to_path(&dependency_path).unwrap();
+        std::fs::write(
+            &descriptor_path,
+            r#"{
+  "schema": "dev.mercurio.project.v2",
+  "version": 2,
+  "dependencies": [
+    {
+      "id": "dependency",
+      "role": "baseline",
+      "provider": {
+        "kind": "precompiled_kir_artifact",
+        "path": "dependency.kir.json"
+      }
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_project_descriptor_context(&descriptor_path).unwrap();
+
+        assert_eq!(resolved.workspace_root, root);
+        assert_eq!(resolved.resolved_libraries.len(), 1);
+        assert_eq!(resolved.resolved_libraries[0].id, "dependency");
+        assert!(!resolved.library_context_document.elements.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolves_project_descriptor_with_adjacent_extension_descriptor() {
+        let root = temp_dir("project_descriptor_extensions");
+        let descriptor_path = root.join(".project.json");
+        std::fs::write(
+            &descriptor_path,
+            r#"{
+  "schema": "dev.mercurio.project.v2",
+  "version": 2,
+  "name": "Split Descriptor"
+}"#,
+        )
+        .unwrap();
+        let extension_path = root.join(PROJECT_EXTENSION_DESCRIPTOR_FILE_NAME);
+        std::fs::write(
+            &extension_path,
+            r#"{
+  "schema": "dev.mercurio.extensions.v1",
+  "version": 1,
+  "projectPlugins": ["plugins/domain"],
+  "capabilities": ["plugins/domain/mercurio.plugin.json"],
+  "views": [{"label": "Domain View", "kind": "table"}]
+}"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_project_descriptor_context(&descriptor_path).unwrap();
+
+        assert_eq!(
+            discover_project_extension_descriptor_path(&root).as_deref(),
+            Some(extension_path.as_path())
+        );
+        assert_eq!(
+            resolved.extension_path.as_deref(),
+            Some(extension_path.as_path())
+        );
+        let extension = resolved.extension.unwrap();
+        assert_eq!(
+            extension.project_plugins,
+            vec!["plugins/domain".to_string()]
+        );
+        assert_eq!(
+            extension.capabilities,
+            vec!["plugins/domain/mercurio.plugin.json".to_string()]
+        );
+        assert_eq!(extension.views.len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolves_legacy_project_descriptor_extension_fields() {
+        let root = temp_dir("project_descriptor_legacy_extensions");
+        let descriptor_path = root.join(".project.json");
+        std::fs::write(
+            &descriptor_path,
+            r#"{
+  "version": 1,
+  "projectPlugins": ["plugins/legacy"],
+  "capabilities": ["plugins/legacy/mercurio.plugin.json"],
+  "views": [{"label": "Legacy View", "kind": "simulation"}]
+}"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_project_descriptor_context(&descriptor_path).unwrap();
+
+        assert_eq!(resolved.extension_path, None);
+        let extension = resolved.extension.unwrap();
+        assert_eq!(
+            extension.schema.as_deref(),
+            Some("dev.mercurio.extensions.v1")
+        );
+        assert_eq!(
+            extension.project_plugins,
+            vec!["plugins/legacy".to_string()]
+        );
+        assert_eq!(extension.views.len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_extension_descriptor_parses_views_and_capabilities() {
+        let descriptor: ProjectExtensionDescriptor = serde_json::from_str(
+            r#"{
+  "schema": "dev.mercurio.extensions.v1",
+  "version": 1,
+  "projectPlugins": ["plugins/pacti-contract-analysis"],
+  "capabilities": [
+    "plugins/structural-connectivity/mercurio.plugin.json"
+  ],
+  "views": [
+    {
+      "label": "Voron Print Sequence",
+      "kind": "simulation",
+      "entry": "sim/launch.py"
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(descriptor.version, 1);
+        assert_eq!(
+            descriptor.project_plugins,
+            vec!["plugins/pacti-contract-analysis".to_string()]
+        );
+        assert_eq!(descriptor.capabilities.len(), 1);
+        assert_eq!(descriptor.views.len(), 1);
     }
 
     #[test]
