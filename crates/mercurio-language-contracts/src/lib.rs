@@ -32,6 +32,7 @@ pub use service::{CompileContext, LanguageRegistry, LanguageService};
 pub enum SourceLanguage {
     Core,
     Model,
+    Sysml,
 }
 
 impl SourceLanguage {
@@ -39,6 +40,7 @@ impl SourceLanguage {
         match path.extension().and_then(|extension| extension.to_str()) {
             Some(extension) if extension.eq_ignore_ascii_case("model") => Some(Self::Model),
             Some(extension) if extension.eq_ignore_ascii_case("core") => Some(Self::Core),
+            Some(extension) if extension.eq_ignore_ascii_case("sysml") => Some(Self::Sysml),
             _ => None,
         }
     }
@@ -47,6 +49,7 @@ impl SourceLanguage {
         match self {
             Self::Model => "model",
             Self::Core => "core",
+            Self::Sysml => "sysml",
         }
     }
 
@@ -54,6 +57,7 @@ impl SourceLanguage {
         match self {
             Self::Model => &["model"],
             Self::Core => &["core"],
+            Self::Sysml => &["sysml"],
         }
     }
 }
@@ -67,6 +71,17 @@ impl fmt::Display for SourceLanguage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticConcept {
+    AttributeUsage,
+    ConstraintUsage,
+    Feature,
+    ItemDefinition,
+    ItemUsage,
     Package,
+    PartDefinition,
+    PartUsage,
+    RequirementUsage,
     Type,
+    VerificationCaseUsage,
+    View,
+    Viewpoint,
 }
