@@ -374,6 +374,12 @@ fn attribute_values_are_equal(
     left: &SemanticSnapshotAttribute,
     right: &SemanticSnapshotAttribute,
 ) -> bool {
+    if left.has_effective_value
+        && right.has_effective_value
+        && left.effective_value == right.effective_value
+    {
+        return true;
+    }
     left.has_direct_value == right.has_direct_value
         && left.direct_value == right.direct_value
         && left.has_effective_value == right.has_effective_value
@@ -1377,8 +1383,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        SnapshotMode, build_semantic_snapshot, build_semantic_snapshot_with_registry,
-        canonical_compare_identifier_for_key, compare_snapshots,
+        SnapshotMode, attribute_values_are_equal, build_semantic_snapshot,
+        build_semantic_snapshot_with_registry, canonical_compare_identifier_for_key,
+        compare_snapshots, SemanticSnapshotAttribute,
     };
     use crate::ir::{KirDocument, KirElement};
     use crate::{Graph, MetamodelAttributeRegistry};
@@ -1625,6 +1632,28 @@ mod tests {
             canonical_compare_identifier_for_key("owner", "reference.PartTest.C.y.38"),
             "y"
         );
+    }
+
+    #[test]
+    fn compares_attributes_by_matching_effective_value() {
+        let effective_only = SemanticSnapshotAttribute {
+            declared_by: None,
+            origin_kind: "direct".to_string(),
+            has_direct_value: false,
+            direct_value: None,
+            has_effective_value: true,
+            effective_value: Some(json!("payload")),
+        };
+        let direct = SemanticSnapshotAttribute {
+            declared_by: None,
+            origin_kind: "derived".to_string(),
+            has_direct_value: true,
+            direct_value: Some(json!("payload")),
+            has_effective_value: true,
+            effective_value: Some(json!("payload")),
+        };
+
+        assert!(attribute_values_are_equal(&effective_only, &direct));
     }
 
     #[test]
