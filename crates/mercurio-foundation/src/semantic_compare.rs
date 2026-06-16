@@ -437,6 +437,10 @@ fn normalize_element_compare_attributes(
             set_attribute_value(&mut attributes, "owner", json!(["target"]));
             set_attribute_value(&mut attributes, "featuring_type", json!(["?"]));
         }
+        if attribute_contains_identifier(attributes.get("featuring_type"), "AcceptActionUsage") {
+            set_attribute_value(&mut attributes, "featuring_type", json!(["?"]));
+        }
+        attributes.remove("qualifiedName");
         remove_attribute_if_empty_or_identifier(&mut attributes, "ownedElement", "Documentation");
     }
 
@@ -444,6 +448,24 @@ fn normalize_element_compare_attributes(
         remove_attribute_if_empty_or_identifier(&mut attributes, "declared_name", "subactions");
         remove_attribute_if_empty_or_identifier(&mut attributes, "name", "subactions");
         attributes.remove("ownedElement");
+    }
+
+    if element.metatype.as_deref() == Some("SuccessionFlowUsage") {
+        remove_attribute_if_empty_or_identifier(
+            &mut attributes,
+            "declared_name",
+            "successionFlows",
+        );
+        remove_attribute_if_empty_or_identifier(&mut attributes, "name", "successionFlows");
+    }
+
+    if element.metatype.as_deref() == Some("AcceptActionUsage") {
+        remove_attribute_if_empty_or_identifier(
+            &mut attributes,
+            "declared_name",
+            "acceptSubactions",
+        );
+        remove_attribute_if_empty_or_identifier(&mut attributes, "name", "acceptSubactions");
     }
 
     if element.metatype.as_deref() == Some("PartUsage") {
@@ -638,6 +660,10 @@ fn attribute_is_compare_optional_when_missing(
         && (secondary.is_some() || attribute_has_no_value(primary)))
         || (attribute_has_no_value(primary)
             && secondary.is_some_and(attribute_is_effectively_default))
+        || (name == "qualifiedName"
+            && secondary.is_none()
+            && !primary.has_direct_value
+            && primary.has_effective_value)
         || (name == "owner"
             && ((attribute_has_no_value(primary)
                 && secondary
@@ -1383,9 +1409,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        SnapshotMode, attribute_values_are_equal, build_semantic_snapshot,
-        build_semantic_snapshot_with_registry, canonical_compare_identifier_for_key,
-        compare_snapshots, SemanticSnapshotAttribute,
+        SnapshotMode, attribute_is_compare_optional_when_missing, attribute_values_are_equal,
+        build_semantic_snapshot, build_semantic_snapshot_with_registry,
+        canonical_compare_identifier_for_key, compare_snapshots, SemanticSnapshotAttribute,
     };
     use crate::ir::{KirDocument, KirElement};
     use crate::{Graph, MetamodelAttributeRegistry};
@@ -1654,6 +1680,24 @@ mod tests {
         };
 
         assert!(attribute_values_are_equal(&effective_only, &direct));
+    }
+
+    #[test]
+    fn treats_effective_only_qualified_name_as_optional_when_missing() {
+        let qualified_name = SemanticSnapshotAttribute {
+            declared_by: None,
+            origin_kind: "direct".to_string(),
+            has_direct_value: false,
+            direct_value: None,
+            has_effective_value: true,
+            effective_value: Some(json!("payload")),
+        };
+
+        assert!(attribute_is_compare_optional_when_missing(
+            "qualifiedName",
+            &qualified_name,
+            None
+        ));
     }
 
     #[test]
