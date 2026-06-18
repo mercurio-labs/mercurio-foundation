@@ -3,8 +3,10 @@ name = "mercurio-language-contracts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description.workspace = true
+repository.workspace = true
 
 [dependencies]
-mercurio-kir = { path = "../mercurio-kir" }
+mercurio-kir = { path = "../mercurio-kir", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true

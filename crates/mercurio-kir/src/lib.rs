@@ -15,8 +15,34 @@ use serde_json::Value;
 pub const KIR_SCHEMA_VERSION: &str = "0.3";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
 pub const SUPPORTED_KIR_SCHEMA_VERSIONS: &[&str] = &["0.2", KIR_SCHEMA_VERSION];
-pub const REPRESENTATIVE_KIR_JSON: &str =
-    include_str!("../../../resources/foundation/representative.kir.json");
+pub const REPRESENTATIVE_KIR_JSON: &str = r#"{
+  "metadata": {
+    "kir_schema_version": "0.3",
+    "name": "Representative Foundation KIR"
+  },
+  "elements": [
+    {
+      "id": "pkg.Example",
+      "kind": "model.Package",
+      "layer": 2,
+      "properties": {
+        "qualified_name": "Example",
+        "declared_name": "Example",
+        "members": ["activity.Example.Startup"]
+      }
+    },
+    {
+      "id": "activity.Example.Startup",
+      "kind": "model.Activity",
+      "layer": 2,
+      "properties": {
+        "qualified_name": "Example.Startup",
+        "declared_name": "Startup",
+        "owner": "pkg.Example"
+      }
+    }
+  ]
+}"#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KirDocument {

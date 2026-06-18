@@ -3,9 +3,11 @@ name = "mercurio-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description.workspace = true
+repository.workspace = true
 
 [dependencies]
-mercurio-kir = { path = "../mercurio-kir" }
-mercurio-model = { path = "../mercurio-model" }
+mercurio-kir = { path = "../mercurio-kir", version = "0.1.0" }
+mercurio-model = { path = "../mercurio-model", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true

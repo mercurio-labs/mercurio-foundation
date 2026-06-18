@@ -2028,7 +2028,7 @@ fn validate_kpar_source_path(path: &str) -> Result<(), KirError> {
     }
     if !is_library_archive_source_entry(&normalized) {
         return Err(KirError::Model(format!(
-            "package source path must end in .model or .model: {path}"
+            "package source path must end in .model, .core, .sysml, or .kerml: {path}"
         )));
     }
     Ok(())
@@ -2041,12 +2041,15 @@ fn zip_error_to_kir_error(error: zip::result::ZipError) -> KirError {
 fn is_library_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
-        Some("model" | "core")
+        Some("model" | "core" | "sysml" | "kerml")
     )
 }
 
 fn is_library_archive_source_entry(entry_name: &str) -> bool {
-    entry_name.ends_with(".model") || entry_name.ends_with(".model")
+    entry_name.ends_with(".model")
+        || entry_name.ends_with(".core")
+        || entry_name.ends_with(".sysml")
+        || entry_name.ends_with(".kerml")
 }
 
 #[cfg(test)]
@@ -2146,6 +2149,53 @@ mod tests {
         unsafe {
             std::env::remove_var("MERCURIO_PACKAGE_REPO");
             std::env::remove_var("MERCURIO_CONFIG_PATH");
+        }
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn kpar_locator_resolves_bundled_ai_profile_package() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-ai-profile-bundled-repo-{}",
+            std::process::id()
+        ));
+        let user_repo = temp_root.join("user-packages");
+        let cache_root = temp_root.join("kir-cache");
+        std::fs::create_dir_all(&user_repo).unwrap();
+        unsafe {
+            std::env::set_var("MERCURIO_PACKAGE_REPO", &user_repo);
+            std::env::remove_var("MERCURIO_PACKAGE_REPOSITORIES");
+            std::env::set_var("MERCURIO_CONFIG_PATH", temp_root.join("config.json"));
+            std::env::set_var("MERCURIO_PACKAGE_KIR_CACHE", &cache_root);
+        }
+
+        let artifact = LibraryProviderConfig::KparLocator {
+            locator: "kpar:dev.mercurio/ai-profile:1.0.0".to_string(),
+        }
+        .resolve("ai-profile")
+        .unwrap();
+
+        assert_eq!(artifact.source_kind, "kpar_locator");
+        assert_eq!(
+            artifact
+                .cache_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.source_version.as_deref()),
+            Some("1.0.0")
+        );
+        assert!(
+            artifact
+                .document
+                .elements
+                .iter()
+                .any(|element| element.id == "type.AiProfile.AiGuidance")
+        );
+
+        unsafe {
+            std::env::remove_var("MERCURIO_PACKAGE_REPO");
+            std::env::remove_var("MERCURIO_CONFIG_PATH");
+            std::env::remove_var("MERCURIO_PACKAGE_KIR_CACHE");
         }
         std::fs::remove_dir_all(temp_root).unwrap();
     }
@@ -2452,6 +2502,56 @@ mod tests {
 
         assert_eq!(artifact.document.elements.len(), 1);
         assert_eq!(artifact.document.elements[0].id, "type.Precompiled.Thing");
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn write_kpar_package_preserves_sysml_source_entries() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-kpar-sysml-source-{}",
+            std::process::id()
+        ));
+        let repo = super::LocalPackageRepository::new(&temp_root);
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let kpar_path = temp_root.join("ai-profile.kpar");
+        let document = KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            )]),
+            elements: vec![KirElement {
+                id: "metadata.AiProfile.AiGuidance".to_string(),
+                kind: "MetadataDefinition".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([(
+                    "qualified_name".to_string(),
+                    Value::String("AiProfile.AiGuidance".to_string()),
+                )]),
+            }],
+        };
+
+        write_kpar_package(
+            &kpar_path,
+            &KparPackageBuild {
+                name: "dev.mercurio/ai-profile".to_string(),
+                version: Some("1.0.0".to_string()),
+                precompiled_kir: Some(document),
+                sources: vec![KparPackageSource {
+                    path: "src/ai-profile.sysml".to_string(),
+                    content: "package AiProfile {\n  metadata def AiGuidance;\n}\n".to_string(),
+                }],
+            },
+        )
+        .unwrap();
+        repo.stage_kpar(&kpar_path, "dev.mercurio/ai-profile", "1.0.0", None)
+            .unwrap();
+
+        let verification = repo
+            .verify_package("dev.mercurio/ai-profile", "1.0.0")
+            .unwrap();
+        assert_eq!(verification.source_count, 1);
+        assert!(verification.has_precompiled_kir);
 
         std::fs::remove_dir_all(temp_root).unwrap();
     }

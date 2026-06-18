@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod ast;
 pub mod diagnostics;
+pub mod editor;
 pub mod expression;
 pub mod lexer;
 pub mod reports;
@@ -18,6 +19,7 @@ pub mod service;
 
 pub use ast::*;
 pub use diagnostics::Diagnostic;
+pub use editor::{ParseSessionError, ParseSessionStatus, ParseSnapshot, TextEdit, TextRange};
 pub use expression::{
     BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
     ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
