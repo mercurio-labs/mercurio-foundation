@@ -86,6 +86,7 @@ pub mod metamodel {
         query_element_attributes,
     };
 }
+pub mod dsl;
 #[doc(hidden)]
 pub mod mpack;
 #[doc(hidden)]
@@ -176,6 +177,7 @@ pub use derived::{
     DerivedPropertyValue, builtin_core_derived_feature_manifest, derived_properties,
     derived_property, manifest_from_metadata,
 };
+pub use dsl::{DslError, DslFieldSchema, DslQueryResult, DslSchema, RhaiEngine};
 pub use element_view::ElementView;
 pub use expression::{
     BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
