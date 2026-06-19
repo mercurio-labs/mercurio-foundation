@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use rhai::{Dynamic, Engine, Map};
+use rhai::{Array, Dynamic, Engine, Map};
 
 use super::types::{DslElement, ElementSet, ModelContext};
 
@@ -17,6 +17,10 @@ pub fn register_stdlib(engine: &mut Engine) {
             .into_iter()
             .map(|(kind, count)| (kind.into(), Dynamic::from(count)))
             .collect()
+    });
+
+    engine.register_fn("sum", |values: Array| -> f64 {
+        values.into_iter().filter_map(dynamic_to_f64).sum()
     });
 
     engine.register_fn("all_parts", |context: &mut ModelContext| -> ElementSet {
@@ -73,4 +77,17 @@ pub fn register_stdlib(engine: &mut Engine) {
 
         depth
     });
+}
+
+fn dynamic_to_f64(value: Dynamic) -> Option<f64> {
+    if value.is::<i64>() {
+        return Some(value.cast::<i64>() as f64);
+    }
+    if value.is::<f64>() {
+        return Some(value.cast::<f64>());
+    }
+    if value.is::<String>() {
+        return value.cast::<String>().parse().ok();
+    }
+    None
 }

@@ -111,6 +111,7 @@ impl RhaiEngine {
                 "count_by_kind".into(),
                 "reachable".into(),
                 "specialization_depth".into(),
+                "sum".into(),
             ],
         }
     }
@@ -278,6 +279,7 @@ mod tests {
                     layer: 2,
                     properties: BTreeMap::from([
                         ("declared_name".into(), serde_json::json!("Vehicle")),
+                        ("mass_kg".into(), serde_json::json!(10.0)),
                         (
                             "members".into(),
                             serde_json::json!(["type.Demo.Vehicle.wheel"]),
@@ -290,6 +292,7 @@ mod tests {
                     layer: 2,
                     properties: BTreeMap::from([
                         ("declared_name".into(), serde_json::json!("wheel")),
+                        ("mass_kg".into(), serde_json::json!(2.5)),
                         ("owner".into(), serde_json::json!("type.Demo.Vehicle")),
                     ]),
                 },
@@ -297,10 +300,10 @@ mod tests {
                     id: "type.Demo.Animal".into(),
                     kind: "PartDefinition".into(),
                     layer: 2,
-                    properties: BTreeMap::from([(
-                        "declared_name".into(),
-                        serde_json::json!("Animal"),
-                    )]),
+                    properties: BTreeMap::from([
+                        ("declared_name".into(), serde_json::json!("Animal")),
+                        ("mass_kg".into(), serde_json::json!(4.0)),
+                    ]),
                 },
             ],
         };
@@ -364,6 +367,19 @@ mod tests {
             .unwrap();
         assert_eq!(result.columns, vec!["PartDefinition", "PartUsage"]);
         assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn stdlib_sum_numeric_properties() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"sum(model.parts().map(|p| p.property("mass_kg")))"#,
+            )
+            .unwrap();
+        assert_eq!(result.columns, vec!["value"]);
+        assert_eq!(result.rows[0][0], serde_json::json!(16.5));
     }
 
     #[test]
