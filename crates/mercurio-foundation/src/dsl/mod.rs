@@ -1,14 +1,21 @@
 mod stdlib;
 mod types;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rhai::{Engine, EvalAltResult, Scope};
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value};
+use serde_json::{Number, Value, json};
 
+use crate::capability::{
+    CapabilityRunReport, CapabilityRunStatus, CapabilityTarget, EvidenceEdge, EvidenceGraph,
+    EvidenceNode, EvidenceNodeKind, EvidenceRelation, InsightConfidence, InsightKind,
+    InsightPolarity, InsightScope, InsightSeverity, SemanticArtifact, SemanticElementRef,
+    SemanticInsight,
+};
 use crate::graph::Graph;
+use crate::identity::stable_digest;
 use crate::ir::{KirFieldKind, KirFieldRegistry};
 use types::ModelContext;
 
@@ -50,6 +57,15 @@ pub struct DslSchema {
     pub stdlib_functions: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DslAnalysisRunSpec {
+    pub run_id: String,
+    pub capability_id: String,
+    pub script: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_element_id: Option<String>,
+}
+
 pub struct RhaiEngine {
     engine: Engine,
 }
@@ -78,6 +94,15 @@ impl RhaiEngine {
 
         let result: rhai::Dynamic = self.engine.eval_with_scope(&mut scope, script)?;
         Ok(dynamic_to_query_result(result))
+    }
+
+    pub fn eval_analysis_run(
+        &self,
+        graph: Arc<Graph>,
+        spec: DslAnalysisRunSpec,
+    ) -> Result<CapabilityRunReport, DslError> {
+        let result = self.eval_query(Arc::clone(&graph), &spec.script)?;
+        Ok(query_result_to_analysis_report(&graph, spec, result))
     }
 
     pub fn schema(graph: &Graph) -> DslSchema {
@@ -117,6 +142,198 @@ impl RhaiEngine {
             ],
         }
     }
+}
+
+fn query_result_to_analysis_report(
+    graph: &Graph,
+    spec: DslAnalysisRunSpec,
+    result: DslQueryResult,
+) -> CapabilityRunReport {
+    let status = status_from_result(&result);
+    let subject = spec
+        .subject_element_id
+        .as_deref()
+        .map(|element_id| semantic_element_ref(graph, element_id));
+    let target = subject
+        .as_ref()
+        .map(|element| CapabilityTarget::Element {
+            element_id: element.element_id.clone(),
+        })
+        .unwrap_or(CapabilityTarget::Workspace);
+    let evidence_id = format!("evidence.{}.analysis_run", spec.run_id);
+    let artifact_id = format!("artifact.{}.dsl_result", spec.run_id);
+    let payload = json!({
+        "columns": result.columns,
+        "rows": result.rows,
+        "script": spec.script,
+    });
+    let artifact = SemanticArtifact {
+        id: artifact_id.clone(),
+        kind: "dsl_analysis_result".to_string(),
+        schema: "mercurio.dsl.analysis_result.v1".to_string(),
+        digest: value_digest(&payload),
+        element_refs: subject.clone().into_iter().collect(),
+        payload,
+    };
+    let insight = insight_from_result(
+        &spec.run_id,
+        subject.clone(),
+        status,
+        &evidence_id,
+        &artifact,
+    );
+
+    CapabilityRunReport {
+        run_id: spec.run_id,
+        capability_id: spec.capability_id,
+        status,
+        target,
+        insights: insight.into_iter().collect(),
+        artifacts: vec![artifact],
+        evidence: EvidenceGraph {
+            nodes: vec![
+                EvidenceNode {
+                    id: evidence_id.clone(),
+                    kind: EvidenceNodeKind::AnalysisRun,
+                    label: "DSL analysis run".to_string(),
+                    element_refs: subject.into_iter().collect(),
+                    source_spans: Vec::new(),
+                    properties: BTreeMap::new(),
+                },
+                EvidenceNode {
+                    id: artifact_id.clone(),
+                    kind: EvidenceNodeKind::Artifact,
+                    label: "DSL analysis result".to_string(),
+                    element_refs: Vec::new(),
+                    source_spans: Vec::new(),
+                    properties: BTreeMap::new(),
+                },
+            ],
+            edges: vec![EvidenceEdge {
+                source_id: artifact_id,
+                target_id: evidence_id,
+                relation: EvidenceRelation::ProducedBy,
+            }],
+        },
+        diagnostics: Vec::new(),
+        limitations: Vec::new(),
+    }
+}
+
+fn status_from_result(result: &DslQueryResult) -> CapabilityRunStatus {
+    match verdict_value(result).and_then(Value::as_str) {
+        Some("pass") | Some("passed") | Some("satisfied") => CapabilityRunStatus::Passed,
+        Some("fail") | Some("failed") | Some("violated") => CapabilityRunStatus::Failed,
+        Some("inconclusive") | Some("unknown") => CapabilityRunStatus::Inconclusive,
+        _ => CapabilityRunStatus::Inconclusive,
+    }
+}
+
+fn insight_from_result(
+    run_id: &str,
+    subject: Option<SemanticElementRef>,
+    status: CapabilityRunStatus,
+    evidence_id: &str,
+    artifact: &SemanticArtifact,
+) -> Option<SemanticInsight> {
+    let (kind, polarity, severity, claim) = match status {
+        CapabilityRunStatus::Passed => (
+            InsightKind::CriterionPass,
+            InsightPolarity::Supports,
+            InsightSeverity::Info,
+            "Analysis criterion passed",
+        ),
+        CapabilityRunStatus::Failed => (
+            InsightKind::CriterionFail,
+            InsightPolarity::Weakens,
+            InsightSeverity::Error,
+            "Analysis criterion failed",
+        ),
+        _ => return None,
+    };
+    Some(SemanticInsight {
+        id: format!("insight.{run_id}.verdict"),
+        kind,
+        subject: subject.unwrap_or_else(|| SemanticElementRef {
+            element_id: "workspace".to_string(),
+            qualified_name: None,
+            label: Some("Workspace".to_string()),
+        }),
+        claim: claim.to_string(),
+        polarity,
+        severity,
+        confidence: InsightConfidence::High,
+        scope: InsightScope::Revision {
+            revision: crate::mutation::WorkspaceRevision {
+                fingerprint: artifact.digest.clone(),
+            },
+        },
+        evidence_ids: vec![evidence_id.to_string(), artifact.id.clone()],
+        source_spans: Vec::new(),
+        metrics: first_row_metrics(&artifact.payload),
+        assumptions: Vec::new(),
+        limitations: Vec::new(),
+    })
+}
+
+fn verdict_value(result: &DslQueryResult) -> Option<&Value> {
+    let column_index = result
+        .columns
+        .iter()
+        .position(|column| column == "verdict")?;
+    result.rows.first()?.get(column_index)
+}
+
+fn first_row_metrics(payload: &Value) -> BTreeMap<String, Value> {
+    let Some(columns) = payload.get("columns").and_then(Value::as_array) else {
+        return BTreeMap::new();
+    };
+    let Some(row) = payload
+        .get("rows")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(Value::as_array)
+    else {
+        return BTreeMap::new();
+    };
+    columns
+        .iter()
+        .zip(row)
+        .filter_map(|(column, value)| {
+            column
+                .as_str()
+                .map(|column| (column.to_string(), value.clone()))
+        })
+        .collect()
+}
+
+fn semantic_element_ref(graph: &Graph, element_id: &str) -> SemanticElementRef {
+    graph
+        .element_by_element_id(element_id)
+        .map(|element| SemanticElementRef {
+            element_id: element.element_id.clone(),
+            qualified_name: element
+                .properties
+                .get("qualified_name")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            label: element
+                .properties
+                .get("declared_name")
+                .or_else(|| element.properties.get("name"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+        .unwrap_or_else(|| SemanticElementRef {
+            element_id: element_id.to_string(),
+            qualified_name: None,
+            label: None,
+        })
+}
+
+fn value_digest(value: &Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    stable_digest([("dsl-analysis-artifact".as_bytes(), bytes.as_slice())])
 }
 
 impl Default for RhaiEngine {
@@ -451,6 +668,43 @@ mod tests {
             .unwrap();
         assert_eq!(result.columns, vec!["value"]);
         assert_eq!(result.rows[0][0], serde_json::json!(3.0));
+    }
+
+    #[test]
+    fn analysis_run_wraps_dsl_result_with_evidence() {
+        let engine = RhaiEngine::new();
+        let report = engine
+            .eval_analysis_run(
+                sample_graph(),
+                DslAnalysisRunSpec {
+                    run_id: "vehicle-mass".into(),
+                    capability_id: "mercurio.dsl.analysis".into(),
+                    subject_element_id: Some("type.Demo.Vehicle".into()),
+                    script: r#"
+                        let total = sum(model.parts().map(|p| p.property("mass_kg")));
+                        #{total_mass_kg: total, verdict: "pass"}
+                    "#
+                    .into(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(report.status, CapabilityRunStatus::Passed);
+        assert_eq!(report.artifacts.len(), 1);
+        assert_eq!(report.insights.len(), 1);
+        assert_eq!(report.insights[0].kind, InsightKind::CriterionPass);
+        assert_eq!(report.evidence.nodes.len(), 2);
+        assert!(
+            report
+                .evidence
+                .nodes
+                .iter()
+                .any(|node| node.kind == EvidenceNodeKind::AnalysisRun)
+        );
+        assert_eq!(
+            report.artifacts[0].payload["rows"][0][0],
+            serde_json::json!(16.5)
+        );
     }
 
     #[test]

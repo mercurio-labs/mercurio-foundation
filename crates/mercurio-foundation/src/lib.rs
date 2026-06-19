@@ -177,7 +177,9 @@ pub use derived::{
     DerivedPropertyValue, builtin_core_derived_feature_manifest, derived_properties,
     derived_property, manifest_from_metadata,
 };
-pub use dsl::{DslError, DslFieldSchema, DslQueryResult, DslSchema, RhaiEngine};
+pub use dsl::{
+    DslAnalysisRunSpec, DslError, DslFieldSchema, DslQueryResult, DslSchema, RhaiEngine,
+};
 pub use element_view::ElementView;
 pub use expression::{
     BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
