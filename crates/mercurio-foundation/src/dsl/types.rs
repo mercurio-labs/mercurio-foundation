@@ -186,11 +186,35 @@ impl DslElement {
     }
 
     pub fn property(&mut self, name: String) -> Dynamic {
-        self.elem()
+        if let Some(value) = self
+            .elem()
             .and_then(|element| element.properties.get(&name))
             .cloned()
-            .map(serde_json_to_dynamic)
-            .unwrap_or(Dynamic::UNIT)
+        {
+            return serde_json_to_dynamic(value);
+        }
+
+        self.owned_feature_property(&name).unwrap_or(Dynamic::UNIT)
+    }
+
+    fn owned_feature_property(&self, name: &str) -> Option<Dynamic> {
+        for relation in ["features", "members"] {
+            for edge in self.graph.outgoing(self.id, relation) {
+                let Some(feature) = self.graph.element(edge.target) else {
+                    continue;
+                };
+                if string_property(feature, "declared_name") != Some(name) {
+                    continue;
+                }
+                if let Some(value) = literal_expression_value(feature) {
+                    return Some(serde_json_to_dynamic(value));
+                }
+                if let Some(value) = feature.properties.get("value").cloned() {
+                    return Some(serde_json_to_dynamic(value));
+                }
+            }
+        }
+        None
     }
 
     pub fn outgoing(&mut self, relation: String) -> ElementSet {
@@ -373,6 +397,19 @@ fn element_property_json(element: &Element, column: &str) -> Value {
             .get(property)
             .cloned()
             .unwrap_or(Value::Null),
+    }
+}
+
+fn string_property<'a>(element: &'a Element, name: &str) -> Option<&'a str> {
+    element.properties.get(name).and_then(Value::as_str)
+}
+
+fn literal_expression_value(element: &Element) -> Option<Value> {
+    let expression = element.properties.get("expression_ir")?;
+    if expression.get("kind").and_then(Value::as_str) == Some("literal") {
+        expression.get("value").cloned()
+    } else {
+        None
     }
 }
 

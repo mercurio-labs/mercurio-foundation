@@ -281,6 +281,10 @@ mod tests {
                         ("declared_name".into(), serde_json::json!("Vehicle")),
                         ("mass_kg".into(), serde_json::json!(10.0)),
                         (
+                            "features".into(),
+                            serde_json::json!(["feature.Demo.Vehicle.payloadMass"]),
+                        ),
+                        (
                             "members".into(),
                             serde_json::json!(["type.Demo.Vehicle.wheel"]),
                         ),
@@ -294,6 +298,19 @@ mod tests {
                         ("declared_name".into(), serde_json::json!("wheel")),
                         ("mass_kg".into(), serde_json::json!(2.5)),
                         ("owner".into(), serde_json::json!("type.Demo.Vehicle")),
+                    ]),
+                },
+                KirElement {
+                    id: "feature.Demo.Vehicle.payloadMass".into(),
+                    kind: "AttributeUsage".into(),
+                    layer: 3,
+                    properties: BTreeMap::from([
+                        ("declared_name".into(), serde_json::json!("payload_mass_kg")),
+                        ("owner".into(), serde_json::json!("type.Demo.Vehicle")),
+                        (
+                            "expression_ir".into(),
+                            serde_json::json!({"kind": "literal", "value": 3.0}),
+                        ),
                     ]),
                 },
                 KirElement {
@@ -380,6 +397,19 @@ mod tests {
             .unwrap();
         assert_eq!(result.columns, vec!["value"]);
         assert_eq!(result.rows[0][0], serde_json::json!(16.5));
+    }
+
+    #[test]
+    fn property_resolves_owned_literal_feature() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"model.element("type.Demo.Vehicle").property("payload_mass_kg")"#,
+            )
+            .unwrap();
+        assert_eq!(result.columns, vec!["value"]);
+        assert_eq!(result.rows[0][0], serde_json::json!(3.0));
     }
 
     #[test]
