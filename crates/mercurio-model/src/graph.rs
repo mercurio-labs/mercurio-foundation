@@ -673,30 +673,23 @@ mod tests {
     #[test]
     fn representative_example_projects_core_graph_edges() {
         let graph = Graph::from_document(KirDocument::representative_example().unwrap()).unwrap();
-        let vehicle = graph.node_id("type.Example.Vehicle").unwrap();
         let package = graph.node_id("pkg.Example").unwrap();
-        let controller_feature = graph.node_id("feature.Example.Vehicle.controller").unwrap();
+        let activity = graph.node_id("activity.Example.Startup").unwrap();
 
         assert!(
             graph
-                .element_by_element_id("req.Example.SafeStart")
+                .element_by_element_id("activity.Example.Startup")
                 .is_some()
         );
         assert!(
             graph
-                .outgoing(vehicle, "owner")
+                .outgoing(activity, "owner")
                 .any(|edge| edge.target == package)
         );
         assert!(
             graph
-                .outgoing(vehicle, "features")
-                .any(|edge| edge.target == controller_feature)
-        );
-        assert!(
-            graph
-                .outgoing(vehicle, "specializes")
-                .filter_map(|edge| graph.element_id(edge.target))
-                .any(|id| id == "Model::Kernel::ComponentDefinition")
+                .outgoing(package, "members")
+                .any(|edge| edge.target == activity)
         );
     }
 }
