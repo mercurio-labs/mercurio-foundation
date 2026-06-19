@@ -9,6 +9,7 @@
 //! modules are hidden from generated documentation so the rustdoc surface
 //! reflects the intended API contract.
 
+pub mod analysis;
 #[doc(hidden)]
 pub mod assessment;
 #[doc(hidden)]
@@ -134,6 +135,10 @@ pub mod workspace;
 #[doc(hidden)]
 pub mod workspace_cache;
 
+pub use analysis::{
+    AnalysisCaseModel, AnalysisElementRef, AnalysisInventory, AnalysisTechniqueKind,
+    AnalysisWorkflow, AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
+};
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
     AssessmentQuery, AssessmentReport, AssessmentSpec, AssessmentStatus, RuntimeAssessmentRequest,
