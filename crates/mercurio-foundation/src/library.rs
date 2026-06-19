@@ -615,9 +615,15 @@ impl LibraryProviderConfig {
             Self::PackageSetDirectory { path, entry } => {
                 let source_path = resolve_provider_path(path, base_dir);
                 let package_index = build_kpar_package_index(&source_path)?;
+                let entry_key = package_index.resolve(entry, None).ok_or_else(|| {
+                    KirError::Model(format!(
+                        "package-set entry '{entry}' not found in {}",
+                        source_path.display()
+                    ))
+                })?;
                 let source_version = package_index
-                    .resolve(entry, None)
-                    .and_then(|entry_key| package_index.packages.get(&entry_key))
+                    .packages
+                    .get(&entry_key)
                     .and_then(|package| package.metadata.as_ref())
                     .and_then(|metadata| metadata.version.clone());
                 Ok(LibrarySourceFingerprint {
@@ -3275,6 +3281,12 @@ mod tests {
         }
         .resolve("systems")
         .unwrap();
+        let fingerprint = LibraryProviderConfig::PackageSetDirectory {
+            path: package_dir.display().to_string(),
+            entry: "https://www.omg.org/spec/Model/20250201/Systems-Library.kpar".to_string(),
+        }
+        .source_fingerprint("systems", None)
+        .unwrap();
 
         assert_eq!(artifact.source_kind, "package_set_directory");
         assert_eq!(
@@ -3282,6 +3294,11 @@ mod tests {
                 .cache_metadata
                 .as_ref()
                 .and_then(|metadata| metadata.source_version.as_deref()),
+            Some("2.0.0")
+        );
+        assert_eq!(fingerprint.source_kind, "package_set_directory");
+        assert_eq!(
+            fingerprint.cache_metadata.source_version.as_deref(),
             Some("2.0.0")
         );
         assert!(
