@@ -1631,13 +1631,255 @@ fn default_layout_direction() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mercurio_core::{KirDocument, KirElement};
+    use serde_json::json;
+    use std::collections::BTreeMap;
 
     fn sample_graph() -> (Graph, MetamodelAttributeRegistry) {
-        let document =
-            mercurio_core::KirDocument::representative_example().expect("fixture should parse");
+        let document = view_fixture_document();
         let graph = Graph::from_document(document).expect("sample graph should be valid");
         let registry = MetamodelAttributeRegistry::build(&graph);
         (graph, registry)
+    }
+
+    fn view_fixture_document() -> KirDocument {
+        fn element(
+            id: &str,
+            kind: &str,
+            layer: u8,
+            properties: BTreeMap<String, Value>,
+        ) -> KirElement {
+            KirElement {
+                id: id.to_string(),
+                kind: kind.to_string(),
+                layer,
+                properties,
+            }
+        }
+
+        KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                element(
+                    "Comment",
+                    "Metaclass",
+                    1,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Comment")),
+                        (
+                            "features".to_string(),
+                            json!(["metafeature.Comment.body", "metafeature.Comment.locale"]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "metafeature.Comment.body",
+                    "MetamodelFeature",
+                    1,
+                    BTreeMap::from([
+                        ("owner".to_string(), json!("Comment")),
+                        ("kir_property".to_string(), json!("body")),
+                        ("type_label".to_string(), json!("String")),
+                    ]),
+                ),
+                element(
+                    "metafeature.Comment.locale",
+                    "MetamodelFeature",
+                    1,
+                    BTreeMap::from([
+                        ("owner".to_string(), json!("Comment")),
+                        ("kir_property".to_string(), json!("locale")),
+                        ("type_label".to_string(), json!("String")),
+                    ]),
+                ),
+                element(
+                    "Model::Kernel::ComponentDefinition",
+                    "PartDefinition",
+                    1,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("ComponentDefinition")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Model::Kernel::ComponentDefinition"),
+                        ),
+                    ]),
+                ),
+                element(
+                    "pkg.Example",
+                    "Package",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Example")),
+                        ("qualified_name".to_string(), json!("Example")),
+                        (
+                            "members".to_string(),
+                            json!([
+                                "type.Example.Vehicle",
+                                "state.Example.DriveMode",
+                                "activity.Example.Startup",
+                                "req.Example.SafeStart",
+                                "comment.Example.Note",
+                                "comment.Example.LocalizedNote"
+                            ]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "type.Example.Vehicle",
+                    "PartDefinition",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Vehicle")),
+                        ("qualified_name".to_string(), json!("Example.Vehicle")),
+                        ("owner".to_string(), json!("pkg.Example")),
+                        (
+                            "specializes".to_string(),
+                            json!(["Model::Kernel::ComponentDefinition"]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "feature.Example.Vehicle.controller",
+                    "PartUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("controller")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Example.Vehicle.controller"),
+                        ),
+                        ("owner".to_string(), json!("type.Example.Vehicle")),
+                        ("owning_type".to_string(), json!("type.Example.Vehicle")),
+                    ]),
+                ),
+                element(
+                    "state.Example.DriveMode",
+                    "StateUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("DriveMode")),
+                        ("qualified_name".to_string(), json!("Example.DriveMode")),
+                        ("owner".to_string(), json!("pkg.Example")),
+                        ("source".to_string(), json!("state.Example.Parked")),
+                        ("target".to_string(), json!("state.Example.Driving")),
+                    ]),
+                ),
+                element(
+                    "state.Example.Parked",
+                    "StateUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Parked")),
+                        ("qualified_name".to_string(), json!("Example.Parked")),
+                        ("owner".to_string(), json!("state.Example.DriveMode")),
+                    ]),
+                ),
+                element(
+                    "state.Example.Driving",
+                    "StateUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Driving")),
+                        ("qualified_name".to_string(), json!("Example.Driving")),
+                        ("owner".to_string(), json!("state.Example.DriveMode")),
+                    ]),
+                ),
+                element(
+                    "activity.Example.Startup",
+                    "ActivityUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Startup")),
+                        ("qualified_name".to_string(), json!("Example.Startup")),
+                        ("owner".to_string(), json!("pkg.Example")),
+                    ]),
+                ),
+                element(
+                    "action.Example.Startup.Validate",
+                    "ActionUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Validate")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Example.Startup.Validate"),
+                        ),
+                        ("owner".to_string(), json!("activity.Example.Startup")),
+                    ]),
+                ),
+                element(
+                    "flow.Example.Startup.Validate",
+                    "ControlFlow",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("ValidateFlow")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Example.Startup.ValidateFlow"),
+                        ),
+                        ("owner".to_string(), json!("activity.Example.Startup")),
+                        ("source".to_string(), json!("activity.Example.Startup")),
+                        (
+                            "target".to_string(),
+                            json!("action.Example.Startup.Validate"),
+                        ),
+                    ]),
+                ),
+                element(
+                    "req.Example.SafeStart",
+                    "RequirementUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("SafeStart")),
+                        ("qualified_name".to_string(), json!("Example.SafeStart")),
+                        ("owner".to_string(), json!("pkg.Example")),
+                        ("requirement_id".to_string(), json!("REQ-001")),
+                        (
+                            "text".to_string(),
+                            json!("The vehicle shall prevent unsafe starts."),
+                        ),
+                        (
+                            "metadata".to_string(),
+                            json!({
+                                "Review": {
+                                    "properties": {
+                                        "status": "approved",
+                                        "owner": "Foundation Team",
+                                        "reviewDate": "2026-06-03"
+                                    }
+                                }
+                            }),
+                        ),
+                    ]),
+                ),
+                element(
+                    "comment.Example.Note",
+                    "Comment",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Note")),
+                        ("qualified_name".to_string(), json!("Example.Note")),
+                        ("owner".to_string(), json!("pkg.Example")),
+                        ("metatype".to_string(), json!("Comment")),
+                        ("body".to_string(), json!("Primary model note.")),
+                        ("locale".to_string(), json!("en-US")),
+                    ]),
+                ),
+                element(
+                    "comment.Example.LocalizedNote",
+                    "Comment",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("LocalizedNote")),
+                        ("qualified_name".to_string(), json!("Example.LocalizedNote")),
+                        ("owner".to_string(), json!("pkg.Example")),
+                        ("metatype".to_string(), json!("Comment")),
+                        ("body".to_string(), json!("Localized model note.")),
+                        ("locale".to_string(), json!("fr-FR")),
+                    ]),
+                ),
+            ],
+        }
     }
 
     fn render_sample(spec: DiagramSpecDto) -> DiagramViewDto {
