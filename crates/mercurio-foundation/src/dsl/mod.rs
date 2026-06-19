@@ -111,6 +111,8 @@ impl RhaiEngine {
                 "count_by_kind".into(),
                 "reachable".into(),
                 "specialization_depth".into(),
+                "max".into(),
+                "min".into(),
                 "sum".into(),
             ],
         }
@@ -397,6 +399,45 @@ mod tests {
             .unwrap();
         assert_eq!(result.columns, vec!["value"]);
         assert_eq!(result.rows[0][0], serde_json::json!(16.5));
+    }
+
+    #[test]
+    fn stdlib_max_and_min_numeric_properties() {
+        let engine = RhaiEngine::new();
+        let max_result = engine
+            .eval_query(
+                sample_graph(),
+                r#"max(model.parts().map(|p| p.property("mass_kg")))"#,
+            )
+            .unwrap();
+        let min_result = engine
+            .eval_query(
+                sample_graph(),
+                r#"min(model.parts().map(|p| p.property("mass_kg")))"#,
+            )
+            .unwrap();
+
+        assert_eq!(max_result.columns, vec!["value"]);
+        assert_eq!(max_result.rows[0][0], serde_json::json!(10.0));
+        assert_eq!(min_result.columns, vec!["value"]);
+        assert_eq!(min_result.rows[0][0], serde_json::json!(2.5));
+    }
+
+    #[test]
+    fn stdlib_max_and_min_binary_values() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"#{larger: max(12.0, 7.0), smaller: min(12.0, 7.0)}"#,
+            )
+            .unwrap();
+
+        assert_eq!(result.columns, vec!["larger", "smaller"]);
+        assert_eq!(
+            result.rows[0],
+            vec![serde_json::json!(12.0), serde_json::json!(7.0)]
+        );
     }
 
     #[test]

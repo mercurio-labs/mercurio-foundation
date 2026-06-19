@@ -23,6 +23,27 @@ pub fn register_stdlib(engine: &mut Engine) {
         values.into_iter().filter_map(dynamic_to_f64).sum()
     });
 
+    engine.register_fn("max", |values: Array| -> Dynamic {
+        numeric_extreme(values, f64::max)
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    });
+    engine.register_fn("max", |left: Dynamic, right: Dynamic| -> Dynamic {
+        binary_numeric_extreme(left, right, f64::max)
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    });
+    engine.register_fn("min", |values: Array| -> Dynamic {
+        numeric_extreme(values, f64::min)
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    });
+    engine.register_fn("min", |left: Dynamic, right: Dynamic| -> Dynamic {
+        binary_numeric_extreme(left, right, f64::min)
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    });
+
     engine.register_fn("all_parts", |context: &mut ModelContext| -> ElementSet {
         context.parts()
     });
@@ -90,4 +111,19 @@ fn dynamic_to_f64(value: Dynamic) -> Option<f64> {
         return value.cast::<String>().parse().ok();
     }
     None
+}
+
+fn numeric_extreme(values: Array, reducer: fn(f64, f64) -> f64) -> Option<f64> {
+    values
+        .into_iter()
+        .filter_map(dynamic_to_f64)
+        .reduce(reducer)
+}
+
+fn binary_numeric_extreme(
+    left: Dynamic,
+    right: Dynamic,
+    reducer: fn(f64, f64) -> f64,
+) -> Option<f64> {
+    Some(reducer(dynamic_to_f64(left)?, dynamic_to_f64(right)?))
 }
