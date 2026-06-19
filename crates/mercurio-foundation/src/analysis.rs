@@ -128,6 +128,7 @@ impl AnalysisInventory {
         let analysis_cases = graph
             .elements()
             .iter()
+            .filter(|element| is_authored_model_element(element))
             .filter(|element| is_analysis_case_kind(element.kind.as_ref()))
             .map(|element| AnalysisCaseModel::from_element(graph, element))
             .collect();
@@ -135,6 +136,7 @@ impl AnalysisInventory {
         let requirement_evaluations = graph
             .elements()
             .iter()
+            .filter(|element| is_authored_model_element(element))
             .filter(|element| is_requirement_kind(element.kind.as_ref()))
             .map(|element| requirement_evaluation_from_element(graph, element))
             .collect();
@@ -363,6 +365,7 @@ where
     graph
         .elements()
         .iter()
+        .filter(|element| is_authored_model_element(element))
         .filter(|element| predicate(element.kind.as_ref()))
         .map(element_ref)
         .collect()
@@ -497,6 +500,10 @@ fn is_simulation_kind(kind: &str) -> bool {
 
 fn kind_contains(kind: &str, needle: &str) -> bool {
     canonical_kind(kind).contains(needle)
+}
+
+fn is_authored_model_element(element: &Element) -> bool {
+    element.layer >= 2
 }
 
 fn canonical_kind(kind: &str) -> String {
