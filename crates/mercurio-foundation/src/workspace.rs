@@ -45,8 +45,6 @@ pub struct ProjectDescriptor {
     pub dependencies: Vec<WorkspaceLibraryConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub project_plugins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -857,8 +855,8 @@ mod tests {
     }
 
     #[test]
-    fn project_descriptor_accepts_project_plugin_directories() {
-        let descriptor: ProjectDescriptor = serde_json::from_str(
+    fn project_descriptor_rejects_project_plugin_directories() {
+        let err = serde_json::from_str::<ProjectDescriptor>(
             r#"{
   "name": "Project Plugin Pacti Analysis",
   "version": 1,
@@ -867,12 +865,9 @@ mod tests {
   ]
 }"#,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(
-            descriptor.project_plugins,
-            vec!["plugins/pacti-contract-analysis".to_string()]
-        );
+        assert!(err.to_string().contains("unknown field"));
     }
 
     #[test]

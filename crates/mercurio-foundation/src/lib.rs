@@ -128,7 +128,6 @@ pub mod syntax_compare;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod transaction;
-#[allow(deprecated)]
 #[doc(hidden)]
 pub mod views;
 #[doc(hidden)]
@@ -338,17 +337,14 @@ pub use transaction::{
     SemanticTransaction, SemanticTransactionReport, TransactionArtifact, TransactionDiagnostic,
     TransactionDiagnosticSeverity, TransactionIsolation, TransactionOperation, TransactionStatus,
 };
-#[allow(deprecated)]
 pub use views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
     ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
     InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto, L2ExplorerNodeDto,
     L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto, MetatypeExplorerGraphDto,
-    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, ModelMetadataDto, RequirementSourceDto,
-    RequirementTableColumnDto, RequirementTableRowDto, RequirementTableViewDto, SearchResultDto,
+    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, ModelMetadataDto, SearchResultDto,
     document_model_metadata_view, element_details, graph_view, l2_explorer_view, library_tree_view,
-    library_tree_view_from_document, metatype_explorer_view, model_metadata_view,
-    requirements_table_view, search_view,
+    library_tree_view_from_document, metatype_explorer_view, model_metadata_view, search_view,
 };
 pub use workspace::{
     ProjectDescriptor, ProjectExtensionDescriptor, ProjectModelConfig, ResolvedWorkspaceContext,
