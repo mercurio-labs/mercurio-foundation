@@ -8,6 +8,71 @@ use crate::metamodel::{
     MetamodelFeatureRegistry, MetamodelValidationDiagnostic, validate_derived_metamodel_semantics,
 };
 
+pub const SEMANTIC_VALIDATION_POLICY_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticValidationMode {
+    Off,
+    Warn,
+    Error,
+}
+
+impl SemanticValidationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl Default for SemanticValidationMode {
+    fn default() -> Self {
+        Self::Warn
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticValidationPolicy {
+    #[serde(default = "default_semantic_validation_policy_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub mode: SemanticValidationMode,
+}
+
+impl SemanticValidationPolicy {
+    pub fn cache_key(self) -> String {
+        format!(
+            "semantic-validation:v{}:{}",
+            self.version,
+            self.mode.as_str()
+        )
+    }
+
+    fn diagnostic_severity(self) -> Option<SemanticValidationSeverity> {
+        match self.mode {
+            SemanticValidationMode::Off => None,
+            SemanticValidationMode::Warn => Some(SemanticValidationSeverity::Warning),
+            SemanticValidationMode::Error => Some(SemanticValidationSeverity::Error),
+        }
+    }
+}
+
+impl Default for SemanticValidationPolicy {
+    fn default() -> Self {
+        Self {
+            version: SEMANTIC_VALIDATION_POLICY_VERSION,
+            mode: SemanticValidationMode::Warn,
+        }
+    }
+}
+
+fn default_semantic_validation_policy_version() -> u32 {
+    SEMANTIC_VALIDATION_POLICY_VERSION
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticValidationSeverity {
@@ -42,6 +107,17 @@ impl SemanticValidationReport {
             .filter(|diagnostic| diagnostic.severity == SemanticValidationSeverity::Warning)
             .count()
     }
+
+    pub fn error_count(&self) -> usize {
+        self.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == SemanticValidationSeverity::Error)
+            .count()
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.error_count() > 0
+    }
 }
 
 pub fn validate_kir_semantics(
@@ -50,9 +126,28 @@ pub fn validate_kir_semantics(
     validate_kir_semantics_with_context(document, None)
 }
 
+pub fn validate_kir_semantics_with_policy(
+    document: &KirDocument,
+    policy: SemanticValidationPolicy,
+) -> Result<SemanticValidationReport, KirError> {
+    validate_kir_semantics_with_context_and_policy(document, None, policy)
+}
+
 pub fn validate_kir_semantics_with_context(
     document: &KirDocument,
     library_context: Option<&KirDocument>,
+) -> Result<SemanticValidationReport, KirError> {
+    validate_kir_semantics_with_context_and_policy(
+        document,
+        library_context,
+        SemanticValidationPolicy::default(),
+    )
+}
+
+pub fn validate_kir_semantics_with_context_and_policy(
+    document: &KirDocument,
+    library_context: Option<&KirDocument>,
+    policy: SemanticValidationPolicy,
 ) -> Result<SemanticValidationReport, KirError> {
     let target_element_ids = document
         .elements
@@ -72,17 +167,30 @@ pub fn validate_kir_semantics_with_context(
     Ok(validate_kir_semantics_for_graph_targets(
         &graph,
         Some(&target_element_ids),
+        policy,
     ))
 }
 
 pub fn validate_kir_semantics_for_graph(graph: &Graph) -> SemanticValidationReport {
-    validate_kir_semantics_for_graph_targets(graph, None)
+    validate_kir_semantics_for_graph_with_policy(graph, SemanticValidationPolicy::default())
+}
+
+pub fn validate_kir_semantics_for_graph_with_policy(
+    graph: &Graph,
+    policy: SemanticValidationPolicy,
+) -> SemanticValidationReport {
+    validate_kir_semantics_for_graph_targets(graph, None, policy)
 }
 
 fn validate_kir_semantics_for_graph_targets(
     graph: &Graph,
     target_element_ids: Option<&BTreeSet<String>>,
+    policy: SemanticValidationPolicy,
 ) -> SemanticValidationReport {
+    let Some(severity) = policy.diagnostic_severity() else {
+        return SemanticValidationReport::default();
+    };
+
     let registry = MetamodelFeatureRegistry::build(graph);
     let diagnostics = validate_derived_metamodel_semantics(graph, &registry)
         .into_iter()
@@ -91,20 +199,21 @@ fn validate_kir_semantics_for_graph_targets(
                 .map(|ids| ids.contains(&diagnostic.element_id))
                 .unwrap_or(true)
         })
-        .map(semantic_warning_from_metamodel)
+        .map(|diagnostic| semantic_diagnostic_from_metamodel(diagnostic, severity))
         .collect();
 
     SemanticValidationReport { diagnostics }
 }
 
-fn semantic_warning_from_metamodel(
+fn semantic_diagnostic_from_metamodel(
     diagnostic: MetamodelValidationDiagnostic,
+    severity: SemanticValidationSeverity,
 ) -> SemanticValidationDiagnostic {
     SemanticValidationDiagnostic {
         code: diagnostic.code.to_string(),
         message: diagnostic.message,
         element_id: Some(diagnostic.element_id),
-        severity: SemanticValidationSeverity::Warning,
+        severity,
     }
 }
 
@@ -145,6 +254,66 @@ mod tests {
             report.diagnostics[0].element_id.as_deref(),
             Some("transition.Demo.start")
         );
+    }
+
+    #[test]
+    fn error_policy_promotes_semantic_diagnostics_to_errors() {
+        let document = KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                json!(KIR_SCHEMA_VERSION),
+            )]),
+            elements: vec![KirElement {
+                id: "transition.Demo.start".to_string(),
+                kind: "SysML::Systems::TransitionUsage".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([("source".to_string(), json!("state.Demo.Initial"))]),
+            }],
+        };
+        let library_context = validation_library_context();
+
+        let report = validate_kir_semantics_with_context_and_policy(
+            &document,
+            Some(&library_context),
+            SemanticValidationPolicy {
+                mode: SemanticValidationMode::Error,
+                ..SemanticValidationPolicy::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(report.warning_count(), 0);
+        assert_eq!(report.error_count(), 1);
+        assert!(report.has_errors());
+    }
+
+    #[test]
+    fn off_policy_returns_empty_report() {
+        let document = KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                json!(KIR_SCHEMA_VERSION),
+            )]),
+            elements: vec![KirElement {
+                id: "transition.Demo.start".to_string(),
+                kind: "SysML::Systems::TransitionUsage".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([("source".to_string(), json!("state.Demo.Initial"))]),
+            }],
+        };
+        let library_context = validation_library_context();
+
+        let report = validate_kir_semantics_with_context_and_policy(
+            &document,
+            Some(&library_context),
+            SemanticValidationPolicy {
+                mode: SemanticValidationMode::Off,
+                ..SemanticValidationPolicy::default()
+            },
+        )
+        .unwrap();
+
+        assert!(report.is_empty());
     }
 
     #[test]

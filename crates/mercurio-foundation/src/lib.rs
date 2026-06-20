@@ -215,8 +215,10 @@ pub use goal::{
 };
 pub use graph::{Edge, Element, Graph, GraphError, NodeId};
 pub use identity::{
-    ConceptId, ElementId, PackageId, ProfileId, RelationshipId, SourceSpanRef, StdlibVersion,
-    stable_digest, workspace_revision_for_kir_document,
+    ConceptId, ElementId, PackageId, ProfileId, RelationshipId, SEMANTIC_ANCHOR_SCHEMA,
+    SemanticAnchor, SemanticAnchorResolution, SemanticAnchorResolutionStatus, SourceSpanRef,
+    StdlibVersion, resolve_semantic_anchor, semantic_anchor_for_element, stable_digest,
+    workspace_revision_for_kir_document,
 };
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
@@ -333,8 +335,11 @@ pub use semantic_target::{
     SemanticTargetResolver, TargetLayers,
 };
 pub use semantic_validation::{
-    SemanticValidationDiagnostic, SemanticValidationReport, SemanticValidationSeverity,
-    validate_kir_semantics, validate_kir_semantics_for_graph, validate_kir_semantics_with_context,
+    SEMANTIC_VALIDATION_POLICY_VERSION, SemanticValidationDiagnostic, SemanticValidationMode,
+    SemanticValidationPolicy, SemanticValidationReport, SemanticValidationSeverity,
+    validate_kir_semantics, validate_kir_semantics_for_graph,
+    validate_kir_semantics_for_graph_with_policy, validate_kir_semantics_with_context,
+    validate_kir_semantics_with_context_and_policy, validate_kir_semantics_with_policy,
 };
 pub use session::{
     CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,

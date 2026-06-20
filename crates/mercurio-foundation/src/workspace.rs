@@ -103,6 +103,7 @@ pub struct ResolvedWorkspaceContext {
     pub extension_path: Option<PathBuf>,
     pub extension: Option<ProjectExtensionDescriptor>,
     pub resolved_libraries: Vec<ResolvedWorkspaceLibrary>,
+    pub validation_report: SemanticValidationReport,
     pub library_context_document: KirDocument,
 }
 
@@ -267,6 +268,8 @@ pub fn resolve_project_descriptor_context(
         .map(ProjectExtensionDescriptor::from_path)
         .transpose()?;
 
+    let validation_report = aggregate_workspace_validation_report(&resolved_libraries);
+
     Ok(ResolvedWorkspaceContext {
         workspace_root,
         config_path: Some(descriptor_path.to_path_buf()),
@@ -274,6 +277,7 @@ pub fn resolve_project_descriptor_context(
         extension_path,
         extension,
         resolved_libraries,
+        validation_report,
         library_context_document,
     })
 }
@@ -301,6 +305,8 @@ pub fn resolve_workspace_context_with_options(
         cache_root.as_deref(),
     )?;
 
+    let validation_report = aggregate_workspace_validation_report(&resolved_libraries);
+
     Ok(ResolvedWorkspaceContext {
         workspace_root,
         config_path,
@@ -308,8 +314,20 @@ pub fn resolve_workspace_context_with_options(
         extension_path: None,
         extension: None,
         resolved_libraries,
+        validation_report,
         library_context_document,
     })
+}
+
+fn aggregate_workspace_validation_report(
+    resolved_libraries: &[ResolvedWorkspaceLibrary],
+) -> SemanticValidationReport {
+    SemanticValidationReport {
+        diagnostics: resolved_libraries
+            .iter()
+            .flat_map(|library| library.validation_report.diagnostics.iter().cloned())
+            .collect(),
+    }
 }
 
 pub fn discover_project_extension_descriptor_path(workspace_root: &Path) -> Option<PathBuf> {
