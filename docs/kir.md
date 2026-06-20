@@ -11,7 +11,7 @@ A KIR document has metadata plus elements:
 ```json
 {
   "metadata": {
-    "kir_schema_version": "0.3"
+    "kir_schema_version": "0.4"
   },
   "elements": [
     {
@@ -43,6 +43,11 @@ Foundation validation enforces:
 - known reference fields have the expected shape,
 - persisted elements include required stable identity properties such as `qualified_name`,
 - unknown persisted fields are rejected unless they are inside explicit extension locations.
+
+Foundation also produces semantic validation reports in warning mode for compile-cache,
+workspace-library, and KPAR verification paths. These reports use metamodel feature facts
+to detect issues such as unsupported feature ownership or incomplete relationship endpoints
+without rejecting otherwise loadable KIR.
 
 ## Why KIR Exists
 

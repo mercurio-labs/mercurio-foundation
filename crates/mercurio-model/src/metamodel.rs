@@ -93,6 +93,24 @@ pub struct MetamodelFeatureRegistry {
     declared_features: HashMap<String, Vec<MetamodelFeatureView>>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DerivedMetamodelCapabilities {
+    pub class_id: Option<String>,
+    pub classifier_like: bool,
+    pub feature_like: bool,
+    pub namespace_like: bool,
+    pub relationship_like: bool,
+    pub can_own_features: bool,
+    pub can_have_endpoints: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetamodelValidationDiagnostic {
+    pub code: &'static str,
+    pub message: String,
+    pub element_id: String,
+}
+
 impl MetamodelFeatureRegistry {
     pub fn build(graph: &Graph) -> Self {
         let mut registry = Self::default();
@@ -212,6 +230,91 @@ impl MetamodelFeatureRegistry {
             entry.push(feature);
         }
     }
+}
+
+pub fn derive_metamodel_capabilities(
+    graph: &Graph,
+    registry: &MetamodelFeatureRegistry,
+    node_id: NodeId,
+) -> DerivedMetamodelCapabilities {
+    let Some(element) = graph.element(node_id) else {
+        return DerivedMetamodelCapabilities::default();
+    };
+    let Some(class_id) = metamodel_class_id_for_element(graph, registry, element) else {
+        return DerivedMetamodelCapabilities::default();
+    };
+
+    let feature_properties = metamodel_feature_properties(graph, registry, &class_id);
+    DerivedMetamodelCapabilities {
+        class_id: Some(class_id),
+        classifier_like: feature_properties.contains("features")
+            || feature_properties.contains("specializes"),
+        feature_like: feature_properties.contains("owner")
+            || feature_properties.contains("type")
+            || feature_properties.contains("definition")
+            || feature_properties.contains("featuring_type"),
+        namespace_like: feature_properties.contains("members"),
+        relationship_like: has_endpoint_feature(&feature_properties),
+        can_own_features: feature_properties.contains("features"),
+        can_have_endpoints: has_endpoint_feature(&feature_properties),
+    }
+}
+
+pub fn validate_derived_metamodel_semantics(
+    graph: &Graph,
+    registry: &MetamodelFeatureRegistry,
+) -> Vec<MetamodelValidationDiagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for element in graph.elements() {
+        if is_metamodel_declaration_element(element) {
+            continue;
+        }
+        let Some(class_id) = metamodel_class_id_for_element(graph, registry, element) else {
+            continue;
+        };
+        if !metamodel_contract_loaded_for_class(graph, registry, &class_id) {
+            continue;
+        }
+
+        let capabilities = derive_metamodel_capabilities(graph, registry, element.id);
+        if element.properties.get("features").is_some() && !capabilities.can_own_features {
+            diagnostics.push(MetamodelValidationDiagnostic {
+                code: "kir.metamodel.features.unsupported",
+                message: format!(
+                    "KIR element {} declares `features`, but its derived metamodel capabilities do not allow feature ownership",
+                    element.element_id
+                ),
+                element_id: element.element_id.clone(),
+            });
+        }
+
+        let declares_source = element.properties.get("source").is_some()
+            || element.properties.get("sources").is_some();
+        let declares_target = element.properties.get("target").is_some()
+            || element.properties.get("targets").is_some();
+        if (declares_source || declares_target) && !capabilities.can_have_endpoints {
+            diagnostics.push(MetamodelValidationDiagnostic {
+                code: "kir.metamodel.endpoints.unsupported",
+                message: format!(
+                    "KIR element {} declares relationship endpoints, but its derived metamodel capabilities do not allow endpoints",
+                    element.element_id
+                ),
+                element_id: element.element_id.clone(),
+            });
+        } else if capabilities.can_have_endpoints && declares_source != declares_target {
+            diagnostics.push(MetamodelValidationDiagnostic {
+                code: "kir.metamodel.endpoints.incomplete",
+                message: format!(
+                    "KIR element {} declares only one side of a relationship endpoint pair",
+                    element.element_id
+                ),
+                element_id: element.element_id.clone(),
+            });
+        }
+    }
+
+    diagnostics
 }
 
 #[derive(Debug, Clone, Default)]
@@ -482,6 +585,60 @@ pub fn element_metatype(graph: &Graph, node_id: NodeId) -> Option<&crate::graph:
         .outgoing(node_id, "metatype")
         .next()
         .and_then(|edge| graph.element(edge.target))
+}
+
+fn metamodel_class_id_for_element(
+    graph: &Graph,
+    registry: &MetamodelFeatureRegistry,
+    element: &crate::graph::Element,
+) -> Option<String> {
+    element_metatype(graph, element.id)
+        .map(|metatype| metatype.element_id.clone())
+        .or_else(|| {
+            registry
+                .class(element.kind.as_ref())
+                .map(|class| class.id.clone())
+        })
+        .or_else(|| {
+            registry
+                .class(&element.element_id)
+                .map(|class| class.id.clone())
+        })
+}
+
+fn metamodel_feature_properties(
+    graph: &Graph,
+    registry: &MetamodelFeatureRegistry,
+    class_id: &str,
+) -> BTreeSet<String> {
+    registry
+        .all_features_for(graph, class_id)
+        .into_iter()
+        .map(|feature| feature.kir_property)
+        .collect()
+}
+
+fn has_endpoint_feature(feature_properties: &BTreeSet<String>) -> bool {
+    (feature_properties.contains("source") && feature_properties.contains("target"))
+        || (feature_properties.contains("sources") && feature_properties.contains("targets"))
+}
+
+fn metamodel_contract_loaded_for_class(
+    graph: &Graph,
+    registry: &MetamodelFeatureRegistry,
+    class_id: &str,
+) -> bool {
+    graph
+        .element_by_element_id(class_id)
+        .is_some_and(is_metamodel_type)
+        || registry
+            .all_features_for(graph, class_id)
+            .iter()
+            .any(|feature| feature.source_kind == "explicit")
+}
+
+fn is_metamodel_declaration_element(element: &crate::graph::Element) -> bool {
+    is_metamodel_type(element) || element.kind.as_ref() == "MetamodelFeature"
 }
 
 pub fn collect_specialization_ancestors(
@@ -1084,5 +1241,99 @@ mod tests {
         assert_eq!(inherited_type.owner, "Core::Core::Feature");
         assert_eq!(inherited_type.metamodel_language.as_deref(), Some("core"));
         assert_eq!(inherited_type.metamodel_layer.as_deref(), Some("kernel"));
+    }
+
+    #[test]
+    fn derived_metamodel_capabilities_detect_incomplete_relationship_endpoints() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::TransitionUsage".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                metamodel_feature(
+                    "metafeature.TransitionUsage.source",
+                    "SysML::Systems::TransitionUsage",
+                    "source",
+                ),
+                metamodel_feature(
+                    "metafeature.TransitionUsage.target",
+                    "SysML::Systems::TransitionUsage",
+                    "target",
+                ),
+                KirElement {
+                    id: "transition.Demo.start".to_string(),
+                    kind: "SysML::Systems::TransitionUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "source".to_string(),
+                        json!("state.Demo.Initial"),
+                    )]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = MetamodelFeatureRegistry::build(&graph);
+        let transition = graph.node_id("transition.Demo.start").unwrap();
+
+        let capabilities = derive_metamodel_capabilities(&graph, &registry, transition);
+        assert_eq!(
+            capabilities.class_id.as_deref(),
+            Some("SysML::Systems::TransitionUsage")
+        );
+        assert!(capabilities.relationship_like);
+        assert!(capabilities.can_have_endpoints);
+
+        let diagnostics = validate_derived_metamodel_semantics(&graph, &registry);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "kir.metamodel.endpoints.incomplete");
+        assert_eq!(diagnostics[0].element_id, "transition.Demo.start");
+    }
+
+    #[test]
+    fn derived_metamodel_validation_rejects_feature_ownership_without_capability() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "Model::Systems::PlainElement".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "plain.Demo.Element".to_string(),
+                    kind: "Model::Systems::PlainElement".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "features".to_string(),
+                        json!(["feature.Demo.Element.mass"]),
+                    )]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = MetamodelFeatureRegistry::build(&graph);
+
+        let diagnostics = validate_derived_metamodel_semantics(&graph, &registry);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "kir.metamodel.features.unsupported");
+        assert_eq!(diagnostics[0].element_id, "plain.Demo.Element");
+    }
+
+    fn metamodel_feature(id: &str, owner: &str, kir_property: &str) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "MetamodelFeature".to_string(),
+            layer: 1,
+            properties: BTreeMap::from([
+                ("owner".to_string(), json!(owner)),
+                ("kir_property".to_string(), json!(kir_property)),
+                ("feature_kind".to_string(), json!("reference")),
+            ]),
+        }
     }
 }

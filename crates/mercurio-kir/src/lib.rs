@@ -12,12 +12,20 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-pub const KIR_SCHEMA_VERSION: &str = "0.3";
+pub mod expression;
+
+pub use expression::{
+    BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
+    ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
+    UnaryExpressionOp,
+};
+
+pub const KIR_SCHEMA_VERSION: &str = "0.4";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
-pub const SUPPORTED_KIR_SCHEMA_VERSIONS: &[&str] = &["0.2", KIR_SCHEMA_VERSION];
+pub const SUPPORTED_KIR_SCHEMA_VERSIONS: &[&str] = &["0.2", "0.3", KIR_SCHEMA_VERSION];
 pub const REPRESENTATIVE_KIR_JSON: &str = r#"{
   "metadata": {
-    "kir_schema_version": "0.3",
+    "kir_schema_version": "0.4",
     "name": "Representative Foundation KIR"
   },
   "elements": [
@@ -268,11 +276,8 @@ impl KirFieldRegistry {
             | "owning_type"
             | "owning_definition"
             | "owning_namespace"
-            | "type"
             | "definition"
             | "metatype"
-            | "featuring_type"
-            | "chaining_feature"
             | "source_feature"
             | "source"
             | "target"
@@ -300,6 +305,9 @@ impl KirFieldRegistry {
             | "redefines"
             | "redefined_features"
             | "specialized_features"
+            | "type"
+            | "featuring_type"
+            | "chaining_feature"
             | "imports"
             | "relationships"
             | "sources"
@@ -339,11 +347,15 @@ impl KirFieldRegistry {
         value: &Value,
         element_id: &str,
         strict_shapes: bool,
+        current_schema_shapes: bool,
     ) -> Option<KirValidationDiagnostic> {
         let spec = self.field(field)?;
         let valid = match spec.kind {
             KirFieldKind::Scalar => {
                 value.is_string() || value.is_number() || value.is_boolean() || value.is_null()
+            }
+            KirFieldKind::Reference if current_schema_shapes => {
+                value.is_string() || value.is_null()
             }
             KirFieldKind::Reference if strict_shapes => {
                 value.is_string()
@@ -359,10 +371,17 @@ impl KirFieldRegistry {
                         .is_some_and(|items| items.iter().all(Value::is_string))
                     || value.is_null()
             }
-            KirFieldKind::ReferenceList if strict_shapes => {
+            KirFieldKind::ReferenceList if current_schema_shapes => {
                 value
                     .as_array()
                     .is_some_and(|items| items.iter().all(Value::is_string))
+                    || value.is_null()
+            }
+            KirFieldKind::ReferenceList if strict_shapes => {
+                value.is_string()
+                    || value
+                        .as_array()
+                        .is_some_and(|items| items.iter().all(Value::is_string))
                     || value.is_null()
             }
             KirFieldKind::ReferenceList => {
@@ -540,6 +559,9 @@ impl KirDocument {
         let mut diagnostics = Vec::new();
         let mut seen = BTreeSet::new();
         let field_registry = KirFieldRegistry::standard();
+        let current_schema_shapes = options.strict_field_shapes
+            && self.schema_version() != Some("0.2")
+            && self.schema_version() != Some("0.3");
 
         if options.require_schema_version {
             match self.metadata.get(KIR_SCHEMA_VERSION_METADATA_KEY) {
@@ -646,6 +668,7 @@ impl KirDocument {
                     value,
                     &element.id,
                     options.strict_field_shapes,
+                    current_schema_shapes,
                 ) {
                     diagnostics.push(diagnostic);
                 }
@@ -709,22 +732,25 @@ impl KirDocument {
 
 fn normalize_reference_shapes(field_registry: &KirFieldRegistry, element: &mut KirElement) {
     for (property, value) in &mut element.properties {
-        if !matches!(
-            field_registry.field(property).map(|spec| spec.kind),
-            Some(KirFieldKind::Reference)
-        ) {
-            continue;
+        match field_registry.field(property).map(|spec| spec.kind) {
+            Some(KirFieldKind::Reference) => {
+                let Some(items) = value.as_array() else {
+                    continue;
+                };
+
+                *value = match items.as_slice() {
+                    [] => Value::Null,
+                    [single] if single.is_string() => single.clone(),
+                    _ => continue,
+                };
+            }
+            Some(KirFieldKind::ReferenceList) => {
+                if value.is_string() {
+                    *value = Value::Array(vec![value.clone()]);
+                }
+            }
+            _ => {}
         }
-
-        let Some(items) = value.as_array() else {
-            continue;
-        };
-
-        *value = match items.as_slice() {
-            [] => Value::Null,
-            [single] if single.is_string() => single.clone(),
-            _ => continue,
-        };
     }
 }
 
@@ -846,114 +872,30 @@ fn validate_expression_ir(
     if value.is_null() {
         return;
     }
-    let Some(object) = value.as_object() else {
+    if !value.is_object() {
         diagnostics.push(KirValidationDiagnostic {
             code: "kir.element.expression_ir.shape",
             message: format!("KIR element {element_id} `{field}` must be an object"),
             element_id: Some(element_id.to_string()),
         });
         return;
-    };
-    let Some(kind) = object.get("kind").and_then(Value::as_str) else {
+    }
+
+    if !value.get("kind").is_some_and(Value::is_string) {
         diagnostics.push(KirValidationDiagnostic {
             code: "kir.element.expression_ir.kind.missing",
             message: format!("KIR element {element_id} `{field}.kind` must be a string"),
             element_id: Some(element_id.to_string()),
         });
         return;
-    };
-
-    match kind {
-        "literal" => {
-            if !object.contains_key("value") {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "literal requires `value`",
-                ));
-            }
-        }
-        "self" => {}
-        "path" => {
-            if !object
-                .get("root")
-                .and_then(Value::as_str)
-                .is_some_and(|root| root == "self")
-            {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "path requires root `self`",
-                ));
-            }
-            if !object.get("segments").is_some_and(Value::is_array) {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "path requires array `segments`",
-                ));
-            }
-        }
-        "tuple" => {
-            if !object.get("items").is_some_and(Value::is_array) {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "tuple requires array `items`",
-                ));
-            }
-        }
-        "unary" => {
-            if !object.get("op").is_some_and(Value::is_string)
-                || !object.get("expr").is_some_and(Value::is_object)
-            {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "unary requires `op` and object `expr`",
-                ));
-            }
-        }
-        "binary" => {
-            if !object.get("op").is_some_and(Value::is_string)
-                || !object.get("left").is_some_and(Value::is_object)
-                || !object.get("right").is_some_and(Value::is_object)
-            {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "binary requires `op`, `left`, and `right`",
-                ));
-            }
-        }
-        "call" => {
-            if !object.get("function").is_some_and(Value::is_string)
-                || !object.get("args").is_some_and(Value::is_array)
-            {
-                diagnostics.push(expression_ir_diagnostic(
-                    element_id,
-                    field,
-                    "call requires `function` and array `args`",
-                ));
-            }
-        }
-        _ => diagnostics.push(expression_ir_diagnostic(
-            element_id,
-            field,
-            "unknown expression kind",
-        )),
     }
-}
 
-fn expression_ir_diagnostic(
-    element_id: &str,
-    field: &'static str,
-    message: &'static str,
-) -> KirValidationDiagnostic {
-    KirValidationDiagnostic {
-        code: "kir.element.expression_ir.shape",
-        message: format!("KIR element {element_id} `{field}` is invalid: {message}"),
-        element_id: Some(element_id.to_string()),
+    if let Err(err) = ExpressionIr::from_value(value) {
+        diagnostics.push(KirValidationDiagnostic {
+            code: "kir.element.expression_ir.shape",
+            message: format!("KIR element {element_id} `{field}` is invalid: {err}"),
+            element_id: Some(element_id.to_string()),
+        });
     }
 }
 
@@ -1028,7 +970,7 @@ pub fn inferred_layer(id: &str, kind: &str, properties: &BTreeMap<String, Value>
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     use super::{KirDocument, KirElement, KirError};
 
@@ -1190,6 +1132,168 @@ mod tests {
 
         scalar.validate().unwrap();
         array.validate().unwrap();
+    }
+
+    #[test]
+    fn current_schema_validation_requires_reference_lists_to_be_arrays() {
+        let document = KirDocument {
+            metadata: [(
+                super::KIR_SCHEMA_VERSION_METADATA_KEY.to_string(),
+                json!(super::KIR_SCHEMA_VERSION),
+            )]
+            .into_iter()
+            .collect(),
+            elements: vec![KirElement {
+                id: "type.Demo.Vehicle".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Vehicle".to_string()),
+                    ),
+                    (
+                        "specializes".to_string(),
+                        Value::String("type.Demo.BaseVehicle".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        };
+
+        let error = document.validate_persisted().unwrap_err();
+        assert!(
+            matches!(error, KirError::Validation(diagnostics) if diagnostics[0].code == "kir.element.property.shape")
+        );
+    }
+
+    #[test]
+    fn current_schema_validation_requires_single_references_to_be_scalars() {
+        let document = KirDocument {
+            metadata: [(
+                super::KIR_SCHEMA_VERSION_METADATA_KEY.to_string(),
+                json!(super::KIR_SCHEMA_VERSION),
+            )]
+            .into_iter()
+            .collect(),
+            elements: vec![KirElement {
+                id: "feature.Demo.Vehicle.engine".to_string(),
+                kind: "Model::Parts::PartUsage".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Vehicle.engine".to_string()),
+                    ),
+                    (
+                        "owner".to_string(),
+                        Value::Array(vec![Value::String("type.Demo.Vehicle".to_string())]),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        };
+
+        let error = document.validate_persisted().unwrap_err();
+        assert!(
+            matches!(error, KirError::Validation(diagnostics) if diagnostics[0].code == "kir.element.property.shape")
+        );
+    }
+
+    #[test]
+    fn persisted_validation_accepts_legacy_reference_list_scalar_until_regenerated() {
+        let document = KirDocument {
+            metadata: [(
+                super::KIR_SCHEMA_VERSION_METADATA_KEY.to_string(),
+                json!("0.3"),
+            )]
+            .into_iter()
+            .collect(),
+            elements: vec![KirElement {
+                id: "type.Demo.Vehicle".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Vehicle".to_string()),
+                    ),
+                    (
+                        "specializes".to_string(),
+                        Value::String("type.Demo.BaseVehicle".to_string()),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        };
+
+        document.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn persistence_normalization_wraps_reference_list_scalars() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![KirElement {
+                id: "type.Demo.Vehicle".to_string(),
+                kind: "Model::Systems::PartDefinition".to_string(),
+                layer: 2,
+                properties: [(
+                    "specializes".to_string(),
+                    Value::String("type.Demo.BaseVehicle".to_string()),
+                )]
+                .into_iter()
+                .collect(),
+            }],
+        }
+        .normalized_for_persistence();
+
+        assert_eq!(
+            document.elements[0].properties.get("specializes"),
+            Some(&json!(["type.Demo.BaseVehicle"]))
+        );
+        document.validate_persisted().unwrap();
+    }
+
+    #[test]
+    fn persisted_validation_uses_shared_expression_ir_contract() {
+        let document = KirDocument {
+            metadata: [(
+                super::KIR_SCHEMA_VERSION_METADATA_KEY.to_string(),
+                json!(super::KIR_SCHEMA_VERSION),
+            )]
+            .into_iter()
+            .collect(),
+            elements: vec![KirElement {
+                id: "feature.Demo.Vehicle.mass".to_string(),
+                kind: "Model::Attributes::AttributeUsage".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Vehicle.mass".to_string()),
+                    ),
+                    (
+                        "expression_ir".to_string(),
+                        json!({
+                            "kind": "binary",
+                            "op": "add",
+                            "left": {"kind": "literal", "value": 1}
+                        }),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        };
+
+        let error = document.validate_persisted().unwrap_err();
+        assert!(
+            matches!(error, KirError::Validation(diagnostics) if diagnostics[0].code == "kir.element.expression_ir.shape")
+        );
     }
 
     #[test]
