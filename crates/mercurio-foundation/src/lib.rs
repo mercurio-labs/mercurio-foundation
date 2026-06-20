@@ -321,8 +321,9 @@ pub use semantic_target::{
     SemanticTargetResolver, TargetLayers,
 };
 pub use session::{
-    CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec, KirOverlay, ModelFork,
-    ModelSession, ModelWorkspace, SessionError, WorkspaceSnapshot,
+    CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,
+    CellRunStatus, CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec,
+    KirOverlay, ModelFork, ModelSession, ModelWorkspace, SessionError, WorkspaceSnapshot,
 };
 pub use source_set::{
     SourceDocument, compile_source_document_with_registry, compile_source_documents,

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::authoring::AuthoringProject;
+use crate::capability::{CapabilityRunReport, SemanticArtifact, SemanticDiagnostic};
 use crate::feasibility::{
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
     MutationContext, MutationFeasibilityService,
@@ -44,6 +45,93 @@ pub struct ModelFork {
     base: Arc<WorkspaceSnapshot>,
     workspace: Option<ModelWorkspace>,
     overlay: KirOverlay,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellKind {
+    Query,
+    Action,
+    View,
+    Script,
+    Capability,
+    Analysis,
+    Build,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellLanguage {
+    MercurioDsl,
+    Python,
+    Rhai,
+    Sysml,
+    Host,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellRunStatus {
+    Passed,
+    Failed,
+    Error,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellOutputKind {
+    Table,
+    Text,
+    Json,
+    Stdout,
+    Stderr,
+    CapabilityReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellOutput {
+    pub id: String,
+    pub kind: CellOutputKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellRunRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_id: Option<String>,
+    pub kind: CellKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<CellLanguage>,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellRunReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub cell_id: String,
+    pub kind: CellKind,
+    pub status: CellRunStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<CellOutput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<SemanticArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<SemanticDiagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_report: Option<CapabilityRunReport>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

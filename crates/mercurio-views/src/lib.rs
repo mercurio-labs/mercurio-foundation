@@ -3,7 +3,7 @@
 //! This crate exposes serializable diagram/table specs, validation diagnostics,
 //! and render functions for model-backed views.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,8 @@ pub struct ViewDocumentDto {
     pub version: u8,
     pub kind: String,
     pub mode: ViewModeDto,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagram: Option<DiagramSpecDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,6 +170,7 @@ impl ViewDocumentDto {
             version: VIEW_SPEC_VERSION,
             kind: format!("diagram.{}", diagram_kind_name(&spec.kind)),
             mode: ViewModeDto::Visualization,
+            parameters: BTreeMap::new(),
             diagram: Some(spec),
             table: None,
         }
@@ -179,6 +182,7 @@ impl ViewDocumentDto {
             version: VIEW_SPEC_VERSION,
             kind: "table".to_string(),
             mode: ViewModeDto::Visualization,
+            parameters: BTreeMap::new(),
             diagram: None,
             table: Some(spec),
         }
@@ -409,11 +413,15 @@ pub fn validate_view_document(
             }
             validate_table_spec(table, "/table", &mut diagnostics);
         }
-        (None, None) => diagnostics.push(view_diagnostic(
-            "view.payload",
-            "/",
-            "view document must contain one payload".to_string(),
-        )),
+        (None, None) => {
+            if document.kind.trim().is_empty() {
+                diagnostics.push(view_diagnostic(
+                    "view.kind",
+                    "/kind",
+                    "view kind is required when no inline payload is provided".to_string(),
+                ));
+            }
+        }
         (Some(_), Some(_)) => diagnostics.push(view_diagnostic(
             "view.payload",
             "/",
@@ -2196,6 +2204,38 @@ mod tests {
         assert_eq!(decoded.kind, "table");
         assert!(decoded.diagram.is_none());
         assert!(decoded.table.is_some());
+        assert_eq!(decoded, document);
+    }
+
+    #[test]
+    fn view_document_round_trips_parameterized_view() {
+        let mut parameters = BTreeMap::new();
+        parameters.insert(
+            "seedId".to_string(),
+            Value::String("pkg.Example".to_string()),
+        );
+
+        let document = ViewDocumentDto {
+            schema: VIEW_SCHEMA.to_string(),
+            version: VIEW_SPEC_VERSION,
+            kind: "explorer.metatype".to_string(),
+            mode: ViewModeDto::Visualization,
+            parameters,
+            diagram: None,
+            table: None,
+        };
+
+        validate_view_document(&document).expect("document should validate");
+        let decoded: ViewDocumentDto =
+            serde_json::from_str(&serde_json::to_string(&document).unwrap()).unwrap();
+
+        assert_eq!(decoded.kind, "explorer.metatype");
+        assert_eq!(
+            decoded.parameters.get("seedId"),
+            Some(&Value::String("pkg.Example".to_string()))
+        );
+        assert!(decoded.diagram.is_none());
+        assert!(decoded.table.is_none());
         assert_eq!(decoded, document);
     }
 
