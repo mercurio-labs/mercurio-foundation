@@ -593,7 +593,6 @@ impl RhaiEngine {
                 "build".into(),
                 "count_by_kind".into(),
                 "metatype".into(),
-                "new_model".into(),
                 "reachable".into(),
                 "specialization_depth".into(),
                 "max".into(),
@@ -1619,20 +1618,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.rows[0][0], json!(3));
-    }
-
-    #[test]
-    fn global_new_model_alias_remains_available() {
-        let engine = RhaiEngine::new();
-        let result = engine
-            .eval_query(
-                sample_graph(),
-                r#"let scratch = new_model("Alias");
-                   scratch.name"#,
-            )
-            .unwrap();
-
-        assert_eq!(result.rows[0][0], json!("Alias"));
     }
 
     #[test]

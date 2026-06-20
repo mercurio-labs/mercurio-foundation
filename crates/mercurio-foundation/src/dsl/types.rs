@@ -1345,7 +1345,6 @@ pub fn register_types(engine: &mut Engine) {
         .register_fn("namespaces", DslTransientModel::namespaces)
         .register_fn("element", DslTransientModel::element)
         .register_fn("transaction", DslTransientModel::transaction);
-    engine.register_fn("new_model", DslTransientModel::new_model);
 
     engine
         .register_type_with_name::<ModelContext>("ModelContext")

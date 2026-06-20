@@ -29,13 +29,11 @@ pub struct WorkspaceConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ProjectDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    #[serde(
-        default = "default_project_descriptor_version",
-        deserialize_with = "deserialize_compatible_descriptor_version"
-    )]
+    #[serde(default = "default_project_descriptor_version")]
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -43,16 +41,10 @@ pub struct ProjectDescriptor {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "ProjectModelConfig::is_empty")]
     pub model: ProjectModelConfig,
-    #[serde(default, alias = "libraries")]
+    #[serde(default)]
     pub dependencies: Vec<WorkspaceLibraryConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub project_plugins: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub views: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -91,23 +83,6 @@ impl ProjectExtensionDescriptor {
     pub fn from_path(path: &Path) -> Result<Self, WorkspaceConfigError> {
         let input = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&input)?)
-    }
-
-    pub fn from_project_descriptor_legacy(descriptor: &ProjectDescriptor) -> Option<Self> {
-        if descriptor.project_plugins.is_empty()
-            && descriptor.capabilities.is_empty()
-            && descriptor.views.is_empty()
-        {
-            return None;
-        }
-
-        Some(Self {
-            schema: Some("dev.mercurio.extensions.v1".to_string()),
-            version: default_project_extension_descriptor_version(),
-            project_plugins: descriptor.project_plugins.clone(),
-            capabilities: descriptor.capabilities.clone(),
-            views: descriptor.views.clone(),
-        })
     }
 }
 
@@ -288,8 +263,7 @@ pub fn resolve_project_descriptor_context(
     let extension = extension_path
         .as_deref()
         .map(ProjectExtensionDescriptor::from_path)
-        .transpose()?
-        .or_else(|| ProjectExtensionDescriptor::from_project_descriptor_legacy(&descriptor));
+        .transpose()?;
 
     Ok(ResolvedWorkspaceContext {
         workspace_root,
@@ -669,23 +643,6 @@ fn default_project_extension_descriptor_version() -> u32 {
     1
 }
 
-fn deserialize_compatible_descriptor_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum VersionValue {
-        Number(u32),
-        Text(String),
-    }
-
-    match VersionValue::deserialize(deserializer)? {
-        VersionValue::Number(value) => Ok(value),
-        VersionValue::Text(value) => Ok(value.parse::<u32>().unwrap_or(1)),
-    }
-}
-
 fn default_workspace_library_id() -> String {
     "stdlib".to_string()
 }
@@ -872,12 +829,12 @@ mod tests {
     }
 
     #[test]
-    fn project_descriptor_accepts_legacy_extension_fields() {
-        let descriptor: ProjectDescriptor = serde_json::from_str(
+    fn project_descriptor_rejects_inline_extension_fields() {
+        let err = serde_json::from_str::<ProjectDescriptor>(
             r#"{
   "id": "org.example.structural-connectivity",
   "name": "Structural Connectivity Example",
-  "version": "0.1.0",
+  "version": 1,
   "capabilities": [
     "plugins/structural-connectivity/mercurio.plugin.json"
   ],
@@ -892,27 +849,30 @@ mod tests {
   ]
 }"#,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(descriptor.version, 1);
-        assert_eq!(
-            descriptor.id.as_deref(),
-            Some("org.example.structural-connectivity")
-        );
-        assert_eq!(
-            descriptor.capabilities,
-            vec!["plugins/structural-connectivity/mercurio.plugin.json".to_string()]
-        );
-        assert_eq!(
-            descriptor.project_plugins,
-            vec!["plugins/pacti-contract-analysis".to_string()]
-        );
-        assert_eq!(descriptor.views.len(), 1);
+        assert!(err.to_string().contains("unknown field"));
     }
 
     #[test]
-    fn project_descriptor_accepts_libraries_as_dependency_alias() {
-        let descriptor: ProjectDescriptor = serde_json::from_str(
+    fn project_descriptor_rejects_project_plugin_directories() {
+        let err = serde_json::from_str::<ProjectDescriptor>(
+            r#"{
+  "name": "Project Plugin Pacti Analysis",
+  "version": 1,
+  "projectPlugins": [
+    "plugins/pacti-contract-analysis"
+  ]
+}"#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn project_descriptor_rejects_libraries_dependency_alias() {
+        let err = serde_json::from_str::<ProjectDescriptor>(
             r#"{
   "name": "Project Plugin Pacti Analysis",
   "libraries": [
@@ -926,11 +886,22 @@ mod tests {
   ]
 }"#,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(descriptor.version, 1);
-        assert_eq!(descriptor.dependencies.len(), 1);
-        assert_eq!(descriptor.dependencies[0].id, "stdlib");
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn project_descriptor_rejects_string_version() {
+        let err = serde_json::from_str::<ProjectDescriptor>(
+            r#"{
+  "name": "String Version",
+  "version": "1"
+}"#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("invalid type"));
     }
 
     #[test]
@@ -1020,37 +991,6 @@ mod tests {
         assert_eq!(
             extension.capabilities,
             vec!["plugins/domain/mercurio.plugin.json".to_string()]
-        );
-        assert_eq!(extension.views.len(), 1);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn resolves_legacy_project_descriptor_extension_fields() {
-        let root = temp_dir("project_descriptor_legacy_extensions");
-        let descriptor_path = root.join(".project.json");
-        std::fs::write(
-            &descriptor_path,
-            r#"{
-  "version": 1,
-  "projectPlugins": ["plugins/legacy"],
-  "capabilities": ["plugins/legacy/mercurio.plugin.json"],
-  "views": [{"label": "Legacy View", "kind": "simulation"}]
-}"#,
-        )
-        .unwrap();
-
-        let resolved = resolve_project_descriptor_context(&descriptor_path).unwrap();
-
-        assert_eq!(resolved.extension_path, None);
-        let extension = resolved.extension.unwrap();
-        assert_eq!(
-            extension.schema.as_deref(),
-            Some("dev.mercurio.extensions.v1")
-        );
-        assert_eq!(
-            extension.project_plugins,
-            vec!["plugins/legacy".to_string()]
         );
         assert_eq!(extension.views.len(), 1);
         std::fs::remove_dir_all(root).unwrap();
