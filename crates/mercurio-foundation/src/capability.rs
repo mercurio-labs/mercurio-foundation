@@ -12,6 +12,7 @@ use crate::ir::{KirDocument, KirElement, KirError};
 use crate::metamodel::{
     MetamodelAttributeDeclaration, MetamodelAttributeRegistry, collect_specialization_ancestors,
 };
+use crate::model_state::{ModelBuildRecord, ModelRevision, ModelRevisionProducer};
 use crate::mutation::WorkspaceRevision;
 
 #[derive(Debug, Clone)]
@@ -601,6 +602,27 @@ impl SemanticWorkspaceSnapshot {
             metamodel_registry: Arc::new(metamodel_registry),
             profile_id,
         })
+    }
+
+    pub fn from_model_revision(revision: &ModelRevision) -> Self {
+        Self {
+            revision: revision.workspace_revision().clone(),
+            kir: revision.kir(),
+            graph: revision.graph(),
+            metamodel_registry: revision.metamodel_registry(),
+            profile_id: revision.profile_id().map(ToOwned::to_owned),
+        }
+    }
+
+    pub fn model_revision(&self) -> ModelRevision {
+        ModelRevision::from_parts(
+            Arc::clone(&self.kir),
+            Arc::clone(&self.graph),
+            Arc::clone(&self.metamodel_registry),
+            self.revision.clone(),
+            self.profile_id.clone(),
+            ModelBuildRecord::new(ModelRevisionProducer::SemanticSnapshot),
+        )
     }
 
     pub fn element(&self, element_id: &str) -> Option<&crate::graph::Element> {

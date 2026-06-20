@@ -88,6 +88,7 @@ pub mod metamodel {
     };
 }
 pub mod dsl;
+pub mod model_state;
 #[doc(hidden)]
 pub mod mpack;
 #[doc(hidden)]
@@ -184,10 +185,10 @@ pub use derived::{
     derived_property, manifest_from_metadata,
 };
 pub use dsl::{
-    DslAnalysisRunReport, DslAnalysisRunRequest, DslAnalysisRunSpec, DslDiagnostic,
-    DslDiagnosticCategory, DslEngine, DslError, DslExecutionLimits, DslExtensionSpec,
-    DslFieldSchema, DslModelSetFunction, DslQueryReport, DslQueryRequest, DslQueryResult,
-    DslSchema, RhaiEngine,
+    DSL_ANALYSIS_RUN_ARTIFACT_KIND, DSL_QUERY_ARTIFACT_KIND, DslAnalysisRunReport,
+    DslAnalysisRunRequest, DslAnalysisRunSpec, DslDiagnostic, DslDiagnosticCategory, DslEngine,
+    DslError, DslExecutionLimits, DslExtensionSpec, DslFieldSchema, DslModelSetFunction,
+    DslQueryReport, DslQueryRequest, DslQueryResult, DslSchema, RhaiEngine,
 };
 pub use element_view::ElementView;
 pub use expression::{
@@ -245,6 +246,14 @@ pub use metamodel::{
     MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
     collect_specialization_ancestors, effective_properties, effective_properties_with_derived,
     element_metatype, query_element_attributes,
+};
+pub use model_state::{
+    InputSource, InputSourceKind, InputSourceSet, MODEL_SERVICE_API_VERSION, ModelArtifact,
+    ModelBuildRecord, ModelRevision, ModelRevisionDescriptor, ModelRevisionEnvelope,
+    ModelRevisionId, ModelRevisionProducer, ModelRevisionPushMode, ModelServicePullRequest,
+    ModelServicePullResponse, ModelServicePushRevisionRequest, ModelServicePushRevisionResponse,
+    ModelServicePushStatus, ModelState, ModelStateDescriptor, ModelStateError, ModelStateId,
+    RemoteModelRef,
 };
 pub use mpack::{
     MpackLanguageProfile, MpackLibrary, MpackManifest, MpackPythonPackage,
@@ -321,8 +330,9 @@ pub use semantic_target::{
     SemanticTargetResolver, TargetLayers,
 };
 pub use session::{
-    CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec, KirOverlay, ModelFork,
-    ModelSession, ModelWorkspace, SessionError, WorkspaceSnapshot,
+    CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,
+    CellRunStatus, CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec,
+    KirOverlay, ModelFork, ModelSession, ModelWorkspace, SessionError, WorkspaceSnapshot,
 };
 pub use source_set::{
     SourceDocument, compile_source_document_with_registry, compile_source_documents,
@@ -333,9 +343,9 @@ pub use syntax_compare::{
     SyntaxSourceSpan, build_rust_syntax_snapshot, compare_syntax_snapshots,
 };
 pub use transaction::{
-    SEMANTIC_TRANSACTION_SCHEMA, SemanticTransaction, SemanticTransactionReport,
-    TransactionArtifact, TransactionDiagnostic, TransactionDiagnosticSeverity,
-    TransactionIsolation, TransactionOperation, TransactionStatus,
+    SEMANTIC_CHANGE_SET_SCHEMA, SEMANTIC_TRANSACTION_SCHEMA, SemanticChangeSet,
+    SemanticTransaction, SemanticTransactionReport, TransactionArtifact, TransactionDiagnostic,
+    TransactionDiagnosticSeverity, TransactionIsolation, TransactionOperation, TransactionStatus,
 };
 #[allow(deprecated)]
 pub use views::{

@@ -17,9 +17,13 @@ use crate::capability::{
 use crate::graph::Graph;
 use crate::identity::stable_digest;
 use crate::ir::{KirFieldKind, KirFieldRegistry};
-use types::ModelContext;
+use crate::model_state::{ModelArtifact, ModelRevision};
+use types::{DslAppContext, ModelContext};
 
 pub use types::{DslEdge, DslElement, ElementSet};
+
+pub const DSL_QUERY_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/query-report";
+pub const DSL_ANALYSIS_RUN_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/analysis-run-report";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DslQueryResult {
@@ -58,6 +62,19 @@ pub struct DslError {
 impl DslError {
     pub fn diagnostic(&self) -> &DslDiagnostic {
         &self.diagnostic
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            diagnostic: DslDiagnostic {
+                code: "DSL_INTERNAL".to_string(),
+                category: DslDiagnosticCategory::Internal,
+                message: message.into(),
+                script_name: None,
+                line: None,
+                column: None,
+            },
+        }
     }
 
     pub fn with_script_name(mut self, script_name: Option<String>) -> Self {
@@ -302,6 +319,14 @@ impl DslEngine {
         self.rhai.eval_query(graph, script)
     }
 
+    pub fn eval_query_on_revision(
+        &self,
+        revision: &ModelRevision,
+        script: &str,
+    ) -> Result<DslQueryResult, DslError> {
+        self.eval_query(revision.graph(), script)
+    }
+
     pub fn execute_query(
         &self,
         graph: Arc<Graph>,
@@ -321,12 +346,46 @@ impl DslEngine {
         })
     }
 
+    pub fn execute_query_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslQueryRequest,
+    ) -> Result<DslQueryReport, DslError> {
+        self.execute_query(revision.graph(), request)
+    }
+
+    pub fn execute_query_artifact_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslQueryRequest,
+    ) -> Result<ModelArtifact, DslError> {
+        let label = request.script_name.clone();
+        let report = self.execute_query_on_revision(revision, request)?;
+        let payload =
+            serde_json::to_value(report).map_err(|error| DslError::internal(error.to_string()))?;
+        ModelArtifact::new(
+            revision.id().clone(),
+            DSL_QUERY_ARTIFACT_KIND,
+            label,
+            payload,
+        )
+        .map_err(|error| DslError::internal(error.to_string()))
+    }
+
     pub fn eval_analysis_run(
         &self,
         graph: Arc<Graph>,
         spec: DslAnalysisRunSpec,
     ) -> Result<CapabilityRunReport, DslError> {
         self.rhai.eval_analysis_run(graph, spec)
+    }
+
+    pub fn eval_analysis_run_on_revision(
+        &self,
+        revision: &ModelRevision,
+        spec: DslAnalysisRunSpec,
+    ) -> Result<CapabilityRunReport, DslError> {
+        self.eval_analysis_run(revision.graph(), spec)
     }
 
     pub fn execute_analysis_run(
@@ -348,6 +407,32 @@ impl DslEngine {
         })
     }
 
+    pub fn execute_analysis_run_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslAnalysisRunRequest,
+    ) -> Result<DslAnalysisRunReport, DslError> {
+        self.execute_analysis_run(revision.graph(), request)
+    }
+
+    pub fn execute_analysis_run_artifact_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslAnalysisRunRequest,
+    ) -> Result<ModelArtifact, DslError> {
+        let label = request.script_name.clone();
+        let report = self.execute_analysis_run_on_revision(revision, request)?;
+        let payload =
+            serde_json::to_value(report).map_err(|error| DslError::internal(error.to_string()))?;
+        ModelArtifact::new(
+            revision.id().clone(),
+            DSL_ANALYSIS_RUN_ARTIFACT_KIND,
+            label,
+            payload,
+        )
+        .map_err(|error| DslError::internal(error.to_string()))
+    }
+
     pub fn schema(graph: &Graph) -> DslSchema {
         Self::schema_with_extensions(graph, &[])
     }
@@ -366,6 +451,10 @@ impl DslEngine {
 
     pub fn schema_for(&self, graph: &Graph) -> DslSchema {
         Self::schema_with_extensions(graph, &self.extensions)
+    }
+
+    pub fn schema_for_revision(&self, revision: &ModelRevision) -> DslSchema {
+        Self::schema_with_extensions(&revision.graph(), &self.extensions)
     }
 }
 
@@ -401,7 +490,9 @@ impl RhaiEngine {
 
     pub fn eval_query(&self, graph: Arc<Graph>, script: &str) -> Result<DslQueryResult, DslError> {
         let mut scope = Scope::new();
+        scope.push("app", DslAppContext::new(Arc::clone(&graph)));
         scope.push("model", ModelContext::new(graph));
+        types::push_scope_constants(&mut scope);
 
         let result: rhai::Dynamic = self.engine.eval_with_scope(&mut scope, script)?;
         Ok(dynamic_to_query_result(result))
@@ -423,6 +514,10 @@ impl RhaiEngine {
             "id".to_string(),
             "kind".to_string(),
             "layer".to_string(),
+            "layer_name".to_string(),
+            "model_layer".to_string(),
+            "metatype_name".to_string(),
+            "metatype_chain".to_string(),
         ]);
 
         for element in graph.elements() {
@@ -443,6 +538,11 @@ impl RhaiEngine {
             element_kinds: kinds.into_iter().collect(),
             fields,
             stdlib_functions: vec![
+                "AppContext.capabilities".into(),
+                "AppContext.capability".into(),
+                "AppContext.current_model".into(),
+                "AppContext.new_model".into(),
+                "AppContext.requires".into(),
                 "ElementSet.order_by".into(),
                 "ElementSet.order_by_desc".into(),
                 "ElementSet.related".into(),
@@ -451,7 +551,14 @@ impl RhaiEngine {
                 "ElementSet.where_contains".into(),
                 "ElementSet.where_eq".into(),
                 "ElementSet.where_in".into(),
+                "ElementSet.where_metatype".into(),
+                "ElementSet.where_metatype_in".into(),
+                "ElementSet.where_metatype_is".into(),
+                "ElementSet.where_metatype_is_any".into(),
+                "ElementSet.where_model_layer".into(),
                 "ElementSet.where_ne".into(),
+                "Element.is_metatype".into(),
+                "Element.metatype_chain".into(),
                 "BuildPlan.depends_on".into(),
                 "BuildPlan.operation".into(),
                 "BuildPlan.plan".into(),
@@ -461,17 +568,32 @@ impl RhaiEngine {
                 "TransactionBuilder.build_task".into(),
                 "TransactionBuilder.capability".into(),
                 "TransactionBuilder.commit".into(),
+                "TransactionBuilder.create_definition".into(),
+                "TransactionBuilder.create_package".into(),
+                "TransactionBuilder.create_part_def".into(),
                 "TransactionBuilder.preview".into(),
                 "TransactionBuilder.rename".into(),
                 "TransactionBuilder.set_attribute".into(),
+                "TransientModel.element".into(),
+                "TransientModel.element_count".into(),
+                "TransientModel.elements".into(),
+                "TransientModel.library_elements".into(),
+                "TransientModel.namespaces".into(),
+                "TransientModel.transaction".into(),
+                "TransientModel.user_elements".into(),
                 "ModelContext.capabilities".into(),
                 "ModelContext.capability".into(),
                 "ModelContext.changes".into(),
+                "ModelContext.library_elements".into(),
+                "ModelContext.namespaces".into(),
                 "ModelContext.requires".into(),
                 "ModelContext.transaction".into(),
+                "ModelContext.user_elements".into(),
                 "all_parts".into(),
                 "build".into(),
                 "count_by_kind".into(),
+                "metatype".into(),
+                "new_model".into(),
                 "reachable".into(),
                 "specialization_depth".into(),
                 "max".into(),
@@ -690,6 +812,9 @@ fn dynamic_to_query_result(result: rhai::Dynamic) -> DslQueryResult {
     if let Some(query_result) = result.clone().try_cast::<DslQueryResult>() {
         return query_result;
     }
+    if let Some(model) = result.clone().try_cast::<types::DslTransientModel>() {
+        return model.to_query_result();
+    }
     if let Some(set) = result.clone().try_cast::<ElementSet>() {
         return set.to_query_result();
     }
@@ -890,6 +1015,78 @@ mod tests {
         Arc::new(Graph::from_document(document).unwrap())
     }
 
+    fn sample_revision() -> ModelRevision {
+        ModelRevision::from_kir_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![KirElement {
+                    id: "type.Demo.Vehicle".into(),
+                    kind: "PartDefinition".into(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "declared_name".into(),
+                        serde_json::json!("Vehicle"),
+                    )]),
+                }],
+            },
+            crate::model_state::ModelBuildRecord::new(
+                crate::model_state::ModelRevisionProducer::KirImport,
+            ),
+        )
+        .unwrap()
+    }
+
+    fn metatype_graph() -> Arc<Graph> {
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "KerML::Core::Element".into(),
+                    kind: "Metaclass".into(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "declared_name".into(),
+                        serde_json::json!("Element"),
+                    )]),
+                },
+                KirElement {
+                    id: "KerML::Core::Namespace".into(),
+                    kind: "Metaclass".into(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        ("declared_name".into(), serde_json::json!("Namespace")),
+                        (
+                            "specializes".into(),
+                            serde_json::json!(["KerML::Core::Element"]),
+                        ),
+                    ]),
+                },
+                KirElement {
+                    id: "KerML::Core::Package".into(),
+                    kind: "Metaclass".into(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        ("declared_name".into(), serde_json::json!("Package")),
+                        (
+                            "specializes".into(),
+                            serde_json::json!(["KerML::Core::Namespace"]),
+                        ),
+                    ]),
+                },
+                KirElement {
+                    id: "pkg.Demo".into(),
+                    kind: "Package".into(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("declared_name".into(), serde_json::json!("Demo")),
+                        ("metatype".into(), serde_json::json!("KerML::Core::Package")),
+                    ]),
+                },
+            ],
+        };
+        Arc::new(Graph::from_document(document).unwrap())
+    }
+
     fn first_row_value<'a>(result: &'a DslQueryResult, column: &str) -> &'a Value {
         let index = result
             .columns
@@ -938,6 +1135,52 @@ mod tests {
             Some("queries/count_parts.mercurio-query.dsl")
         );
         assert_eq!(report.result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn dsl_engine_runs_query_against_model_revision() {
+        let engine = DslEngine::new();
+        let revision = sample_revision();
+        let report = engine
+            .execute_query_on_revision(
+                &revision,
+                DslQueryRequest {
+                    script: "model.parts().count()".into(),
+                    script_name: Some("queries/revision_count.mercurio-query.dsl".into()),
+                    limits: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(report.result.columns, vec!["value"]);
+        assert_eq!(report.result.rows[0][0], serde_json::json!(1));
+    }
+
+    #[test]
+    fn dsl_engine_query_artifact_is_scoped_to_model_revision() {
+        let engine = DslEngine::new();
+        let revision = sample_revision();
+        let artifact = engine
+            .execute_query_artifact_on_revision(
+                &revision,
+                DslQueryRequest {
+                    script: "model.parts().count()".into(),
+                    script_name: Some("queries/revision_count.mercurio-query.dsl".into()),
+                    limits: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(artifact.revision_id, revision.id().clone());
+        assert_eq!(artifact.kind, DSL_QUERY_ARTIFACT_KIND);
+        assert_eq!(
+            artifact.payload["script_name"],
+            serde_json::json!("queries/revision_count.mercurio-query.dsl")
+        );
+        assert_eq!(
+            artifact.payload["result"]["rows"][0][0],
+            serde_json::json!(1)
+        );
     }
 
     #[test]
@@ -1035,6 +1278,83 @@ mod tests {
     }
 
     #[test]
+    fn named_model_layer_helpers_filter_user_and_library_elements() {
+        let engine = RhaiEngine::new();
+        let user_result = engine
+            .eval_query(metatype_graph(), r#"model.user_elements().count()"#)
+            .unwrap();
+        let library_result = engine
+            .eval_query(
+                metatype_graph(),
+                r#"model.elements().where_model_layer(ModelLayer.Library).count()"#,
+            )
+            .unwrap();
+
+        assert_eq!(user_result.rows[0][0], json!(1));
+        assert_eq!(library_result.rows[0][0], json!(3));
+    }
+
+    #[test]
+    fn metatype_helpers_distinguish_exact_from_subtype_matching() {
+        let engine = RhaiEngine::new();
+        let exact_result = engine
+            .eval_query(
+                metatype_graph(),
+                r#"model.user_elements().where_metatype("Element").count()"#,
+            )
+            .unwrap();
+        let subtype_result = engine
+            .eval_query(
+                metatype_graph(),
+                r#"model.user_elements().where_metatype_is("Element").count()"#,
+            )
+            .unwrap();
+        let package_result = engine
+            .eval_query(
+                metatype_graph(),
+                r#"model.user_elements().where_metatype(KerML.Package).count()"#,
+            )
+            .unwrap();
+
+        assert_eq!(exact_result.rows[0][0], json!(0));
+        assert_eq!(subtype_result.rows[0][0], json!(1));
+        assert_eq!(package_result.rows[0][0], json!(1));
+    }
+
+    #[test]
+    fn metatype_tokens_support_namespace_queries_and_element_inspection() {
+        let engine = RhaiEngine::new();
+        let namespace_result = engine
+            .eval_query(metatype_graph(), r#"model.namespaces().count()"#)
+            .unwrap();
+        let element_result = engine
+            .eval_query(
+                metatype_graph(),
+                r#"let demo = model.element("pkg.Demo");
+                   #{is_namespace: demo.is_metatype(Namespace),
+                     metatype: demo.metatype,
+                     layer: demo.model_layer,
+                     chain: demo.metatype_chain()}"#,
+            )
+            .unwrap();
+
+        assert_eq!(namespace_result.rows[0][0], json!(1));
+        assert_eq!(
+            first_row_value(&element_result, "is_namespace"),
+            &json!(true)
+        );
+        assert_eq!(
+            first_row_value(&element_result, "metatype"),
+            &json!("Package")
+        );
+        assert_eq!(first_row_value(&element_result, "layer"), &json!("user"));
+        assert_eq!(
+            first_row_value(&element_result, "chain"),
+            &json!(["Package", "Namespace", "Element"])
+        );
+    }
+
+    #[test]
     fn native_relationship_projection_selects_source_and_target_fields() {
         let engine = RhaiEngine::new();
         let result = engine
@@ -1125,9 +1445,16 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(result.rows[0][0], json!(false));
-        assert_eq!(result.rows[0][1], json!("change_set_preview"));
-        assert_eq!(result.rows[0][2], json!(2));
+        assert_eq!(first_row_value(&result, "action_count"), &json!(2));
+        assert_eq!(first_row_value(&result, "applies_changes"), &json!(false));
+        assert_eq!(
+            first_row_value(&result, "kind"),
+            &json!("change_set_preview")
+        );
+        assert_eq!(
+            first_row_value(&result, "change_set")["schema"],
+            json!("mercurio.semantic_change_set.v1")
+        );
     }
 
     #[test]
@@ -1152,7 +1479,7 @@ mod tests {
     }
 
     #[test]
-    fn transaction_preview_collects_capability_mutation_and_build_operations() {
+    fn transaction_preview_collects_change_set_capability_and_build_operations() {
         let engine = RhaiEngine::new();
         let result = engine
             .eval_query(
@@ -1170,8 +1497,12 @@ mod tests {
 
         assert_eq!(first_row_value(&result, "applied"), &json!(false));
         assert_eq!(first_row_value(&result, "label"), &json!("vehicle check"));
-        assert_eq!(first_row_value(&result, "operation_count"), &json!(6));
+        assert_eq!(first_row_value(&result, "operation_count"), &json!(5));
         assert_eq!(first_row_value(&result, "status"), &json!("previewed"));
+        assert_eq!(
+            first_row_value(&result, "operations")[0]["kind"],
+            json!("change_set")
+        );
         assert!(
             first_row_value(&result, "transaction_id")
                 .as_str()
@@ -1198,6 +1529,110 @@ mod tests {
                 .as_array()
                 .is_some_and(|items| !items.is_empty())
         );
+    }
+
+    #[test]
+    fn transient_model_transaction_commit_applies_in_memory() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"let scratch = app.new_model("Demo");
+                   let report = scratch.transaction("seed scratch")
+                       .create_package("Demo")
+                       .create_part_def("Demo.Vehicle")
+                       .commit();
+                   #{status: report.status,
+                     applied: report.applied,
+                     element_count: scratch.user_elements().count(),
+                     package_count: scratch.user_elements().where_metatype(KerML.Package).count(),
+                     part_count: scratch.user_elements().where_metatype_is(SysML.PartDefinition).count(),
+                     revision: scratch.revision}"#,
+            )
+            .unwrap();
+
+        assert_eq!(first_row_value(&result, "status"), &json!("committed"));
+        assert_eq!(first_row_value(&result, "applied"), &json!(true));
+        assert_eq!(first_row_value(&result, "element_count"), &json!(2));
+        assert_eq!(first_row_value(&result, "package_count"), &json!(1));
+        assert_eq!(first_row_value(&result, "part_count"), &json!(1));
+        assert!(
+            first_row_value(&result, "revision")
+                .as_str()
+                .is_some_and(|value| value != "unrevisioned")
+        );
+    }
+
+    #[test]
+    fn transient_model_transaction_preview_does_not_apply() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"let scratch = app.new_model("Demo");
+                   let report = scratch.transaction("preview scratch")
+                       .create_package("Demo")
+                       .preview();
+                   #{status: report.status,
+                     applied: report.applied,
+                     element_count: scratch.user_elements().count(),
+                     added_count: report.semantic_diff.added_elements.len}"#,
+            )
+            .unwrap();
+
+        assert_eq!(first_row_value(&result, "status"), &json!("previewed"));
+        assert_eq!(first_row_value(&result, "applied"), &json!(false));
+        assert_eq!(first_row_value(&result, "element_count"), &json!(0));
+        assert_eq!(first_row_value(&result, "added_count"), &json!(1));
+    }
+
+    #[test]
+    fn transient_model_commit_rejects_non_model_edit_operations() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"let scratch = app.new_model("Demo");
+                   scratch.transaction("run capability")
+                       .capability("mercurio.dsl.analysis", #{scope: "scratch"})
+                       .commit()"#,
+            )
+            .unwrap();
+
+        assert_eq!(first_row_value(&result, "status"), &json!("rejected"));
+        assert_eq!(first_row_value(&result, "applied"), &json!(false));
+        assert!(
+            first_row_value(&result, "diagnostics")
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+    }
+
+    #[test]
+    fn app_current_model_references_injected_model() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"app.current_model().user_elements().count()"#,
+            )
+            .unwrap();
+
+        assert_eq!(result.rows[0][0], json!(3));
+    }
+
+    #[test]
+    fn global_new_model_alias_remains_available() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"let scratch = new_model("Alias");
+                   scratch.name"#,
+            )
+            .unwrap();
+
+        assert_eq!(result.rows[0][0], json!("Alias"));
     }
 
     #[test]
