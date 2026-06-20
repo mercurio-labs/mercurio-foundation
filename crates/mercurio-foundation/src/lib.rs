@@ -333,9 +333,9 @@ pub use syntax_compare::{
     SyntaxSourceSpan, build_rust_syntax_snapshot, compare_syntax_snapshots,
 };
 pub use transaction::{
-    SEMANTIC_TRANSACTION_SCHEMA, SemanticTransaction, SemanticTransactionReport,
-    TransactionArtifact, TransactionDiagnostic, TransactionDiagnosticSeverity,
-    TransactionIsolation, TransactionOperation, TransactionStatus,
+    SEMANTIC_CHANGE_SET_SCHEMA, SEMANTIC_TRANSACTION_SCHEMA, SemanticChangeSet,
+    SemanticTransaction, SemanticTransactionReport, TransactionArtifact, TransactionDiagnostic,
+    TransactionDiagnosticSeverity, TransactionIsolation, TransactionOperation, TransactionStatus,
 };
 #[allow(deprecated)]
 pub use views::{

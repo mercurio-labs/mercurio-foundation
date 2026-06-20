@@ -6,7 +6,7 @@ It stores models as KIR, projects them into graphs, runs deterministic semantic 
 
 Mercurio is also a semantic operations framework for AI-assisted systems engineering. Rather than treating models as static files or editor-only artifacts, Mercurio represents engineering systems as source-linked semantic workspaces: queryable, explainable, validated, transactional, and auditable. This lets humans, tools, and AI agents operate over the same model substrate.
 
-In that centaur-style workflow, Foundation provides the generic workspace services: stable model identity and source spans, semantic graph and derived features, validation and diagnostics, semantic diff and workspace revisioning, transactional mutation previews, and evidence-producing reasoning services. Domain repositories declare their own semantic capabilities on top of this substrate, with SysML as the first rich profile.
+In that centaur-style workflow, Foundation provides the generic workspace services: stable model identity and source spans, semantic graph and derived features, validation and diagnostics, semantic diff and workspace revisioning, change-set previews, host-authorized transactions, and evidence-producing reasoning services. Domain repositories declare their own semantic capabilities on top of this substrate, with SysML as the first rich profile.
 
 ## Philosophy
 

@@ -32,7 +32,7 @@ An AI assistant cannot safely work from raw text alone. It needs a semantic work
 
 Mercurio's core role is to provide that workspace. KIR, graph indexes, source spans, semantic diffs, mutation proposals, validation reports, reasoning artifacts, and evidence graphs are not auxiliary features; they are the substrate for AI-assisted systems engineering.
 
-In this model, domain languages plug in declarative semantic capabilities. Foundation owns workspace identity, graph traversal, transactions, diagnostics, evidence, and interface orchestration. A language profile owns domain meaning, such as SysML definition and usage semantics, feature typing, specialization, subsetting, redefinition, allocation, requirement traceability, behavior, and simulation readiness.
+In this model, domain languages plug in declarative semantic capabilities. Foundation owns workspace identity, graph traversal, change sets, transactions, diagnostics, evidence, and interface orchestration. Change sets are the reviewable edit unit; transactions are the host-authorized execution and audit envelope around change sets, capability runs, build operations, and artifacts. A language profile owns domain meaning, such as SysML definition and usage semantics, feature typing, specialization, subsetting, redefinition, allocation, requirement traceability, behavior, and simulation readiness.
 
 ## KerML Alignment
 

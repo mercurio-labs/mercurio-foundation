@@ -7,6 +7,7 @@ use crate::identity::stable_digest;
 use crate::mutation::{SemanticDiff, SemanticMutation, WorkspaceRevision};
 use crate::session::CommitResult;
 
+pub const SEMANTIC_CHANGE_SET_SCHEMA: &str = "mercurio.semantic_change_set.v1";
 pub const SEMANTIC_TRANSACTION_SCHEMA: &str = "mercurio.semantic_transaction.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,10 +71,43 @@ pub struct TransactionArtifact {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticChangeSet {
+    pub schema: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, alias = "operations")]
+    pub actions: Vec<SemanticMutation>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl SemanticChangeSet {
+    pub fn new(label: impl Into<String>, actions: Vec<SemanticMutation>) -> Self {
+        Self::from_optional_label(Some(label.into()), actions)
+    }
+
+    pub fn from_actions(actions: Vec<SemanticMutation>) -> Self {
+        Self::from_optional_label(None, actions)
+    }
+
+    fn from_optional_label(label: Option<String>, actions: Vec<SemanticMutation>) -> Self {
+        let id = deterministic_change_set_id(label.as_deref(), &actions);
+        Self {
+            schema: SEMANTIC_CHANGE_SET_SCHEMA.to_string(),
+            id,
+            label,
+            actions,
+            metadata: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TransactionOperation {
-    SemanticMutation {
-        operation: SemanticMutation,
+    ChangeSet {
+        change_set: SemanticChangeSet,
     },
     CapabilityRun {
         capability_id: String,
@@ -95,8 +129,15 @@ pub enum TransactionOperation {
 }
 
 impl TransactionOperation {
-    pub fn semantic_mutation(operation: SemanticMutation) -> Self {
-        Self::SemanticMutation { operation }
+    pub fn change_set(change_set: SemanticChangeSet) -> Self {
+        Self::ChangeSet { change_set }
+    }
+
+    pub fn change_set_from_actions(
+        label: impl Into<String>,
+        actions: Vec<SemanticMutation>,
+    ) -> Self {
+        Self::change_set(SemanticChangeSet::new(label, actions))
     }
 
     pub fn capability_run(capability_id: impl Into<String>, parameters: Value) -> Self {
@@ -242,6 +283,18 @@ impl SemanticTransactionReport {
     }
 }
 
+fn deterministic_change_set_id(label: Option<&str>, actions: &[SemanticMutation]) -> String {
+    let action_bytes = match serde_json::to_vec(actions) {
+        Ok(bytes) => bytes,
+        Err(error) => error.to_string().into_bytes(),
+    };
+    let digest = stable_digest([
+        (b"label".as_slice(), label.unwrap_or("unlabeled").as_bytes()),
+        (b"actions".as_slice(), action_bytes.as_slice()),
+    ]);
+    format!("chg.{}", digest.replace(':', "_"))
+}
+
 fn deterministic_transaction_id(
     label: &str,
     base_revision: Option<&WorkspaceRevision>,
@@ -270,17 +323,40 @@ mod tests {
 
     #[test]
     fn transaction_id_is_deterministic_for_same_operation_set() {
-        let operations = vec![TransactionOperation::semantic_mutation(
-            SemanticMutation::RenameDeclaration {
+        let operations = vec![TransactionOperation::change_set_from_actions(
+            "rename changes",
+            vec![SemanticMutation::RenameDeclaration {
                 element: ElementRef::new("Demo.Vehicle"),
                 new_name: "Vehicle2".to_string(),
-            },
+            }],
         )];
         let left = SemanticTransaction::new("rename", None, operations.clone());
         let right = SemanticTransaction::new("rename", None, operations);
 
         assert_eq!(left.id, right.id);
         assert!(left.id.starts_with("txn.fnv1a64_"));
+    }
+
+    #[test]
+    fn transaction_edit_operation_is_a_change_set() {
+        let operation = TransactionOperation::change_set_from_actions(
+            "rename changes",
+            vec![SemanticMutation::RenameDeclaration {
+                element: ElementRef::new("Demo.Vehicle"),
+                new_name: "Vehicle2".to_string(),
+            }],
+        );
+        let encoded = serde_json::to_value(operation).expect("operation serializes");
+
+        assert_eq!(encoded["kind"], Value::String("change_set".to_string()));
+        assert_eq!(
+            encoded["change_set"]["schema"],
+            Value::String(SEMANTIC_CHANGE_SET_SCHEMA.to_string())
+        );
+        assert_eq!(
+            encoded["change_set"]["actions"].as_array().map(Vec::len),
+            Some(1)
+        );
     }
 
     #[test]
@@ -308,11 +384,12 @@ mod tests {
             Some(WorkspaceRevision {
                 fingerprint: "base".to_string(),
             }),
-            vec![TransactionOperation::semantic_mutation(
-                SemanticMutation::RenameDeclaration {
+            vec![TransactionOperation::change_set_from_actions(
+                "commit changes",
+                vec![SemanticMutation::RenameDeclaration {
                     element: ElementRef::new("Demo.Vehicle"),
                     new_name: "Vehicle2".to_string(),
-                },
+                }],
             )],
         );
         let result = CommitResult {
