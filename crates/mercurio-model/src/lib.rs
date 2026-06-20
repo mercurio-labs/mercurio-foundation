@@ -38,10 +38,11 @@ pub use metadata::{
     metadata_annotations_named, metadata_string_property,
 };
 pub use metamodel::{
-    AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-    MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
-    MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
-    collect_specialization_ancestors, effective_element_properties_with_derived,
-    effective_properties, effective_properties_with_derived, element_metatype,
-    query_element_attributes,
+    AttributeRow, AttributeValueSource, DerivedMetamodelCapabilities, ElementAttributeQuery,
+    ElementSummary, MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
+    MetamodelFeatureRegistry, MetamodelFeatureView, MetamodelValidationDiagnostic,
+    MetatypeQueryOverride, collect_specialization_ancestors, derive_metamodel_capabilities,
+    effective_element_properties_with_derived, effective_properties,
+    effective_properties_with_derived, element_metatype, query_element_attributes,
+    validate_derived_metamodel_semantics,
 };

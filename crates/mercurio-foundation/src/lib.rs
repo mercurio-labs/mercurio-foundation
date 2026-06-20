@@ -79,12 +79,13 @@ pub mod metadata {
 #[doc(hidden)]
 pub mod metamodel {
     pub use mercurio_model::{
-        AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-        MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
-        MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
-        collect_specialization_ancestors, effective_element_properties_with_derived,
+        AttributeRow, AttributeValueSource, DerivedMetamodelCapabilities, ElementAttributeQuery,
+        ElementSummary, MetamodelAttributeDeclaration, MetamodelAttributeRegistry,
+        MetamodelClassView, MetamodelFeatureRegistry, MetamodelFeatureView,
+        MetamodelValidationDiagnostic, MetatypeQueryOverride, collect_specialization_ancestors,
+        derive_metamodel_capabilities, effective_element_properties_with_derived,
         effective_properties, effective_properties_with_derived, element_metatype,
-        query_element_attributes,
+        query_element_attributes, validate_derived_metamodel_semantics,
     };
 }
 pub mod dsl;
@@ -120,6 +121,8 @@ pub mod semantic_compare;
 pub mod semantic_profile;
 #[doc(hidden)]
 pub mod semantic_target;
+#[doc(hidden)]
+pub mod semantic_validation;
 #[doc(hidden)]
 pub mod session;
 #[doc(hidden)]
@@ -240,11 +243,12 @@ pub use metadata::{
     metadata_annotations_named, metadata_string_property,
 };
 pub use metamodel::{
-    AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-    MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
-    MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
-    collect_specialization_ancestors, effective_properties, effective_properties_with_derived,
-    element_metatype, query_element_attributes,
+    AttributeRow, AttributeValueSource, DerivedMetamodelCapabilities, ElementAttributeQuery,
+    ElementSummary, MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
+    MetamodelFeatureRegistry, MetamodelFeatureView, MetamodelValidationDiagnostic,
+    MetatypeQueryOverride, collect_specialization_ancestors, derive_metamodel_capabilities,
+    effective_properties, effective_properties_with_derived, element_metatype,
+    query_element_attributes, validate_derived_metamodel_semantics,
 };
 pub use model_state::{
     InputSource, InputSourceKind, InputSourceSet, MODEL_SERVICE_API_VERSION, ModelArtifact,
@@ -327,6 +331,10 @@ pub use semantic_profile::{
 pub use semantic_target::{
     IncludeSubtypes, ResolvedSemanticTarget, SemanticTarget, SemanticTargetError,
     SemanticTargetResolver, TargetLayers,
+};
+pub use semantic_validation::{
+    SemanticValidationDiagnostic, SemanticValidationReport, SemanticValidationSeverity,
+    validate_kir_semantics, validate_kir_semantics_for_graph, validate_kir_semantics_with_context,
 };
 pub use session::{
     CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,
