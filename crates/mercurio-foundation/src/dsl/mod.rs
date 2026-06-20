@@ -27,12 +27,85 @@ pub struct DslQueryResult {
     pub rows: Vec<Vec<Value>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DslError(String);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DslDiagnosticCategory {
+    Parse,
+    Runtime,
+    Limit,
+    HostPermission,
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DslDiagnostic {
+    pub code: String,
+    pub category: DslDiagnosticCategory,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DslError {
+    pub diagnostic: DslDiagnostic,
+}
+
+impl DslError {
+    pub fn diagnostic(&self) -> &DslDiagnostic {
+        &self.diagnostic
+    }
+
+    pub fn with_script_name(mut self, script_name: Option<String>) -> Self {
+        if self.diagnostic.script_name.is_none() {
+            self.diagnostic.script_name = script_name;
+        }
+        self
+    }
+}
 
 impl std::fmt::Display for DslError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match (
+            self.diagnostic.script_name.as_deref(),
+            self.diagnostic.line,
+            self.diagnostic.column,
+        ) {
+            (Some(script_name), Some(line), Some(column)) => write!(
+                f,
+                "{} at {script_name}:{line}:{column}: {}",
+                self.diagnostic.code, self.diagnostic.message
+            ),
+            (Some(script_name), Some(line), None) => write!(
+                f,
+                "{} at {script_name}:{line}: {}",
+                self.diagnostic.code, self.diagnostic.message
+            ),
+            (Some(script_name), None, _) => {
+                write!(
+                    f,
+                    "{} in {script_name}: {}",
+                    self.diagnostic.code, self.diagnostic.message
+                )
+            }
+            (None, Some(line), Some(column)) => write!(
+                f,
+                "{} at {line}:{column}: {}",
+                self.diagnostic.code, self.diagnostic.message
+            ),
+            (None, Some(line), None) => {
+                write!(
+                    f,
+                    "{} at {line}: {}",
+                    self.diagnostic.code, self.diagnostic.message
+                )
+            }
+            (None, None, _) => write!(f, "{}: {}", self.diagnostic.code, self.diagnostic.message),
+        }
     }
 }
 
@@ -40,7 +113,38 @@ impl std::error::Error for DslError {}
 
 impl From<Box<EvalAltResult>> for DslError {
     fn from(error: Box<EvalAltResult>) -> Self {
-        Self(error.to_string())
+        let position = error.position();
+        let inner = error.unwrap_inner();
+        let (code, category) = match inner {
+            EvalAltResult::ErrorParsing(..) => ("DSL_PARSE", DslDiagnosticCategory::Parse),
+            EvalAltResult::ErrorTooManyOperations(..) => {
+                ("DSL_LIMIT_OPERATIONS", DslDiagnosticCategory::Limit)
+            }
+            EvalAltResult::ErrorTooManyVariables(..) => {
+                ("DSL_LIMIT_VARIABLES", DslDiagnosticCategory::Limit)
+            }
+            EvalAltResult::ErrorTooManyModules(..) => {
+                ("DSL_LIMIT_MODULES", DslDiagnosticCategory::Limit)
+            }
+            EvalAltResult::ErrorStackOverflow(..) => {
+                ("DSL_LIMIT_STACK", DslDiagnosticCategory::Limit)
+            }
+            EvalAltResult::ErrorDataTooLarge(..) => {
+                ("DSL_LIMIT_DATA", DslDiagnosticCategory::Limit)
+            }
+            EvalAltResult::ErrorSystem(..) => ("DSL_INTERNAL", DslDiagnosticCategory::Internal),
+            _ => ("DSL_RUNTIME", DslDiagnosticCategory::Runtime),
+        };
+        Self {
+            diagnostic: DslDiagnostic {
+                code: code.to_string(),
+                category,
+                message: error.to_string(),
+                script_name: None,
+                line: position.line(),
+                column: position.position(),
+            },
+        }
     }
 }
 
@@ -66,23 +170,230 @@ pub struct DslAnalysisRunSpec {
     pub subject_element_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DslExecutionLimits {
+    pub max_operations: u64,
+    pub max_string_size: usize,
+    pub max_array_size: usize,
+    pub max_map_size: usize,
+    pub max_call_levels: usize,
+}
+
+impl Default for DslExecutionLimits {
+    fn default() -> Self {
+        Self {
+            max_operations: 500_000,
+            max_string_size: 1_000_000,
+            max_array_size: 50_000,
+            max_map_size: 50_000,
+            max_call_levels: 32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DslQueryRequest {
+    pub script: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<DslExecutionLimits>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DslQueryReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
+    pub result: DslQueryResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DslAnalysisRunRequest {
+    #[serde(flatten)]
+    pub spec: DslAnalysisRunSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<DslExecutionLimits>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DslAnalysisRunReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_name: Option<String>,
+    pub report: CapabilityRunReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DslExtensionSpec {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_sets: Vec<DslModelSetFunction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schema_functions: Vec<String>,
+}
+
+impl DslExtensionSpec {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            model_sets: Vec::new(),
+            schema_functions: Vec::new(),
+        }
+    }
+
+    pub fn with_model_set_contains_any(
+        mut self,
+        name: impl Into<String>,
+        field: impl Into<String>,
+        contains_any: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        let name = name.into();
+        self.schema_functions.push(format!("ModelContext.{name}"));
+        self.model_sets.push(DslModelSetFunction {
+            name,
+            field: field.into(),
+            contains_any: contains_any.into_iter().map(Into::into).collect(),
+        });
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DslModelSetFunction {
+    pub name: String,
+    pub field: String,
+    pub contains_any: Vec<String>,
+}
+
 pub struct RhaiEngine {
     engine: Engine,
 }
 
+pub struct DslEngine {
+    rhai: RhaiEngine,
+    extensions: Vec<DslExtensionSpec>,
+}
+
+impl DslEngine {
+    pub fn new() -> Self {
+        Self::with_extensions(Vec::new())
+    }
+
+    pub fn with_limits(limits: DslExecutionLimits) -> Self {
+        Self::with_limits_and_extensions(limits, Vec::new())
+    }
+
+    pub fn with_extensions(extensions: Vec<DslExtensionSpec>) -> Self {
+        Self::with_limits_and_extensions(DslExecutionLimits::default(), extensions)
+    }
+
+    pub fn with_limits_and_extensions(
+        limits: DslExecutionLimits,
+        extensions: Vec<DslExtensionSpec>,
+    ) -> Self {
+        Self {
+            rhai: RhaiEngine::with_limits_and_extensions(limits, &extensions),
+            extensions,
+        }
+    }
+
+    pub fn eval_query(&self, graph: Arc<Graph>, script: &str) -> Result<DslQueryResult, DslError> {
+        self.rhai.eval_query(graph, script)
+    }
+
+    pub fn execute_query(
+        &self,
+        graph: Arc<Graph>,
+        request: DslQueryRequest,
+    ) -> Result<DslQueryReport, DslError> {
+        let script_name = request.script_name.clone();
+        let result = if let Some(limits) = request.limits {
+            Self::with_limits_and_extensions(limits, self.extensions.clone())
+                .eval_query(graph, &request.script)
+        } else {
+            self.eval_query(graph, &request.script)
+        }
+        .map_err(|err| err.with_script_name(script_name.clone()))?;
+        Ok(DslQueryReport {
+            script_name: request.script_name,
+            result,
+        })
+    }
+
+    pub fn eval_analysis_run(
+        &self,
+        graph: Arc<Graph>,
+        spec: DslAnalysisRunSpec,
+    ) -> Result<CapabilityRunReport, DslError> {
+        self.rhai.eval_analysis_run(graph, spec)
+    }
+
+    pub fn execute_analysis_run(
+        &self,
+        graph: Arc<Graph>,
+        request: DslAnalysisRunRequest,
+    ) -> Result<DslAnalysisRunReport, DslError> {
+        let script_name = request.script_name.clone();
+        let report = if let Some(limits) = request.limits {
+            Self::with_limits_and_extensions(limits, self.extensions.clone())
+                .eval_analysis_run(graph, request.spec)
+        } else {
+            self.eval_analysis_run(graph, request.spec)
+        }
+        .map_err(|err| err.with_script_name(script_name.clone()))?;
+        Ok(DslAnalysisRunReport {
+            script_name: request.script_name,
+            report,
+        })
+    }
+
+    pub fn schema(graph: &Graph) -> DslSchema {
+        Self::schema_with_extensions(graph, &[])
+    }
+
+    pub fn schema_with_extensions(graph: &Graph, extensions: &[DslExtensionSpec]) -> DslSchema {
+        let mut schema = RhaiEngine::schema(graph);
+        schema.stdlib_functions.extend(
+            extensions
+                .iter()
+                .flat_map(|extension| extension.schema_functions.iter().cloned()),
+        );
+        schema.stdlib_functions.sort();
+        schema.stdlib_functions.dedup();
+        schema
+    }
+
+    pub fn schema_for(&self, graph: &Graph) -> DslSchema {
+        Self::schema_with_extensions(graph, &self.extensions)
+    }
+}
+
 impl RhaiEngine {
     pub fn new() -> Self {
+        Self::with_limits(DslExecutionLimits::default())
+    }
+
+    pub fn with_limits(limits: DslExecutionLimits) -> Self {
+        Self::with_limits_and_extensions(limits, &[])
+    }
+
+    pub fn with_limits_and_extensions(
+        limits: DslExecutionLimits,
+        extensions: &[DslExtensionSpec],
+    ) -> Self {
         let mut engine = Engine::new();
 
-        engine.set_max_operations(500_000);
-        engine.set_max_string_size(1_000_000);
-        engine.set_max_array_size(50_000);
-        engine.set_max_map_size(50_000);
-        engine.set_max_call_levels(32);
+        engine.set_max_operations(limits.max_operations);
+        engine.set_max_string_size(limits.max_string_size);
+        engine.set_max_array_size(limits.max_array_size);
+        engine.set_max_map_size(limits.max_map_size);
+        engine.set_max_call_levels(limits.max_call_levels);
         engine.disable_symbol("print");
         engine.disable_symbol("debug");
 
         types::register_types(&mut engine);
+        types::register_extensions(&mut engine, extensions);
         stdlib::register_stdlib(&mut engine);
 
         Self { engine }
@@ -132,7 +443,34 @@ impl RhaiEngine {
             element_kinds: kinds.into_iter().collect(),
             fields,
             stdlib_functions: vec![
+                "ElementSet.order_by".into(),
+                "ElementSet.order_by_desc".into(),
+                "ElementSet.related".into(),
+                "ElementSet.select_related".into(),
+                "ElementSet.select_related_where_eq".into(),
+                "ElementSet.where_contains".into(),
+                "ElementSet.where_eq".into(),
+                "ElementSet.where_in".into(),
+                "ElementSet.where_ne".into(),
+                "BuildPlan.depends_on".into(),
+                "BuildPlan.operation".into(),
+                "BuildPlan.plan".into(),
+                "BuildPlan.task".into(),
+                "TransactionBuilder.build_depends_on".into(),
+                "TransactionBuilder.build_operation".into(),
+                "TransactionBuilder.build_task".into(),
+                "TransactionBuilder.capability".into(),
+                "TransactionBuilder.commit".into(),
+                "TransactionBuilder.preview".into(),
+                "TransactionBuilder.rename".into(),
+                "TransactionBuilder.set_attribute".into(),
+                "ModelContext.capabilities".into(),
+                "ModelContext.capability".into(),
+                "ModelContext.changes".into(),
+                "ModelContext.requires".into(),
+                "ModelContext.transaction".into(),
                 "all_parts".into(),
+                "build".into(),
                 "count_by_kind".into(),
                 "reachable".into(),
                 "specialization_depth".into(),
@@ -342,6 +680,12 @@ impl Default for RhaiEngine {
     }
 }
 
+impl Default for DslEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn dynamic_to_query_result(result: rhai::Dynamic) -> DslQueryResult {
     if let Some(query_result) = result.clone().try_cast::<DslQueryResult>() {
         return query_result;
@@ -546,6 +890,15 @@ mod tests {
         Arc::new(Graph::from_document(document).unwrap())
     }
 
+    fn first_row_value<'a>(result: &'a DslQueryResult, column: &str) -> &'a Value {
+        let index = result
+            .columns
+            .iter()
+            .position(|candidate| candidate == column)
+            .expect("column exists");
+        &result.rows[0][index]
+    }
+
     #[test]
     fn count_all_parts() {
         let engine = RhaiEngine::new();
@@ -554,6 +907,86 @@ mod tests {
             .unwrap();
         assert_eq!(result.rows.len(), 1);
         assert_eq!(result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn dsl_engine_facade_runs_query() {
+        let engine = DslEngine::new();
+        let result = engine
+            .eval_query(sample_graph(), "model.parts().count()")
+            .unwrap();
+        assert_eq!(result.columns, vec!["value"]);
+        assert_eq!(result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn dsl_engine_report_preserves_script_name() {
+        let engine = DslEngine::new();
+        let report = engine
+            .execute_query(
+                sample_graph(),
+                DslQueryRequest {
+                    script: "model.parts().count()".into(),
+                    script_name: Some("queries/count_parts.mercurio-query.dsl".into()),
+                    limits: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            report.script_name.as_deref(),
+            Some("queries/count_parts.mercurio-query.dsl")
+        );
+        assert_eq!(report.result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn dsl_engine_request_limits_operations() {
+        let engine = DslEngine::new();
+        let error = engine
+            .execute_query(
+                sample_graph(),
+                DslQueryRequest {
+                    script: "let x = 0; while x < 1000 { x += 1; } x".into(),
+                    script_name: Some("queries/too_many_ops.mercurio-query.dsl".into()),
+                    limits: Some(DslExecutionLimits {
+                        max_operations: 10,
+                        ..DslExecutionLimits::default()
+                    }),
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(error.diagnostic().code, "DSL_LIMIT_OPERATIONS");
+        assert_eq!(error.diagnostic().category, DslDiagnosticCategory::Limit);
+        assert_eq!(
+            error.diagnostic().script_name.as_deref(),
+            Some("queries/too_many_ops.mercurio-query.dsl")
+        );
+        assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
+    fn dsl_engine_parse_error_has_position() {
+        let engine = DslEngine::new();
+        let error = engine
+            .execute_query(
+                sample_graph(),
+                DslQueryRequest {
+                    script: "let = 1;".into(),
+                    script_name: Some("queries/bad.mercurio-query.dsl".into()),
+                    limits: None,
+                },
+            )
+            .unwrap_err();
+
+        assert_eq!(error.diagnostic().code, "DSL_PARSE");
+        assert_eq!(error.diagnostic().category, DslDiagnosticCategory::Parse);
+        assert_eq!(
+            error.diagnostic().script_name.as_deref(),
+            Some("queries/bad.mercurio-query.dsl")
+        );
+        assert_eq!(error.diagnostic().line, Some(1));
     }
 
     #[test]
@@ -581,6 +1014,190 @@ mod tests {
             .unwrap();
         assert_eq!(result.columns, vec!["declared_name"]);
         assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn native_property_helpers_filter_and_order() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"model.parts()
+                       .where_in("kind", ["PartDefinition"])
+                       .where_ne("declared_name", "Animal")
+                       .order_by_desc("declared_name")
+                       .select(["declared_name"])"#,
+            )
+            .unwrap();
+
+        assert_eq!(result.columns, vec!["declared_name"]);
+        assert_eq!(result.rows, vec![vec![json!("Vehicle")]]);
+    }
+
+    #[test]
+    fn native_relationship_projection_selects_source_and_target_fields() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"model.parts()
+                       .where_eq("declared_name", "Vehicle")
+                       .select_related_where_eq(
+                           "features",
+                           "kind",
+                           "AttributeUsage",
+                           ["declared_name"],
+                           ["declared_name"]
+                       )"#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.columns,
+            vec!["source.declared_name", "target.declared_name"]
+        );
+        assert_eq!(
+            result.rows,
+            vec![vec![json!("Vehicle"), json!("payload_mass_kg")]]
+        );
+    }
+
+    #[test]
+    fn dsl_engine_registers_model_set_extensions() {
+        let extension = DslExtensionSpec::new("test").with_model_set_contains_any(
+            "vehicle_named",
+            "declared_name",
+            ["Vehicle"],
+        );
+        let engine = DslEngine::with_extensions(vec![extension]);
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                "model.vehicle_named().select([\"declared_name\"])",
+            )
+            .unwrap();
+
+        assert_eq!(result.columns, vec!["declared_name"]);
+        assert_eq!(result.rows, vec![vec![json!("Vehicle")]]);
+        assert!(
+            engine
+                .schema_for(&sample_graph())
+                .stdlib_functions
+                .contains(&"ModelContext.vehicle_named".to_string())
+        );
+    }
+
+    #[test]
+    fn capability_binding_reports_readiness_and_run_status() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"let cap = model.capability("mercurio.dsl.analysis");
+                   cap.run(#{subject: "Demo.Vehicle"})"#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.columns,
+            vec![
+                "deterministic",
+                "element_count",
+                "id",
+                "parameters",
+                "status"
+            ]
+        );
+        assert_eq!(result.rows[0][2], json!("mercurio.dsl.analysis"));
+        assert_eq!(result.rows[0][4], json!("passed"));
+    }
+
+    #[test]
+    fn change_set_preview_does_not_apply_mutation() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"model.changes()
+                       .rename("Demo.Vehicle", "VehicleRenamed")
+                       .set_attribute("Demo.Vehicle", "mass_kg", 12.0)
+                       .preview()"#,
+            )
+            .unwrap();
+
+        assert_eq!(result.rows[0][0], json!(false));
+        assert_eq!(result.rows[0][1], json!("change_set_preview"));
+        assert_eq!(result.rows[0][2], json!(2));
+    }
+
+    #[test]
+    fn build_plan_declares_deterministic_task_graph() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"build("check")
+                       .task("compile")
+                       .task("query")
+                       .depends_on("query", "compile")
+                       .operation("compile", "compile")
+                       .operation("query", "dsl-run")
+                       .plan()"#,
+            )
+            .unwrap();
+
+        assert_eq!(result.rows[0][0], json!("build_plan"));
+        assert_eq!(result.rows[0][1], json!("check"));
+        assert_eq!(result.rows[0][2], json!(2));
+    }
+
+    #[test]
+    fn transaction_preview_collects_capability_mutation_and_build_operations() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"model.transaction("vehicle check")
+                       .rename("Demo.Vehicle", "VehicleRenamed")
+                       .set_attribute("Demo.Vehicle", "mass_kg", 12.0)
+                       .capability("mercurio.dsl.analysis", #{scope: "vehicle"})
+                       .build_task("check")
+                       .build_operation("check", "compile")
+                       .build_depends_on("publish", "check")
+                       .preview()"#,
+            )
+            .unwrap();
+
+        assert_eq!(first_row_value(&result, "applied"), &json!(false));
+        assert_eq!(first_row_value(&result, "label"), &json!("vehicle check"));
+        assert_eq!(first_row_value(&result, "operation_count"), &json!(6));
+        assert_eq!(first_row_value(&result, "status"), &json!("previewed"));
+        assert!(
+            first_row_value(&result, "transaction_id")
+                .as_str()
+                .is_some_and(|value| value.starts_with("txn.fnv1a64_"))
+        );
+    }
+
+    #[test]
+    fn transaction_commit_is_host_permission_gated_by_default() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"model.transaction("rename vehicle")
+                       .rename("Demo.Vehicle", "VehicleRenamed")
+                       .commit()"#,
+            )
+            .unwrap();
+
+        assert_eq!(first_row_value(&result, "applied"), &json!(false));
+        assert_eq!(first_row_value(&result, "status"), &json!("rejected"));
+        assert!(
+            first_row_value(&result, "diagnostics")
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
     }
 
     #[test]

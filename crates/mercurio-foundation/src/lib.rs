@@ -127,6 +127,7 @@ pub mod source_set;
 pub mod syntax_compare;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod transaction;
 #[allow(deprecated)]
 #[doc(hidden)]
 pub mod views;
@@ -183,7 +184,10 @@ pub use derived::{
     derived_property, manifest_from_metadata,
 };
 pub use dsl::{
-    DslAnalysisRunSpec, DslError, DslFieldSchema, DslQueryResult, DslSchema, RhaiEngine,
+    DslAnalysisRunReport, DslAnalysisRunRequest, DslAnalysisRunSpec, DslDiagnostic,
+    DslDiagnosticCategory, DslEngine, DslError, DslExecutionLimits, DslExtensionSpec,
+    DslFieldSchema, DslModelSetFunction, DslQueryReport, DslQueryRequest, DslQueryResult,
+    DslSchema, RhaiEngine,
 };
 pub use element_view::ElementView;
 pub use expression::{
@@ -327,6 +331,11 @@ pub use source_set::{
 pub use syntax_compare::{
     SyntaxComparisonReport, SyntaxNodeMismatch, SyntaxSnapshot, SyntaxSnapshotNode,
     SyntaxSourceSpan, build_rust_syntax_snapshot, compare_syntax_snapshots,
+};
+pub use transaction::{
+    SEMANTIC_TRANSACTION_SCHEMA, SemanticTransaction, SemanticTransactionReport,
+    TransactionArtifact, TransactionDiagnostic, TransactionDiagnosticSeverity,
+    TransactionIsolation, TransactionOperation, TransactionStatus,
 };
 #[allow(deprecated)]
 pub use views::{
