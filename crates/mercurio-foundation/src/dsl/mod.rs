@@ -17,9 +17,13 @@ use crate::capability::{
 use crate::graph::Graph;
 use crate::identity::stable_digest;
 use crate::ir::{KirFieldKind, KirFieldRegistry};
+use crate::model_state::{ModelArtifact, ModelRevision};
 use types::{DslAppContext, ModelContext};
 
 pub use types::{DslEdge, DslElement, ElementSet};
+
+pub const DSL_QUERY_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/query-report";
+pub const DSL_ANALYSIS_RUN_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/analysis-run-report";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DslQueryResult {
@@ -58,6 +62,19 @@ pub struct DslError {
 impl DslError {
     pub fn diagnostic(&self) -> &DslDiagnostic {
         &self.diagnostic
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            diagnostic: DslDiagnostic {
+                code: "DSL_INTERNAL".to_string(),
+                category: DslDiagnosticCategory::Internal,
+                message: message.into(),
+                script_name: None,
+                line: None,
+                column: None,
+            },
+        }
     }
 
     pub fn with_script_name(mut self, script_name: Option<String>) -> Self {
@@ -302,6 +319,14 @@ impl DslEngine {
         self.rhai.eval_query(graph, script)
     }
 
+    pub fn eval_query_on_revision(
+        &self,
+        revision: &ModelRevision,
+        script: &str,
+    ) -> Result<DslQueryResult, DslError> {
+        self.eval_query(revision.graph(), script)
+    }
+
     pub fn execute_query(
         &self,
         graph: Arc<Graph>,
@@ -321,12 +346,46 @@ impl DslEngine {
         })
     }
 
+    pub fn execute_query_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslQueryRequest,
+    ) -> Result<DslQueryReport, DslError> {
+        self.execute_query(revision.graph(), request)
+    }
+
+    pub fn execute_query_artifact_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslQueryRequest,
+    ) -> Result<ModelArtifact, DslError> {
+        let label = request.script_name.clone();
+        let report = self.execute_query_on_revision(revision, request)?;
+        let payload =
+            serde_json::to_value(report).map_err(|error| DslError::internal(error.to_string()))?;
+        ModelArtifact::new(
+            revision.id().clone(),
+            DSL_QUERY_ARTIFACT_KIND,
+            label,
+            payload,
+        )
+        .map_err(|error| DslError::internal(error.to_string()))
+    }
+
     pub fn eval_analysis_run(
         &self,
         graph: Arc<Graph>,
         spec: DslAnalysisRunSpec,
     ) -> Result<CapabilityRunReport, DslError> {
         self.rhai.eval_analysis_run(graph, spec)
+    }
+
+    pub fn eval_analysis_run_on_revision(
+        &self,
+        revision: &ModelRevision,
+        spec: DslAnalysisRunSpec,
+    ) -> Result<CapabilityRunReport, DslError> {
+        self.eval_analysis_run(revision.graph(), spec)
     }
 
     pub fn execute_analysis_run(
@@ -348,6 +407,32 @@ impl DslEngine {
         })
     }
 
+    pub fn execute_analysis_run_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslAnalysisRunRequest,
+    ) -> Result<DslAnalysisRunReport, DslError> {
+        self.execute_analysis_run(revision.graph(), request)
+    }
+
+    pub fn execute_analysis_run_artifact_on_revision(
+        &self,
+        revision: &ModelRevision,
+        request: DslAnalysisRunRequest,
+    ) -> Result<ModelArtifact, DslError> {
+        let label = request.script_name.clone();
+        let report = self.execute_analysis_run_on_revision(revision, request)?;
+        let payload =
+            serde_json::to_value(report).map_err(|error| DslError::internal(error.to_string()))?;
+        ModelArtifact::new(
+            revision.id().clone(),
+            DSL_ANALYSIS_RUN_ARTIFACT_KIND,
+            label,
+            payload,
+        )
+        .map_err(|error| DslError::internal(error.to_string()))
+    }
+
     pub fn schema(graph: &Graph) -> DslSchema {
         Self::schema_with_extensions(graph, &[])
     }
@@ -366,6 +451,10 @@ impl DslEngine {
 
     pub fn schema_for(&self, graph: &Graph) -> DslSchema {
         Self::schema_with_extensions(graph, &self.extensions)
+    }
+
+    pub fn schema_for_revision(&self, revision: &ModelRevision) -> DslSchema {
+        Self::schema_with_extensions(&revision.graph(), &self.extensions)
     }
 }
 
@@ -926,6 +1015,27 @@ mod tests {
         Arc::new(Graph::from_document(document).unwrap())
     }
 
+    fn sample_revision() -> ModelRevision {
+        ModelRevision::from_kir_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![KirElement {
+                    id: "type.Demo.Vehicle".into(),
+                    kind: "PartDefinition".into(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "declared_name".into(),
+                        serde_json::json!("Vehicle"),
+                    )]),
+                }],
+            },
+            crate::model_state::ModelBuildRecord::new(
+                crate::model_state::ModelRevisionProducer::KirImport,
+            ),
+        )
+        .unwrap()
+    }
+
     fn metatype_graph() -> Arc<Graph> {
         let document = KirDocument {
             metadata: BTreeMap::new(),
@@ -1025,6 +1135,52 @@ mod tests {
             Some("queries/count_parts.mercurio-query.dsl")
         );
         assert_eq!(report.result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn dsl_engine_runs_query_against_model_revision() {
+        let engine = DslEngine::new();
+        let revision = sample_revision();
+        let report = engine
+            .execute_query_on_revision(
+                &revision,
+                DslQueryRequest {
+                    script: "model.parts().count()".into(),
+                    script_name: Some("queries/revision_count.mercurio-query.dsl".into()),
+                    limits: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(report.result.columns, vec!["value"]);
+        assert_eq!(report.result.rows[0][0], serde_json::json!(1));
+    }
+
+    #[test]
+    fn dsl_engine_query_artifact_is_scoped_to_model_revision() {
+        let engine = DslEngine::new();
+        let revision = sample_revision();
+        let artifact = engine
+            .execute_query_artifact_on_revision(
+                &revision,
+                DslQueryRequest {
+                    script: "model.parts().count()".into(),
+                    script_name: Some("queries/revision_count.mercurio-query.dsl".into()),
+                    limits: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(artifact.revision_id, revision.id().clone());
+        assert_eq!(artifact.kind, DSL_QUERY_ARTIFACT_KIND);
+        assert_eq!(
+            artifact.payload["script_name"],
+            serde_json::json!("queries/revision_count.mercurio-query.dsl")
+        );
+        assert_eq!(
+            artifact.payload["result"]["rows"][0][0],
+            serde_json::json!(1)
+        );
     }
 
     #[test]

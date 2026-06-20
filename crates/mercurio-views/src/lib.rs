@@ -3,7 +3,7 @@
 //! This crate exposes serializable diagram/table specs, validation diagnostics,
 //! and render functions for model-backed views.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,8 @@ pub struct ViewDocumentDto {
     pub version: u8,
     pub kind: String,
     pub mode: ViewModeDto,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagram: Option<DiagramSpecDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,6 +170,7 @@ impl ViewDocumentDto {
             version: VIEW_SPEC_VERSION,
             kind: format!("diagram.{}", diagram_kind_name(&spec.kind)),
             mode: ViewModeDto::Visualization,
+            parameters: BTreeMap::new(),
             diagram: Some(spec),
             table: None,
         }
@@ -179,6 +182,7 @@ impl ViewDocumentDto {
             version: VIEW_SPEC_VERSION,
             kind: "table".to_string(),
             mode: ViewModeDto::Visualization,
+            parameters: BTreeMap::new(),
             diagram: None,
             table: Some(spec),
         }

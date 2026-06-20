@@ -6,12 +6,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::authoring::AuthoringProject;
+use crate::capability::{CapabilityRunReport, SemanticArtifact, SemanticDiagnostic};
 use crate::feasibility::{
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
     MutationContext, MutationFeasibilityService,
 };
 use crate::identity::workspace_revision_for_kir_document;
 use crate::ir::{KirDocument, KirElement, KirError};
+use crate::model_state::{
+    InputSource, InputSourceKind, InputSourceSet, ModelBuildRecord, ModelRevision,
+    ModelRevisionProducer, ModelState, ModelStateError,
+};
 use crate::mutation::{
     ElementRef, MutationEvidence, MutationProposal, SemanticDiff, SemanticMutation,
     WorkspaceRevision, diff_kir_documents,
@@ -44,6 +49,93 @@ pub struct ModelFork {
     base: Arc<WorkspaceSnapshot>,
     workspace: Option<ModelWorkspace>,
     overlay: KirOverlay,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellKind {
+    Query,
+    Action,
+    View,
+    Script,
+    Capability,
+    Analysis,
+    Build,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellLanguage {
+    MercurioDsl,
+    Python,
+    Rhai,
+    Sysml,
+    Host,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellRunStatus {
+    Passed,
+    Failed,
+    Error,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellOutputKind {
+    Table,
+    Text,
+    Json,
+    Stdout,
+    Stderr,
+    CapabilityReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellOutput {
+    pub id: String,
+    pub kind: CellOutputKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellRunRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_id: Option<String>,
+    pub kind: CellKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<CellLanguage>,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellRunReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub cell_id: String,
+    pub kind: CellKind,
+    pub status: CellRunStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<CellOutput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<SemanticArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<SemanticDiagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_report: Option<CapabilityRunReport>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -165,6 +257,29 @@ impl WorkspaceSnapshot {
     pub fn source_project(&self) -> Option<&AuthoringProject> {
         self.source_project.as_ref()
     }
+
+    pub fn model_revision(&self) -> Result<ModelRevision, ModelStateError> {
+        ModelRevision::from_kir_document_with_profile(
+            (*self.kir).clone(),
+            self.profile_id.clone(),
+            self.model_build_record(),
+        )
+    }
+
+    fn model_build_record(&self) -> ModelBuildRecord {
+        let Some(project) = &self.source_project else {
+            return ModelBuildRecord::new(ModelRevisionProducer::WorkspaceSnapshot);
+        };
+
+        let sources = project
+            .files()
+            .map(|(path, _)| InputSource::new(InputSourceKind::SourceFile, path.to_string()))
+            .collect::<Vec<_>>();
+        ModelBuildRecord::source_compile(InputSourceSet::new(
+            Some("authoring project".to_string()),
+            sources,
+        ))
+    }
 }
 
 impl ModelWorkspace {
@@ -185,6 +300,13 @@ impl ModelWorkspace {
         }
     }
 
+    pub fn model_state(&self, label: Option<String>) -> Result<ModelState, ModelStateError> {
+        Ok(ModelState::from_revision(
+            label,
+            self.current_snapshot().model_revision()?,
+        ))
+    }
+
     fn publish_snapshot(&self, snapshot: WorkspaceSnapshot) {
         *self.current.write().expect("workspace lock poisoned") = Arc::new(snapshot);
     }
@@ -193,6 +315,10 @@ impl ModelWorkspace {
 impl ModelSession {
     pub fn snapshot(&self) -> Arc<WorkspaceSnapshot> {
         Arc::clone(&self.snapshot)
+    }
+
+    pub fn model_revision(&self) -> Result<ModelRevision, ModelStateError> {
+        self.snapshot.model_revision()
     }
 
     pub fn fork(&self, label: impl Into<String>) -> ModelFork {
