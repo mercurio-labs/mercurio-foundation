@@ -1385,8 +1385,8 @@ mod tests {
 
     use super::{
         PersistentCacheStatus, PersistentWorkspaceCache, RUNTIME_CACHE_FILE_NAME,
-        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, SemanticValidationPolicy,
-        WorkspaceCompileCacheManifest, source_file_fingerprints,
+        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, SemanticValidationMode,
+        SemanticValidationPolicy, WorkspaceCompileCacheManifest, source_file_fingerprints,
     };
     use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError};
     use crate::runtime::Runtime;
@@ -1596,7 +1596,11 @@ mod tests {
     #[test]
     fn persistent_compile_cache_reports_semantic_validation_on_miss_and_hit() {
         let root = temp_dir("persistent_validation_report");
-        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root)
+            .with_semantic_validation_policy(SemanticValidationPolicy {
+                mode: SemanticValidationMode::Warn,
+                ..SemanticValidationPolicy::default()
+            });
         let library_context = validation_library_context();
         let sources = vec![SourceDocument::new("demo.model", "transition start")];
 
@@ -1624,6 +1628,31 @@ mod tests {
         assert_eq!(
             hit.validation_report.diagnostics[0].code,
             "kir.metamodel.endpoints.incomplete"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_rejects_semantic_validation_errors_by_default() {
+        let root = temp_dir("persistent_validation_error");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = validation_library_context();
+        let sources = vec![SourceDocument::new("demo.model", "transition start")];
+
+        let error = cache
+            .compile_source_documents_with(
+                sources,
+                &library_context,
+                None,
+                compile_transition_warning_document,
+            )
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("semantic validation failed with 1 error diagnostics")
         );
 
         std::fs::remove_dir_all(root).unwrap();

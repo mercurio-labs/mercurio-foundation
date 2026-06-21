@@ -380,6 +380,7 @@ const CORE_FIELD_SPECS: &[(&str, KirFieldKind)] = &[
     ("operator_expression", KirFieldKind::Scalar),
     ("trigger", KirFieldKind::Scalar),
     ("trigger_kind", KirFieldKind::Scalar),
+    ("is_initial", KirFieldKind::Scalar),
     ("source_is_initial", KirFieldKind::Scalar),
     ("effect", KirFieldKind::Scalar),
     ("text", KirFieldKind::Scalar),
@@ -575,12 +576,6 @@ impl KirDocument {
         Ok(document)
     }
 
-    pub fn from_str_lenient(input: &str) -> Result<Self, KirError> {
-        let document: Self = serde_json::from_str(input)?;
-        document.validate()?;
-        Ok(document.normalized_for_persistence())
-    }
-
     pub fn from_slice(bytes: &[u8]) -> Result<Self, KirError> {
         let input = std::str::from_utf8(bytes)
             .map_err(|_| KirError::Model("KIR bytes are not valid UTF-8".to_string()))?;
@@ -590,11 +585,6 @@ impl KirDocument {
     pub fn from_path(path: &Path) -> Result<Self, KirError> {
         let input = std::fs::read_to_string(path)?;
         Self::from_str(&input)
-    }
-
-    pub fn from_path_lenient(path: &Path) -> Result<Self, KirError> {
-        let input = std::fs::read_to_string(path)?;
-        Self::from_str_lenient(&input)
     }
 
     pub fn validate(&self) -> Result<(), KirError> {

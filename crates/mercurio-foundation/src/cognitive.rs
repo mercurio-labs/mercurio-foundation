@@ -879,6 +879,7 @@ fn semantic_element_ref(element: &Element) -> SemanticElementRef {
                     .find(|part| !part.is_empty())
                     .map(ToOwned::to_owned)
             }),
+        semantic_anchor: None,
     }
 }
 
@@ -1028,6 +1029,7 @@ mod tests {
             element_id: "Vehicle.engine".to_string(),
             qualified_name: Some("Vehicle.engine".to_string()),
             label: Some("engine".to_string()),
+            semantic_anchor: None,
         }]);
         let context = CognitiveContext::from_document(test_document(), focus).unwrap();
 

@@ -30,7 +30,7 @@ impl SemanticValidationMode {
 
 impl Default for SemanticValidationMode {
     fn default() -> Self {
-        Self::Warn
+        Self::Error
     }
 }
 
@@ -64,7 +64,7 @@ impl Default for SemanticValidationPolicy {
     fn default() -> Self {
         Self {
             version: SEMANTIC_VALIDATION_POLICY_VERSION,
-            mode: SemanticValidationMode::Warn,
+            mode: SemanticValidationMode::Error,
         }
     }
 }
@@ -227,7 +227,7 @@ mod tests {
     use crate::ir::{KIR_SCHEMA_VERSION, KirElement};
 
     #[test]
-    fn metamodel_validation_reports_warnings_against_document_elements() {
+    fn metamodel_validation_reports_errors_against_document_elements() {
         let document = KirDocument {
             metadata: BTreeMap::from([(
                 "kir_schema_version".to_string(),
@@ -245,7 +245,7 @@ mod tests {
         let report =
             validate_kir_semantics_with_context(&document, Some(&library_context)).unwrap();
 
-        assert_eq!(report.warning_count(), 1);
+        assert_eq!(report.error_count(), 1);
         assert_eq!(
             report.diagnostics[0].code,
             "kir.metamodel.endpoints.incomplete"
@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn error_policy_promotes_semantic_diagnostics_to_errors() {
+    fn warn_policy_reports_semantic_diagnostics_as_warnings() {
         let document = KirDocument {
             metadata: BTreeMap::from([(
                 "kir_schema_version".to_string(),
@@ -276,15 +276,15 @@ mod tests {
             &document,
             Some(&library_context),
             SemanticValidationPolicy {
-                mode: SemanticValidationMode::Error,
+                mode: SemanticValidationMode::Warn,
                 ..SemanticValidationPolicy::default()
             },
         )
         .unwrap();
 
-        assert_eq!(report.warning_count(), 0);
-        assert_eq!(report.error_count(), 1);
-        assert!(report.has_errors());
+        assert_eq!(report.warning_count(), 1);
+        assert_eq!(report.error_count(), 0);
+        assert!(!report.has_errors());
     }
 
     #[test]
