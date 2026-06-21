@@ -12,12 +12,15 @@ use crate::datalog::{DerivedIndexes, Explanation, Fact};
 use crate::graph::{Edge, Element, ElementProperties, GraphArtifact};
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::runtime::{Runtime, RuntimeArtifact};
-use crate::semantic_validation::{SemanticValidationReport, validate_kir_semantics_with_context};
+use crate::semantic_validation::{
+    SemanticValidationMode, SemanticValidationPolicy, SemanticValidationReport,
+    validate_kir_semantics_with_context_and_policy,
+};
 use crate::source_set::{
     SourceDocument, compile_source_documents, compile_source_documents_with_registry,
 };
 
-const CACHE_SCHEMA_VERSION: u32 = 7;
+const CACHE_SCHEMA_VERSION: u32 = 8;
 const ARTIFACT_FAMILY_COMPILE: &str = "compile";
 const DOCUMENT_FILE_NAME: &str = "document.kir.json";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -34,12 +37,14 @@ pub struct PersistentWorkspaceCache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PersistentWorkspaceCacheOptions {
     pub runtime_cache: RuntimeCachePolicy,
+    pub validation_policy: SemanticValidationPolicy,
 }
 
 impl Default for PersistentWorkspaceCacheOptions {
     fn default() -> Self {
         Self {
             runtime_cache: RuntimeCachePolicy::ReadWrite,
+            validation_policy: SemanticValidationPolicy::default(),
         }
     }
 }
@@ -95,6 +100,7 @@ pub struct WorkspaceCompileArtifactKey {
     pub workspace_config_digest: Option<String>,
     pub compiler_digest: String,
     pub kir_schema_version: String,
+    pub validation_policy_digest: String,
     pub library_context_digest: String,
     pub mapping_rules_digest: String,
 }
@@ -178,6 +184,11 @@ impl PersistentWorkspaceCache {
         self
     }
 
+    pub fn with_semantic_validation_policy(mut self, policy: SemanticValidationPolicy) -> Self {
+        self.options.validation_policy = policy;
+        self
+    }
+
     pub fn without_runtime_cache_writes(mut self) -> Self {
         self.options.runtime_cache = RuntimeCachePolicy::ReadOnly;
         self
@@ -232,14 +243,14 @@ impl PersistentWorkspaceCache {
             &source_documents,
             library_context,
             workspace_config_path,
+            self.options.validation_policy,
         )?;
         let artifact_key = artifact_key_digest(&key)?;
 
         if !self.options.runtime_cache.can_read() {
             let document = compile(source_documents, library_context)?;
             let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
-            let validation_report =
-                validate_kir_semantics_with_context(&document, Some(library_context))?;
+            let validation_report = self.validate_kir_semantics(&document, library_context)?;
             return Ok(PersistentCompileResult {
                 document,
                 runtime_artifact,
@@ -255,8 +266,7 @@ impl PersistentWorkspaceCache {
                 document,
                 runtime_artifact,
             } => {
-                let validation_report =
-                    validate_kir_semantics_with_context(&document, Some(library_context))?;
+                let validation_report = self.validate_kir_semantics(&document, library_context)?;
                 return Ok(PersistentCompileResult {
                     document,
                     runtime_artifact,
@@ -269,8 +279,7 @@ impl PersistentWorkspaceCache {
             CacheLookup::Miss => {
                 let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
-                let validation_report =
-                    validate_kir_semantics_with_context(&document, Some(library_context))?;
+                let validation_report = self.validate_kir_semantics(&document, library_context)?;
                 let cache_write_error = self.write_compile_artifact_if_enabled(
                     &artifact_key,
                     &key,
@@ -290,8 +299,7 @@ impl PersistentWorkspaceCache {
             CacheLookup::Rejected(reason) => {
                 let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
-                let validation_report =
-                    validate_kir_semantics_with_context(&document, Some(library_context))?;
+                let validation_report = self.validate_kir_semantics(&document, library_context)?;
                 let cache_write_error = self.write_compile_artifact_if_enabled(
                     &artifact_key,
                     &key,
@@ -309,6 +317,26 @@ impl PersistentWorkspaceCache {
                 });
             }
         }
+    }
+
+    fn validate_kir_semantics(
+        &self,
+        document: &KirDocument,
+        library_context: &KirDocument,
+    ) -> Result<SemanticValidationReport, KirError> {
+        let policy = self.options.validation_policy;
+        let report = validate_kir_semantics_with_context_and_policy(
+            document,
+            Some(library_context),
+            policy,
+        )?;
+        if policy.mode == SemanticValidationMode::Error && report.has_errors() {
+            return Err(KirError::Model(format!(
+                "semantic validation failed with {} error diagnostics",
+                report.error_count()
+            )));
+        }
+        Ok(report)
     }
 
     fn write_compile_artifact_if_enabled(
@@ -508,6 +536,7 @@ pub fn workspace_compile_artifact_key(
     source_documents: &[SourceDocument],
     library_context: &KirDocument,
     workspace_config_path: Option<&Path>,
+    validation_policy: SemanticValidationPolicy,
 ) -> Result<
     (
         WorkspaceCompileArtifactKey,
@@ -531,6 +560,7 @@ pub fn workspace_compile_artifact_key(
             workspace_config_digest,
             compiler_digest: compiler_digest(),
             kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+            validation_policy_digest: semantic_validation_policy_digest(validation_policy),
             library_context_digest,
             mapping_rules_digest,
         },
@@ -1237,6 +1267,14 @@ fn artifact_key_digest(key: &WorkspaceCompileArtifactKey) -> Result<String, KirE
     digest_json(key)
 }
 
+fn semantic_validation_policy_digest(policy: SemanticValidationPolicy) -> String {
+    let cache_key = policy.cache_key();
+    digest_labeled_chunks([(
+        "semantic_validation_policy".as_bytes(),
+        cache_key.as_bytes(),
+    )])
+}
+
 fn digest_json<T: Serialize>(value: &T) -> Result<String, KirError> {
     Ok(digest_labeled_chunks([(
         "json".as_bytes(),
@@ -1347,8 +1385,8 @@ mod tests {
 
     use super::{
         PersistentCacheStatus, PersistentWorkspaceCache, RUNTIME_CACHE_FILE_NAME,
-        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, WorkspaceCompileCacheManifest,
-        source_file_fingerprints,
+        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, SemanticValidationPolicy,
+        WorkspaceCompileCacheManifest, source_file_fingerprints,
     };
     use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError};
     use crate::runtime::Runtime;
@@ -1961,7 +1999,10 @@ mod tests {
                 source_tree_digest: "fnv1a64:source".to_string(),
                 workspace_config_digest: Some("fnv1a64:config".to_string()),
                 compiler_digest: "fnv1a64:compiler".to_string(),
-                kir_schema_version: "0.2".to_string(),
+                kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+                validation_policy_digest: super::semantic_validation_policy_digest(
+                    SemanticValidationPolicy::default(),
+                ),
                 library_context_digest: "fnv1a64:library".to_string(),
                 mapping_rules_digest: "fnv1a64:mapping".to_string(),
             },

@@ -7,13 +7,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
 
 use crate::graph::{Edge, Graph};
-use crate::identity::{SourceSpanRef, workspace_revision_for_kir_document};
+use crate::identity::{
+    SemanticAnchor, SemanticAnchorResolution, SourceSpanRef, resolve_semantic_anchor,
+    semantic_anchor_for_element, workspace_revision_for_kir_document,
+};
 use crate::ir::{KirDocument, KirElement, KirError};
 use crate::metamodel::{
     MetamodelAttributeDeclaration, MetamodelAttributeRegistry, collect_specialization_ancestors,
 };
 use crate::model_state::{ModelBuildRecord, ModelRevision, ModelRevisionProducer};
 use crate::mutation::WorkspaceRevision;
+use crate::semantic_validation::{
+    SemanticValidationReport, validate_kir_semantics, validate_kir_semantics_for_graph,
+};
 
 #[derive(Debug, Clone)]
 pub struct SemanticWorkspaceSnapshot {
@@ -21,6 +27,7 @@ pub struct SemanticWorkspaceSnapshot {
     pub kir: Arc<KirDocument>,
     pub graph: Arc<Graph>,
     pub metamodel_registry: Arc<MetamodelAttributeRegistry>,
+    pub validation_report: SemanticValidationReport,
     pub profile_id: Option<String>,
 }
 
@@ -563,6 +570,8 @@ impl SemanticWorkspaceSnapshot {
         profile_id: Option<String>,
     ) -> Result<Self, CapabilityError> {
         kir.validate()?;
+        let validation_report = validate_kir_semantics(&kir)
+            .map_err(|err| CapabilityError::Workspace(err.to_string()))?;
         let revision = workspace_revision_for_kir_document(&kir)?;
         let graph = Graph::from_document(kir.clone())
             .map_err(|err| CapabilityError::Workspace(err.to_string()))?;
@@ -572,6 +581,7 @@ impl SemanticWorkspaceSnapshot {
             kir: Arc::new(kir),
             graph: Arc::new(graph),
             metamodel_registry: Arc::new(metamodel_registry),
+            validation_report,
             profile_id,
         })
     }
@@ -595,21 +605,26 @@ impl SemanticWorkspaceSnapshot {
         };
         let revision = workspace_revision_for_kir_document(&kir)?;
         let metamodel_registry = MetamodelAttributeRegistry::build(&graph);
+        let validation_report = validate_kir_semantics_for_graph(&graph);
         Ok(Self {
             revision,
             kir: Arc::new(kir),
             graph: Arc::new(graph),
             metamodel_registry: Arc::new(metamodel_registry),
+            validation_report,
             profile_id,
         })
     }
 
     pub fn from_model_revision(revision: &ModelRevision) -> Self {
+        let graph = revision.graph();
+        let validation_report = validate_kir_semantics_for_graph(&graph);
         Self {
             revision: revision.workspace_revision().clone(),
             kir: revision.kir(),
-            graph: revision.graph(),
+            graph,
             metamodel_registry: revision.metamodel_registry(),
+            validation_report,
             profile_id: revision.profile_id().map(ToOwned::to_owned),
         }
     }
@@ -644,6 +659,22 @@ impl SemanticWorkspaceSnapshot {
             .and_then(source_span_for_element)
             .into_iter()
             .collect()
+    }
+
+    pub fn anchor_for_element(
+        &self,
+        element_id: &str,
+    ) -> Result<Option<SemanticAnchor>, CapabilityError> {
+        semantic_anchor_for_element(&self.kir, element_id)
+            .map_err(|err| CapabilityError::Workspace(err.to_string()))
+    }
+
+    pub fn resolve_anchor(
+        &self,
+        anchor: &SemanticAnchor,
+    ) -> Result<SemanticAnchorResolution, CapabilityError> {
+        resolve_semantic_anchor(&self.kir, anchor)
+            .map_err(|err| CapabilityError::Workspace(err.to_string()))
     }
 }
 

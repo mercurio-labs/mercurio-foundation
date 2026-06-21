@@ -21,6 +21,7 @@ use crate::mutation::{
     ElementRef, MutationEvidence, MutationProposal, SemanticDiff, SemanticMutation,
     WorkspaceRevision, diff_kir_documents,
 };
+use crate::semantic_validation::{SemanticValidationReport, validate_kir_semantics};
 
 const GENERATED_FILE_THRESHOLD: usize = 100;
 
@@ -28,6 +29,7 @@ const GENERATED_FILE_THRESHOLD: usize = 100;
 pub struct WorkspaceSnapshot {
     pub revision: WorkspaceRevision,
     pub kir: Arc<KirDocument>,
+    pub validation_report: SemanticValidationReport,
     pub profile_id: Option<String>,
     source_project: Option<AuthoringProject>,
 }
@@ -227,10 +229,12 @@ impl WorkspaceSnapshot {
         kir: KirDocument,
         profile_id: Option<String>,
     ) -> Result<Self, SessionError> {
+        let validation_report = validate_kir_semantics(&kir)?;
         let revision = workspace_revision_for_kir_document(&kir)?;
         Ok(Self {
             revision,
             kir: Arc::new(kir),
+            validation_report,
             profile_id,
             source_project: None,
         })
@@ -239,9 +243,11 @@ impl WorkspaceSnapshot {
     pub fn from_authoring_project(project: AuthoringProject) -> Result<Self, SessionError> {
         let context = MutationContext::from_project(project.clone());
         let kir = project.compile_kir_document()?;
+        let validation_report = validate_kir_semantics(&kir)?;
         Ok(Self {
             revision: context.workspace_revision,
             kir: Arc::new(kir),
+            validation_report,
             profile_id: None,
             source_project: Some(project),
         })
@@ -597,7 +603,7 @@ impl ModelFork {
         let edited_files = application.edited_files;
         let new_kir = self.materialize()?;
         let new_revision = workspace_revision_for_kir_document(&new_kir)?;
-        self.publish_if_workspace(new_kir, new_revision.clone());
+        self.publish_if_workspace(new_kir, new_revision.clone())?;
         Ok(CommitResult {
             mode: CommitMode::PreserveSource,
             strategy_used: CommitStrategy::MutatorPlan,
@@ -621,7 +627,7 @@ impl ModelFork {
         let new_revision = workspace_revision_for_kir_document(&new_kir)?;
         let semantic_diff = diff_kir_documents(&self.base.kir, &new_kir);
         let changed_files = edited_files.keys().cloned().collect::<BTreeSet<_>>();
-        self.publish_if_workspace(new_kir, new_revision.clone());
+        self.publish_if_workspace(new_kir, new_revision.clone())?;
         Ok(CommitResult {
             mode,
             strategy_used,
@@ -711,15 +717,22 @@ impl ModelFork {
         Ok(ForkElement { id, qualified_name })
     }
 
-    fn publish_if_workspace(&self, kir: KirDocument, revision: WorkspaceRevision) {
+    fn publish_if_workspace(
+        &self,
+        kir: KirDocument,
+        revision: WorkspaceRevision,
+    ) -> Result<(), SessionError> {
         if let Some(workspace) = &self.workspace {
+            let validation_report = validate_kir_semantics(&kir)?;
             workspace.publish_snapshot(WorkspaceSnapshot {
                 revision,
                 kir: Arc::new(kir),
+                validation_report,
                 profile_id: self.base.profile_id.clone(),
                 source_project: None,
             });
         }
+        Ok(())
     }
 
     fn ensure_current_workspace_revision(&self) -> Result<(), SessionError> {
