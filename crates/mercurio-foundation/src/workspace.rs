@@ -7,6 +7,7 @@ use crate::library::{
     BaselineLibraryConfig, LibraryCacheMetadata, LibraryProviderConfig, LibrarySourceFingerprint,
     ResolvedLibraryArtifact,
 };
+use crate::semantic_validation::{SemanticValidationReport, validate_kir_semantics_with_context};
 
 pub const PROJECT_EXTENSION_DESCRIPTOR_FILE_NAME: &str = "mercurio.extensions.json";
 
@@ -102,6 +103,7 @@ pub struct ResolvedWorkspaceContext {
     pub extension_path: Option<PathBuf>,
     pub extension: Option<ProjectExtensionDescriptor>,
     pub resolved_libraries: Vec<ResolvedWorkspaceLibrary>,
+    pub validation_report: SemanticValidationReport,
     pub library_context_document: KirDocument,
 }
 
@@ -151,6 +153,7 @@ pub struct ResolvedWorkspaceLibrary {
     pub cache_metadata: Option<LibraryCacheMetadata>,
     pub cache_path: Option<PathBuf>,
     pub cached_element_count: Option<usize>,
+    pub validation_report: SemanticValidationReport,
     pub document: KirDocument,
 }
 
@@ -265,6 +268,8 @@ pub fn resolve_project_descriptor_context(
         .map(ProjectExtensionDescriptor::from_path)
         .transpose()?;
 
+    let validation_report = aggregate_workspace_validation_report(&resolved_libraries);
+
     Ok(ResolvedWorkspaceContext {
         workspace_root,
         config_path: Some(descriptor_path.to_path_buf()),
@@ -272,6 +277,7 @@ pub fn resolve_project_descriptor_context(
         extension_path,
         extension,
         resolved_libraries,
+        validation_report,
         library_context_document,
     })
 }
@@ -299,6 +305,8 @@ pub fn resolve_workspace_context_with_options(
         cache_root.as_deref(),
     )?;
 
+    let validation_report = aggregate_workspace_validation_report(&resolved_libraries);
+
     Ok(ResolvedWorkspaceContext {
         workspace_root,
         config_path,
@@ -306,8 +314,20 @@ pub fn resolve_workspace_context_with_options(
         extension_path: None,
         extension: None,
         resolved_libraries,
+        validation_report,
         library_context_document,
     })
+}
+
+fn aggregate_workspace_validation_report(
+    resolved_libraries: &[ResolvedWorkspaceLibrary],
+) -> SemanticValidationReport {
+    SemanticValidationReport {
+        diagnostics: resolved_libraries
+            .iter()
+            .flat_map(|library| library.validation_report.diagnostics.iter().cloned())
+            .collect(),
+    }
 }
 
 pub fn discover_project_extension_descriptor_path(workspace_root: &Path) -> Option<PathBuf> {
@@ -411,6 +431,7 @@ impl ResolvedWorkspaceLibrary {
             cache_metadata: artifact.cache_metadata.clone(),
             cache_path,
             cached_element_count: Some(artifact.document.elements.len()),
+            validation_report: artifact.validation_report.clone(),
             document: artifact.document.clone(),
         }
     }
@@ -467,9 +488,13 @@ fn resolve_or_load_workspace_library(
         .transpose()?;
 
     if let (Some(cache_root), Some(fingerprint)) = (cache_root, fingerprint.as_ref()) {
-        if let Some((artifact, cache_path)) =
-            load_cached_library(cache_root, role, fingerprint, context_digest.as_deref())?
-        {
+        if let Some((artifact, cache_path)) = load_cached_library(
+            cache_root,
+            role,
+            fingerprint,
+            context_digest.as_deref(),
+            library_context,
+        )? {
             return Ok(ResolvedWorkspaceLibrary::from_artifact(
                 role,
                 &artifact,
@@ -543,6 +568,7 @@ fn load_cached_library(
     role: WorkspaceLibraryRole,
     fingerprint: &LibrarySourceFingerprint,
     context_digest: Option<&str>,
+    library_context: Option<&KirDocument>,
 ) -> Result<Option<(ResolvedLibraryArtifact, PathBuf)>, WorkspaceConfigError> {
     let library_cache_dir = cache_root.join(safe_cache_segment(&fingerprint.library_id));
     let document_path = library_cache_dir.join("document.kir.json");
@@ -568,6 +594,7 @@ fn load_cached_library(
         Ok(document) => document,
         Err(_) => return Ok(None),
     };
+    let validation_report = validate_kir_semantics_with_context(&document, library_context)?;
 
     Ok(Some((
         ResolvedLibraryArtifact {
@@ -575,6 +602,7 @@ fn load_cached_library(
             source_kind: fingerprint.source_kind.clone(),
             source_path: fingerprint.source_path.clone(),
             cache_metadata: Some(fingerprint.cache_metadata.clone()),
+            validation_report,
             document,
         },
         document_path,

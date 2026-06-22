@@ -79,12 +79,13 @@ pub mod metadata {
 #[doc(hidden)]
 pub mod metamodel {
     pub use mercurio_model::{
-        AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-        MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
-        MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
-        collect_specialization_ancestors, effective_element_properties_with_derived,
+        AttributeRow, AttributeValueSource, DerivedMetamodelCapabilities, ElementAttributeQuery,
+        ElementSummary, MetamodelAttributeDeclaration, MetamodelAttributeRegistry,
+        MetamodelClassView, MetamodelFeatureRegistry, MetamodelFeatureView,
+        MetamodelValidationDiagnostic, MetatypeQueryOverride, collect_specialization_ancestors,
+        derive_metamodel_capabilities, effective_element_properties_with_derived,
         effective_properties, effective_properties_with_derived, element_metatype,
-        query_element_attributes,
+        query_element_attributes, validate_derived_metamodel_semantics,
     };
 }
 pub mod dsl;
@@ -120,6 +121,8 @@ pub mod semantic_compare;
 pub mod semantic_profile;
 #[doc(hidden)]
 pub mod semantic_target;
+#[doc(hidden)]
+pub mod semantic_validation;
 #[doc(hidden)]
 pub mod session;
 #[doc(hidden)]
@@ -212,8 +215,10 @@ pub use goal::{
 };
 pub use graph::{Edge, Element, Graph, GraphError, NodeId};
 pub use identity::{
-    ConceptId, ElementId, PackageId, ProfileId, RelationshipId, SourceSpanRef, StdlibVersion,
-    stable_digest, workspace_revision_for_kir_document,
+    ConceptId, ElementId, PackageId, ProfileId, RelationshipId, SEMANTIC_ANCHOR_SCHEMA,
+    SemanticAnchor, SemanticAnchorResolution, SemanticAnchorResolutionStatus, SourceSpanRef,
+    StdlibVersion, resolve_semantic_anchor, semantic_anchor_for_element, stable_digest,
+    workspace_revision_for_kir_document,
 };
 pub use ir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
@@ -240,11 +245,12 @@ pub use metadata::{
     metadata_annotations_named, metadata_string_property,
 };
 pub use metamodel::{
-    AttributeRow, AttributeValueSource, ElementAttributeQuery, ElementSummary,
-    MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
-    MetamodelFeatureRegistry, MetamodelFeatureView, MetatypeQueryOverride,
-    collect_specialization_ancestors, effective_properties, effective_properties_with_derived,
-    element_metatype, query_element_attributes,
+    AttributeRow, AttributeValueSource, DerivedMetamodelCapabilities, ElementAttributeQuery,
+    ElementSummary, MetamodelAttributeDeclaration, MetamodelAttributeRegistry, MetamodelClassView,
+    MetamodelFeatureRegistry, MetamodelFeatureView, MetamodelValidationDiagnostic,
+    MetatypeQueryOverride, collect_specialization_ancestors, derive_metamodel_capabilities,
+    effective_properties, effective_properties_with_derived, element_metatype,
+    query_element_attributes, validate_derived_metamodel_semantics,
 };
 pub use model_state::{
     InputSource, InputSourceKind, InputSourceSet, MODEL_SERVICE_API_VERSION, ModelArtifact,
@@ -327,6 +333,13 @@ pub use semantic_profile::{
 pub use semantic_target::{
     IncludeSubtypes, ResolvedSemanticTarget, SemanticTarget, SemanticTargetError,
     SemanticTargetResolver, TargetLayers,
+};
+pub use semantic_validation::{
+    SEMANTIC_VALIDATION_POLICY_VERSION, SemanticValidationDiagnostic, SemanticValidationMode,
+    SemanticValidationPolicy, SemanticValidationReport, SemanticValidationSeverity,
+    validate_kir_semantics, validate_kir_semantics_for_graph,
+    validate_kir_semantics_for_graph_with_policy, validate_kir_semantics_with_context,
+    validate_kir_semantics_with_context_and_policy, validate_kir_semantics_with_policy,
 };
 pub use session::{
     CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,

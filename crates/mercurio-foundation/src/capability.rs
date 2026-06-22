@@ -7,13 +7,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
 
 use crate::graph::{Edge, Graph};
-use crate::identity::{SourceSpanRef, workspace_revision_for_kir_document};
+use crate::identity::{
+    SemanticAnchor, SemanticAnchorResolution, SourceSpanRef, resolve_semantic_anchor,
+    semantic_anchor_for_element, workspace_revision_for_kir_document,
+};
 use crate::ir::{KirDocument, KirElement, KirError};
 use crate::metamodel::{
     MetamodelAttributeDeclaration, MetamodelAttributeRegistry, collect_specialization_ancestors,
 };
 use crate::model_state::{ModelBuildRecord, ModelRevision, ModelRevisionProducer};
 use crate::mutation::WorkspaceRevision;
+use crate::semantic_validation::{
+    SemanticValidationReport, validate_kir_semantics, validate_kir_semantics_for_graph,
+};
 
 #[derive(Debug, Clone)]
 pub struct SemanticWorkspaceSnapshot {
@@ -21,6 +27,7 @@ pub struct SemanticWorkspaceSnapshot {
     pub kir: Arc<KirDocument>,
     pub graph: Arc<Graph>,
     pub metamodel_registry: Arc<MetamodelAttributeRegistry>,
+    pub validation_report: SemanticValidationReport,
     pub profile_id: Option<String>,
 }
 
@@ -299,6 +306,8 @@ pub struct SemanticElementRef {
     pub qualified_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_anchor: Option<SemanticAnchor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -562,7 +571,9 @@ impl SemanticWorkspaceSnapshot {
         kir: KirDocument,
         profile_id: Option<String>,
     ) -> Result<Self, CapabilityError> {
-        kir.validate()?;
+        kir.validate_persisted()?;
+        let validation_report = validate_kir_semantics(&kir)
+            .map_err(|err| CapabilityError::Workspace(err.to_string()))?;
         let revision = workspace_revision_for_kir_document(&kir)?;
         let graph = Graph::from_document(kir.clone())
             .map_err(|err| CapabilityError::Workspace(err.to_string()))?;
@@ -572,6 +583,7 @@ impl SemanticWorkspaceSnapshot {
             kir: Arc::new(kir),
             graph: Arc::new(graph),
             metamodel_registry: Arc::new(metamodel_registry),
+            validation_report,
             profile_id,
         })
     }
@@ -595,21 +607,26 @@ impl SemanticWorkspaceSnapshot {
         };
         let revision = workspace_revision_for_kir_document(&kir)?;
         let metamodel_registry = MetamodelAttributeRegistry::build(&graph);
+        let validation_report = validate_kir_semantics_for_graph(&graph);
         Ok(Self {
             revision,
             kir: Arc::new(kir),
             graph: Arc::new(graph),
             metamodel_registry: Arc::new(metamodel_registry),
+            validation_report,
             profile_id,
         })
     }
 
     pub fn from_model_revision(revision: &ModelRevision) -> Self {
+        let graph = revision.graph();
+        let validation_report = validate_kir_semantics_for_graph(&graph);
         Self {
             revision: revision.workspace_revision().clone(),
             kir: revision.kir(),
-            graph: revision.graph(),
+            graph,
             metamodel_registry: revision.metamodel_registry(),
+            validation_report,
             profile_id: revision.profile_id().map(ToOwned::to_owned),
         }
     }
@@ -631,11 +648,16 @@ impl SemanticWorkspaceSnapshot {
 
     pub fn element_ref(&self, element_id: &str) -> SemanticElementRef {
         self.element(element_id)
-            .map(element_ref)
+            .map(|element| {
+                let mut reference = element_ref(element);
+                reference.semantic_anchor = self.anchor_for_element(element_id).ok().flatten();
+                reference
+            })
             .unwrap_or_else(|| SemanticElementRef {
                 element_id: element_id.to_string(),
                 qualified_name: None,
                 label: None,
+                semantic_anchor: None,
             })
     }
 
@@ -644,6 +666,22 @@ impl SemanticWorkspaceSnapshot {
             .and_then(source_span_for_element)
             .into_iter()
             .collect()
+    }
+
+    pub fn anchor_for_element(
+        &self,
+        element_id: &str,
+    ) -> Result<Option<SemanticAnchor>, CapabilityError> {
+        semantic_anchor_for_element(&self.kir, element_id)
+            .map_err(|err| CapabilityError::Workspace(err.to_string()))
+    }
+
+    pub fn resolve_anchor(
+        &self,
+        anchor: &SemanticAnchor,
+    ) -> Result<SemanticAnchorResolution, CapabilityError> {
+        resolve_semantic_anchor(&self.kir, anchor)
+            .map_err(|err| CapabilityError::Workspace(err.to_string()))
     }
 }
 
@@ -1532,6 +1570,7 @@ fn inspect_workspace_summary(
             element_id: "workspace".to_string(),
             qualified_name: None,
             label: Some("Workspace".to_string()),
+            semantic_anchor: None,
         },
         claim: format!(
             "Workspace inspection found {scoped_count} elements in analysis scope `{}` from {authored_count} authored elements, {library_count} library elements, and {metamodel_count} metamodel elements.",
@@ -1655,6 +1694,7 @@ fn inspect_query(
                 element_id: "workspace".to_string(),
                 qualified_name: None,
                 label: Some("Workspace".to_string()),
+                semantic_anchor: None,
             },
             claim: format!("Inspection query `{query}` matched no compiled KIR elements."),
             polarity: InsightPolarity::Neutral,
@@ -1943,6 +1983,7 @@ fn element_ref(element: &crate::graph::Element) -> SemanticElementRef {
                     .find(|part| !part.is_empty())
                     .map(ToOwned::to_owned)
             }),
+        semantic_anchor: None,
     }
 }
 
@@ -2106,26 +2147,29 @@ mod tests {
 
     #[test]
     fn registry_lists_and_runs_graph_impact() {
-        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                KirElement {
-                    id: "pkg.Demo".to_string(),
-                    kind: "Model::Package".to_string(),
-                    layer: 2,
-                    properties: BTreeMap::from([(
-                        "members".to_string(),
-                        Value::Array(vec![Value::String("type.Vehicle".to_string())]),
-                    )]),
-                },
-                KirElement {
-                    id: "type.Vehicle".to_string(),
-                    kind: "Model::PartDefinition".to_string(),
-                    layer: 2,
-                    properties: BTreeMap::new(),
-                },
-            ],
-        })
+        let workspace = SemanticWorkspaceSnapshot::from_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![
+                    KirElement {
+                        id: "pkg.Demo".to_string(),
+                        kind: "Model::Package".to_string(),
+                        layer: 2,
+                        properties: BTreeMap::from([(
+                            "members".to_string(),
+                            Value::Array(vec![Value::String("type.Vehicle".to_string())]),
+                        )]),
+                    },
+                    KirElement {
+                        id: "type.Vehicle".to_string(),
+                        kind: "Model::PartDefinition".to_string(),
+                        layer: 2,
+                        properties: BTreeMap::new(),
+                    },
+                ],
+            }
+            .normalized_for_persistence(),
+        )
         .unwrap();
         let registry = CapabilityRegistry::with_foundation_builtins();
 
@@ -2161,34 +2205,37 @@ mod tests {
 
     #[test]
     fn model_inspection_resolves_metamodel_element_attributes() {
-        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                KirElement {
-                    id: "KerML::Root::Element".to_string(),
-                    kind: "Metaclass".to_string(),
-                    layer: 1,
-                    properties: BTreeMap::from([(
-                        "declared_name".to_string(),
-                        Value::String("Element".to_string()),
-                    )]),
-                },
-                metamodel_feature(
-                    "KerML::Root::Element::declaredName",
-                    "KerML::Root::Element",
-                    "declaredName",
-                    "declared_name",
-                    Some("String"),
-                ),
-                metamodel_feature(
-                    "KerML::Root::Element::ownedElement",
-                    "KerML::Root::Element",
-                    "ownedElement",
-                    "ownedElement",
-                    None,
-                ),
-            ],
-        })
+        let workspace = SemanticWorkspaceSnapshot::from_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![
+                    KirElement {
+                        id: "KerML::Root::Element".to_string(),
+                        kind: "Metaclass".to_string(),
+                        layer: 1,
+                        properties: BTreeMap::from([(
+                            "declared_name".to_string(),
+                            Value::String("Element".to_string()),
+                        )]),
+                    },
+                    metamodel_feature(
+                        "KerML::Root::Element::declaredName",
+                        "KerML::Root::Element",
+                        "declaredName",
+                        "declared_name",
+                        Some("String"),
+                    ),
+                    metamodel_feature(
+                        "KerML::Root::Element::ownedElement",
+                        "KerML::Root::Element",
+                        "ownedElement",
+                        "ownedElement",
+                        None,
+                    ),
+                ],
+            }
+            .normalized_for_persistence(),
+        )
         .unwrap();
         let registry = CapabilityRegistry::with_foundation_builtins();
 
@@ -2237,51 +2284,54 @@ mod tests {
 
     #[test]
     fn model_inspection_analysis_scope_filters_workspace_inventory() {
-        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                KirElement {
-                    id: "Demo::Vehicle".to_string(),
-                    kind: "PartDefinition".to_string(),
-                    layer: 0,
-                    properties: BTreeMap::from([(
-                        "declared_name".to_string(),
-                        Value::String("Vehicle".to_string()),
-                    )]),
-                },
-                KirElement {
-                    id: "ScalarValues::Real".to_string(),
-                    kind: "DataType".to_string(),
-                    layer: 1,
-                    properties: BTreeMap::from([
-                        (
+        let workspace = SemanticWorkspaceSnapshot::from_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![
+                    KirElement {
+                        id: "Demo::Vehicle".to_string(),
+                        kind: "PartDefinition".to_string(),
+                        layer: 0,
+                        properties: BTreeMap::from([(
                             "declared_name".to_string(),
-                            Value::String("Real".to_string()),
-                        ),
-                        ("is_library_element".to_string(), Value::Bool(true)),
-                        (
-                            "pilot_library_group".to_string(),
-                            Value::String("Kernel Libraries".to_string()),
-                        ),
-                    ]),
-                },
-                KirElement {
-                    id: "KerML::Root::Element".to_string(),
-                    kind: "Metaclass".to_string(),
-                    layer: 1,
-                    properties: BTreeMap::from([
-                        (
-                            "declared_name".to_string(),
-                            Value::String("Element".to_string()),
-                        ),
-                        (
-                            "metamodel_layer".to_string(),
-                            Value::String("kernel".to_string()),
-                        ),
-                    ]),
-                },
-            ],
-        })
+                            Value::String("Vehicle".to_string()),
+                        )]),
+                    },
+                    KirElement {
+                        id: "ScalarValues::Real".to_string(),
+                        kind: "DataType".to_string(),
+                        layer: 1,
+                        properties: BTreeMap::from([
+                            (
+                                "declared_name".to_string(),
+                                Value::String("Real".to_string()),
+                            ),
+                            ("is_library_element".to_string(), Value::Bool(true)),
+                            (
+                                "pilot_library_group".to_string(),
+                                Value::String("Kernel Libraries".to_string()),
+                            ),
+                        ]),
+                    },
+                    KirElement {
+                        id: "KerML::Root::Element".to_string(),
+                        kind: "Metaclass".to_string(),
+                        layer: 1,
+                        properties: BTreeMap::from([
+                            (
+                                "declared_name".to_string(),
+                                Value::String("Element".to_string()),
+                            ),
+                            (
+                                "metamodel_layer".to_string(),
+                                Value::String("kernel".to_string()),
+                            ),
+                        ]),
+                    },
+                ],
+            }
+            .normalized_for_persistence(),
+        )
         .unwrap();
         let registry = CapabilityRegistry::with_foundation_builtins();
 
@@ -2318,35 +2368,38 @@ mod tests {
 
     #[test]
     fn model_inspection_query_scope_can_target_metamodel_only() {
-        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                KirElement {
-                    id: "Demo::ElementAdapter".to_string(),
-                    kind: "PartDefinition".to_string(),
-                    layer: 0,
-                    properties: BTreeMap::from([(
-                        "declared_name".to_string(),
-                        Value::String("ElementAdapter".to_string()),
-                    )]),
-                },
-                KirElement {
-                    id: "KerML::Root::Element".to_string(),
-                    kind: "Metaclass".to_string(),
-                    layer: 1,
-                    properties: BTreeMap::from([
-                        (
+        let workspace = SemanticWorkspaceSnapshot::from_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![
+                    KirElement {
+                        id: "Demo::ElementAdapter".to_string(),
+                        kind: "PartDefinition".to_string(),
+                        layer: 0,
+                        properties: BTreeMap::from([(
                             "declared_name".to_string(),
-                            Value::String("Element".to_string()),
-                        ),
-                        (
-                            "metamodel_layer".to_string(),
-                            Value::String("kernel".to_string()),
-                        ),
-                    ]),
-                },
-            ],
-        })
+                            Value::String("ElementAdapter".to_string()),
+                        )]),
+                    },
+                    KirElement {
+                        id: "KerML::Root::Element".to_string(),
+                        kind: "Metaclass".to_string(),
+                        layer: 1,
+                        properties: BTreeMap::from([
+                            (
+                                "declared_name".to_string(),
+                                Value::String("Element".to_string()),
+                            ),
+                            (
+                                "metamodel_layer".to_string(),
+                                Value::String("kernel".to_string()),
+                            ),
+                        ]),
+                    },
+                ],
+            }
+            .normalized_for_persistence(),
+        )
         .unwrap();
         let registry = CapabilityRegistry::with_foundation_builtins();
 
@@ -2382,32 +2435,35 @@ mod tests {
 
     #[test]
     fn graph_impact_workspace_hotspots_ignore_library_elements() {
-        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                KirElement {
-                    id: "ScalarValues::Real".to_string(),
-                    kind: "DataType".to_string(),
-                    layer: 1,
-                    properties: BTreeMap::from([
-                        (
-                            "declared_name".to_string(),
-                            Value::String("Real".to_string()),
-                        ),
-                        ("is_library_element".to_string(), Value::Bool(true)),
-                        (
-                            "pilot_library_group".to_string(),
-                            Value::String("Kernel Libraries".to_string()),
-                        ),
-                    ]),
-                },
-                typed_usage("part.engine.power", "ScalarValues::Real"),
-                typed_usage("part.engine.torque", "ScalarValues::Real"),
-                typed_usage("part.engine.speed", "ScalarValues::Real"),
-                typed_usage("part.engine.temperature", "ScalarValues::Real"),
-                typed_usage("part.engine.efficiency", "ScalarValues::Real"),
-            ],
-        })
+        let workspace = SemanticWorkspaceSnapshot::from_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![
+                    KirElement {
+                        id: "ScalarValues::Real".to_string(),
+                        kind: "DataType".to_string(),
+                        layer: 1,
+                        properties: BTreeMap::from([
+                            (
+                                "declared_name".to_string(),
+                                Value::String("Real".to_string()),
+                            ),
+                            ("is_library_element".to_string(), Value::Bool(true)),
+                            (
+                                "pilot_library_group".to_string(),
+                                Value::String("Kernel Libraries".to_string()),
+                            ),
+                        ]),
+                    },
+                    typed_usage("part.engine.power", "ScalarValues::Real"),
+                    typed_usage("part.engine.torque", "ScalarValues::Real"),
+                    typed_usage("part.engine.speed", "ScalarValues::Real"),
+                    typed_usage("part.engine.temperature", "ScalarValues::Real"),
+                    typed_usage("part.engine.efficiency", "ScalarValues::Real"),
+                ],
+            }
+            .normalized_for_persistence(),
+        )
         .unwrap();
         let registry = CapabilityRegistry::with_foundation_builtins();
 
@@ -2442,30 +2498,33 @@ mod tests {
 
     #[test]
     fn graph_impact_workspace_scope_can_target_stdlib_elements() {
-        let workspace = SemanticWorkspaceSnapshot::from_document(KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                KirElement {
-                    id: "ScalarValues::Real".to_string(),
-                    kind: "DataType".to_string(),
-                    layer: 1,
-                    properties: BTreeMap::from([
-                        (
-                            "declared_name".to_string(),
-                            Value::String("Real".to_string()),
-                        ),
-                        ("is_library_element".to_string(), Value::Bool(true)),
-                        (
-                            "pilot_library_group".to_string(),
-                            Value::String("Kernel Libraries".to_string()),
-                        ),
-                    ]),
-                },
-                typed_usage("part.engine.power", "ScalarValues::Real"),
-                typed_usage("part.engine.torque", "ScalarValues::Real"),
-                typed_usage("part.engine.speed", "ScalarValues::Real"),
-            ],
-        })
+        let workspace = SemanticWorkspaceSnapshot::from_document(
+            KirDocument {
+                metadata: BTreeMap::new(),
+                elements: vec![
+                    KirElement {
+                        id: "ScalarValues::Real".to_string(),
+                        kind: "DataType".to_string(),
+                        layer: 1,
+                        properties: BTreeMap::from([
+                            (
+                                "declared_name".to_string(),
+                                Value::String("Real".to_string()),
+                            ),
+                            ("is_library_element".to_string(), Value::Bool(true)),
+                            (
+                                "pilot_library_group".to_string(),
+                                Value::String("Kernel Libraries".to_string()),
+                            ),
+                        ]),
+                    },
+                    typed_usage("part.engine.power", "ScalarValues::Real"),
+                    typed_usage("part.engine.torque", "ScalarValues::Real"),
+                    typed_usage("part.engine.speed", "ScalarValues::Real"),
+                ],
+            }
+            .normalized_for_persistence(),
+        )
         .unwrap();
         let registry = CapabilityRegistry::with_foundation_builtins();
 
@@ -2673,6 +2732,7 @@ mod tests {
                 element_id: "element.test".to_string(),
                 qualified_name: None,
                 label: Some("Test Element".to_string()),
+                semantic_anchor: None,
             },
             claim: "test insight".to_string(),
             polarity,

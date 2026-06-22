@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mercurio.local/schemas/kir-0.3.json",
+  "$id": "https://mercurio.local/schemas/kir-0.4.json",
   "title": "Mercurio KIR Document",
   "type": "object",
   "required": ["metadata", "elements"],
@@ -11,7 +11,7 @@
       "required": ["kir_schema_version"],
       "properties": {
         "kir_schema_version": {
-          "const": "0.3"
+          "const": "0.4"
         }
       },
       "additionalProperties": true

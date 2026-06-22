@@ -12,11 +12,15 @@ use crate::datalog::{DerivedIndexes, Explanation, Fact};
 use crate::graph::{Edge, Element, ElementProperties, GraphArtifact};
 use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::runtime::{Runtime, RuntimeArtifact};
+use crate::semantic_validation::{
+    SemanticValidationMode, SemanticValidationPolicy, SemanticValidationReport,
+    validate_kir_semantics_with_context_and_policy,
+};
 use crate::source_set::{
     SourceDocument, compile_source_documents, compile_source_documents_with_registry,
 };
 
-const CACHE_SCHEMA_VERSION: u32 = 7;
+const CACHE_SCHEMA_VERSION: u32 = 8;
 const ARTIFACT_FAMILY_COMPILE: &str = "compile";
 const DOCUMENT_FILE_NAME: &str = "document.kir.json";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -33,12 +37,14 @@ pub struct PersistentWorkspaceCache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PersistentWorkspaceCacheOptions {
     pub runtime_cache: RuntimeCachePolicy,
+    pub validation_policy: SemanticValidationPolicy,
 }
 
 impl Default for PersistentWorkspaceCacheOptions {
     fn default() -> Self {
         Self {
             runtime_cache: RuntimeCachePolicy::ReadWrite,
+            validation_policy: SemanticValidationPolicy::default(),
         }
     }
 }
@@ -73,6 +79,7 @@ pub enum PersistentCacheStatus {
 pub struct PersistentCompileResult {
     pub document: KirDocument,
     pub runtime_artifact: RuntimeArtifact,
+    pub validation_report: SemanticValidationReport,
     pub cache_status: PersistentCacheStatus,
     pub artifact_key: String,
     pub cache_write_error: Option<String>,
@@ -93,6 +100,7 @@ pub struct WorkspaceCompileArtifactKey {
     pub workspace_config_digest: Option<String>,
     pub compiler_digest: String,
     pub kir_schema_version: String,
+    pub validation_policy_digest: String,
     pub library_context_digest: String,
     pub mapping_rules_digest: String,
 }
@@ -176,6 +184,11 @@ impl PersistentWorkspaceCache {
         self
     }
 
+    pub fn with_semantic_validation_policy(mut self, policy: SemanticValidationPolicy) -> Self {
+        self.options.validation_policy = policy;
+        self
+    }
+
     pub fn without_runtime_cache_writes(mut self) -> Self {
         self.options.runtime_cache = RuntimeCachePolicy::ReadOnly;
         self
@@ -230,15 +243,18 @@ impl PersistentWorkspaceCache {
             &source_documents,
             library_context,
             workspace_config_path,
+            self.options.validation_policy,
         )?;
         let artifact_key = artifact_key_digest(&key)?;
 
         if !self.options.runtime_cache.can_read() {
             let document = compile(source_documents, library_context)?;
             let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
+            let validation_report = self.validate_kir_semantics(&document, library_context)?;
             return Ok(PersistentCompileResult {
                 document,
                 runtime_artifact,
+                validation_report,
                 cache_status: PersistentCacheStatus::FreshCompile,
                 artifact_key,
                 cache_write_error: None,
@@ -250,9 +266,11 @@ impl PersistentWorkspaceCache {
                 document,
                 runtime_artifact,
             } => {
+                let validation_report = self.validate_kir_semantics(&document, library_context)?;
                 return Ok(PersistentCompileResult {
                     document,
                     runtime_artifact,
+                    validation_report,
                     cache_status: PersistentCacheStatus::PersistentHit,
                     artifact_key,
                     cache_write_error: None,
@@ -261,6 +279,7 @@ impl PersistentWorkspaceCache {
             CacheLookup::Miss => {
                 let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
+                let validation_report = self.validate_kir_semantics(&document, library_context)?;
                 let cache_write_error = self.write_compile_artifact_if_enabled(
                     &artifact_key,
                     &key,
@@ -271,6 +290,7 @@ impl PersistentWorkspaceCache {
                 return Ok(PersistentCompileResult {
                     document,
                     runtime_artifact,
+                    validation_report,
                     cache_status: PersistentCacheStatus::PersistentMiss,
                     artifact_key,
                     cache_write_error,
@@ -279,6 +299,7 @@ impl PersistentWorkspaceCache {
             CacheLookup::Rejected(reason) => {
                 let document = compile(source_documents, library_context)?;
                 let runtime_artifact = runtime_artifact_for_document(&document, library_context)?;
+                let validation_report = self.validate_kir_semantics(&document, library_context)?;
                 let cache_write_error = self.write_compile_artifact_if_enabled(
                     &artifact_key,
                     &key,
@@ -289,12 +310,33 @@ impl PersistentWorkspaceCache {
                 return Ok(PersistentCompileResult {
                     document,
                     runtime_artifact,
+                    validation_report,
                     cache_status: PersistentCacheStatus::PersistentRejected { reason },
                     artifact_key,
                     cache_write_error,
                 });
             }
         }
+    }
+
+    fn validate_kir_semantics(
+        &self,
+        document: &KirDocument,
+        library_context: &KirDocument,
+    ) -> Result<SemanticValidationReport, KirError> {
+        let policy = self.options.validation_policy;
+        let report = validate_kir_semantics_with_context_and_policy(
+            document,
+            Some(library_context),
+            policy,
+        )?;
+        if policy.mode == SemanticValidationMode::Error && report.has_errors() {
+            return Err(KirError::Model(format!(
+                "semantic validation failed with {} error diagnostics",
+                report.error_count()
+            )));
+        }
+        Ok(report)
     }
 
     fn write_compile_artifact_if_enabled(
@@ -494,6 +536,7 @@ pub fn workspace_compile_artifact_key(
     source_documents: &[SourceDocument],
     library_context: &KirDocument,
     workspace_config_path: Option<&Path>,
+    validation_policy: SemanticValidationPolicy,
 ) -> Result<
     (
         WorkspaceCompileArtifactKey,
@@ -517,6 +560,7 @@ pub fn workspace_compile_artifact_key(
             workspace_config_digest,
             compiler_digest: compiler_digest(),
             kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+            validation_policy_digest: semantic_validation_policy_digest(validation_policy),
             library_context_digest,
             mapping_rules_digest,
         },
@@ -1223,6 +1267,14 @@ fn artifact_key_digest(key: &WorkspaceCompileArtifactKey) -> Result<String, KirE
     digest_json(key)
 }
 
+fn semantic_validation_policy_digest(policy: SemanticValidationPolicy) -> String {
+    let cache_key = policy.cache_key();
+    digest_labeled_chunks([(
+        "semantic_validation_policy".as_bytes(),
+        cache_key.as_bytes(),
+    )])
+}
+
 fn digest_json<T: Serialize>(value: &T) -> Result<String, KirError> {
     Ok(digest_labeled_chunks([(
         "json".as_bytes(),
@@ -1333,10 +1385,10 @@ mod tests {
 
     use super::{
         PersistentCacheStatus, PersistentWorkspaceCache, RUNTIME_CACHE_FILE_NAME,
-        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, WorkspaceCompileCacheManifest,
-        source_file_fingerprints,
+        RUNTIME_CACHE_MANIFEST_FILE_NAME, RuntimeCachePolicy, SemanticValidationMode,
+        SemanticValidationPolicy, WorkspaceCompileCacheManifest, source_file_fingerprints,
     };
-    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+    use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError};
     use crate::runtime::Runtime;
     use crate::source_set::SourceDocument;
 
@@ -1537,6 +1589,71 @@ mod tests {
         );
         assert!(!miss_runtime.derived().explanations().is_empty());
         assert!(hit_runtime.derived().explanations().is_empty());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_reports_semantic_validation_on_miss_and_hit() {
+        let root = temp_dir("persistent_validation_report");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root)
+            .with_semantic_validation_policy(SemanticValidationPolicy {
+                mode: SemanticValidationMode::Warn,
+                ..SemanticValidationPolicy::default()
+            });
+        let library_context = validation_library_context();
+        let sources = vec![SourceDocument::new("demo.model", "transition start")];
+
+        let miss = cache
+            .compile_source_documents_with(
+                sources.clone(),
+                &library_context,
+                None,
+                compile_transition_warning_document,
+            )
+            .unwrap();
+        let hit = cache
+            .compile_source_documents_with(
+                sources,
+                &library_context,
+                None,
+                compile_transition_warning_document,
+            )
+            .unwrap();
+
+        assert_eq!(miss.cache_status, PersistentCacheStatus::PersistentMiss);
+        assert_eq!(hit.cache_status, PersistentCacheStatus::PersistentHit);
+        assert_eq!(miss.validation_report, hit.validation_report);
+        assert_eq!(hit.validation_report.warning_count(), 1);
+        assert_eq!(
+            hit.validation_report.diagnostics[0].code,
+            "kir.metamodel.endpoints.incomplete"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_rejects_semantic_validation_errors_by_default() {
+        let root = temp_dir("persistent_validation_error");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = validation_library_context();
+        let sources = vec![SourceDocument::new("demo.model", "transition start")];
+
+        let error = cache
+            .compile_source_documents_with(
+                sources,
+                &library_context,
+                None,
+                compile_transition_warning_document,
+            )
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("semantic validation failed with 1 error diagnostics")
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1911,7 +2028,10 @@ mod tests {
                 source_tree_digest: "fnv1a64:source".to_string(),
                 workspace_config_digest: Some("fnv1a64:config".to_string()),
                 compiler_digest: "fnv1a64:compiler".to_string(),
-                kir_schema_version: "0.2".to_string(),
+                kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
+                validation_policy_digest: super::semantic_validation_policy_digest(
+                    SemanticValidationPolicy::default(),
+                ),
                 library_context_digest: "fnv1a64:library".to_string(),
                 mapping_rules_digest: "fnv1a64:mapping".to_string(),
             },
@@ -1979,6 +2099,87 @@ mod tests {
 
     fn test_language_registry() -> LanguageRegistry {
         crate::test_support::toy_language::registry()
+    }
+
+    fn compile_transition_warning_document(
+        _sources: Vec<SourceDocument>,
+        _library_context: &KirDocument,
+    ) -> Result<KirDocument, KirError> {
+        Ok(transition_warning_document())
+    }
+
+    fn transition_warning_document() -> KirDocument {
+        KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            )]),
+            elements: vec![KirElement {
+                id: "transition.Demo.start".to_string(),
+                kind: "SysML::Systems::TransitionUsage".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.start".to_string()),
+                    ),
+                    (
+                        "source".to_string(),
+                        Value::String("state.Demo.initial".to_string()),
+                    ),
+                ]),
+            }],
+        }
+    }
+
+    fn validation_library_context() -> KirDocument {
+        KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            )]),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::TransitionUsage".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "qualified_name".to_string(),
+                        Value::String("SysML::Systems::TransitionUsage".to_string()),
+                    )]),
+                },
+                metamodel_feature(
+                    "metafeature.TransitionUsage.source",
+                    "SysML::Systems::TransitionUsage",
+                    "source",
+                ),
+                metamodel_feature(
+                    "metafeature.TransitionUsage.target",
+                    "SysML::Systems::TransitionUsage",
+                    "target",
+                ),
+            ],
+        }
+    }
+
+    fn metamodel_feature(id: &str, owner: &str, kir_property: &str) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "MetamodelFeature".to_string(),
+            layer: 1,
+            properties: BTreeMap::from([
+                ("qualified_name".to_string(), Value::String(id.to_string())),
+                ("owner".to_string(), Value::String(owner.to_string())),
+                (
+                    "kir_property".to_string(),
+                    Value::String(kir_property.to_string()),
+                ),
+                (
+                    "feature_kind".to_string(),
+                    Value::String("reference".to_string()),
+                ),
+            ]),
+        }
     }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {

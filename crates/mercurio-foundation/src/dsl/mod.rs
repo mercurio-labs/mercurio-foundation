@@ -717,6 +717,7 @@ fn insight_from_result(
             element_id: "workspace".to_string(),
             qualified_name: None,
             label: Some("Workspace".to_string()),
+            semantic_anchor: None,
         }),
         claim: claim.to_string(),
         polarity,
@@ -782,11 +783,13 @@ fn semantic_element_ref(graph: &Graph, element_id: &str) -> SemanticElementRef {
                 .or_else(|| element.properties.get("name"))
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            semantic_anchor: None,
         })
         .unwrap_or_else(|| SemanticElementRef {
             element_id: element_id.to_string(),
             qualified_name: None,
             label: None,
+            semantic_anchor: None,
         })
 }
 

@@ -9,6 +9,10 @@ use crate::paths::{
     bundled_package_repo_path, bundled_stdlib_package_set_path, default_model_library_path,
     default_package_kir_cache_path, default_package_repo_path, default_user_config_path,
 };
+use crate::semantic_validation::{
+    SemanticValidationDiagnostic, SemanticValidationReport, validate_kir_semantics,
+    validate_kir_semantics_with_context,
+};
 
 pub const DEFAULT_STDLIB_LOCATOR: &str = "kpar:org.omg/model-stdlib:2.0.0";
 pub const DEFAULT_MODEL_LIBRARY_LOCATOR: &str = DEFAULT_STDLIB_LOCATOR;
@@ -67,6 +71,7 @@ pub struct ResolvedLibraryArtifact {
     pub source_kind: String,
     pub source_path: Option<PathBuf>,
     pub cache_metadata: Option<LibraryCacheMetadata>,
+    pub validation_report: SemanticValidationReport,
     pub document: KirDocument,
 }
 
@@ -191,6 +196,8 @@ pub struct PackageVerification {
     pub source_count: usize,
     pub has_precompiled_kir: bool,
     pub precompiled_kir_element_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation_diagnostics: Vec<SemanticValidationDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -282,6 +289,25 @@ impl BaselineLibraryConfig {
     }
 }
 
+fn resolved_library_artifact(
+    library_id: &str,
+    source_kind: String,
+    source_path: Option<PathBuf>,
+    cache_metadata: Option<LibraryCacheMetadata>,
+    document: KirDocument,
+    library_context: Option<&KirDocument>,
+) -> Result<ResolvedLibraryArtifact, KirError> {
+    let validation_report = validate_kir_semantics_with_context(&document, library_context)?;
+    Ok(ResolvedLibraryArtifact {
+        library_id: library_id.to_string(),
+        source_kind,
+        source_path,
+        cache_metadata,
+        validation_report,
+        document,
+    })
+}
+
 impl LibraryProviderConfig {
     pub fn resolve(&self, library_id: &str) -> Result<ResolvedLibraryArtifact, KirError> {
         self.resolve_with_context(library_id, None, None)
@@ -310,13 +336,14 @@ impl LibraryProviderConfig {
                     .unwrap_or_else(default_model_library_path);
                 let document = KirDocument::from_path(&source_path)?;
 
-                Ok(ResolvedLibraryArtifact {
-                    library_id: library_id.to_string(),
-                    source_kind: fingerprint.source_kind,
-                    source_path: Some(source_path),
-                    cache_metadata: Some(fingerprint.cache_metadata),
+                resolved_library_artifact(
+                    library_id,
+                    fingerprint.source_kind,
+                    Some(source_path),
+                    Some(fingerprint.cache_metadata),
                     document,
-                })
+                    library_context,
+                )
             }
             Self::PrecompiledKirArtifact { path } => {
                 let fingerprint = self.source_fingerprint(library_id, base_dir)?;
@@ -326,13 +353,14 @@ impl LibraryProviderConfig {
                     .unwrap_or_else(|| resolve_provider_path(path, base_dir));
                 let document = KirDocument::from_path(&source_path)?;
 
-                Ok(ResolvedLibraryArtifact {
-                    library_id: library_id.to_string(),
-                    source_kind: fingerprint.source_kind,
-                    source_path: Some(source_path),
-                    cache_metadata: Some(fingerprint.cache_metadata),
+                resolved_library_artifact(
+                    library_id,
+                    fingerprint.source_kind,
+                    Some(source_path),
+                    Some(fingerprint.cache_metadata),
                     document,
-                })
+                    library_context,
+                )
             }
             Self::ModelDirectory { path } => {
                 let fingerprint = self.source_fingerprint(library_id, base_dir)?;
@@ -344,13 +372,14 @@ impl LibraryProviderConfig {
                 let context_document = library_context.unwrap_or(&fallback_context);
                 let document = compile_model_directory(&source_path, context_document)?;
 
-                Ok(ResolvedLibraryArtifact {
-                    library_id: library_id.to_string(),
-                    source_kind: fingerprint.source_kind,
-                    source_path: Some(source_path.clone()),
-                    cache_metadata: Some(fingerprint.cache_metadata),
+                resolved_library_artifact(
+                    library_id,
+                    fingerprint.source_kind,
+                    Some(source_path.clone()),
+                    Some(fingerprint.cache_metadata),
                     document,
-                })
+                    Some(context_document),
+                )
             }
             Self::KparFile { path } => {
                 let fingerprint = self.source_fingerprint(library_id, base_dir)?;
@@ -363,18 +392,19 @@ impl LibraryProviderConfig {
                 let (document, package_metadata) =
                     compile_kpar_file(&source_path, context_document)?;
 
-                Ok(ResolvedLibraryArtifact {
-                    library_id: library_id.to_string(),
-                    source_kind: fingerprint.source_kind,
-                    source_path: Some(source_path.clone()),
-                    cache_metadata: Some(LibraryCacheMetadata {
+                resolved_library_artifact(
+                    library_id,
+                    fingerprint.source_kind,
+                    Some(source_path.clone()),
+                    Some(LibraryCacheMetadata {
                         source_version: package_metadata
                             .and_then(|metadata| metadata.version)
                             .or(fingerprint.cache_metadata.source_version.clone()),
                         ..fingerprint.cache_metadata
                     }),
                     document,
-                })
+                    Some(context_document),
+                )
             }
             Self::KparLocator { locator } => {
                 let locator = KparLocator::parse(locator.clone());
@@ -426,11 +456,11 @@ impl LibraryProviderConfig {
                                 &source_digest,
                                 context_document,
                             )?;
-                        return Ok(ResolvedLibraryArtifact {
-                            library_id: library_id.to_string(),
-                            source_kind: "kpar_locator".to_string(),
-                            source_path: Some(source_path.clone()),
-                            cache_metadata: Some(LibraryCacheMetadata {
+                        return resolved_library_artifact(
+                            library_id,
+                            "kpar_locator".to_string(),
+                            Some(source_path.clone()),
+                            Some(LibraryCacheMetadata {
                                 source_kind: "kpar_locator".to_string(),
                                 source_identity: locator.as_str().to_string(),
                                 source_version: package_metadata
@@ -440,7 +470,8 @@ impl LibraryProviderConfig {
                                 importer_version: env!("CARGO_PKG_VERSION").to_string(),
                             }),
                             document,
-                        });
+                            Some(context_document),
+                        );
                     }
                 }
 
@@ -470,16 +501,17 @@ impl LibraryProviderConfig {
                 let (document, package_metadata) =
                     compile_kpar_package_set(&source_path, entry, context_document)?;
 
-                Ok(ResolvedLibraryArtifact {
-                    library_id: library_id.to_string(),
-                    source_kind: fingerprint.source_kind,
-                    source_path: Some(source_path.clone()),
-                    cache_metadata: Some(LibraryCacheMetadata {
+                resolved_library_artifact(
+                    library_id,
+                    fingerprint.source_kind,
+                    Some(source_path.clone()),
+                    Some(LibraryCacheMetadata {
                         source_version: package_metadata.and_then(|metadata| metadata.version),
                         ..fingerprint.cache_metadata
                     }),
                     document,
-                })
+                    Some(context_document),
+                )
             }
         }
     }
@@ -904,6 +936,7 @@ impl LocalPackageRepository {
             source_count: archive.source_count,
             has_precompiled_kir: archive.has_precompiled_kir,
             precompiled_kir_element_count: archive.precompiled_kir_element_count,
+            validation_diagnostics: archive.validation_diagnostics,
         })
     }
 
@@ -1714,6 +1747,7 @@ struct KparArchiveVerification {
     source_count: usize,
     has_precompiled_kir: bool,
     precompiled_kir_element_count: Option<usize>,
+    validation_diagnostics: Vec<SemanticValidationDiagnostic>,
 }
 
 fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError> {
@@ -1723,6 +1757,7 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
     let mut package_manifest = None;
     let mut source_count = 0usize;
     let mut precompiled_kir_element_count = None;
+    let mut validation_diagnostics = Vec::new();
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(zip_error_to_kir_error)?;
@@ -1750,6 +1785,7 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
             entry.read_to_string(&mut content)?;
             let document = KirDocument::from_str(&content)?;
             precompiled_kir_element_count = Some(document.elements.len());
+            validation_diagnostics.extend(validate_kir_semantics(&document)?.diagnostics);
             continue;
         }
 
@@ -1778,6 +1814,7 @@ fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError>
         source_count,
         has_precompiled_kir: precompiled_kir_element_count.is_some(),
         precompiled_kir_element_count,
+        validation_diagnostics,
     })
 }
 
@@ -2514,10 +2551,8 @@ mod tests {
 
     #[test]
     fn write_kpar_package_preserves_sysml_source_entries() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "mercurio-kpar-sysml-source-{}",
-            std::process::id()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("mercurio-kpar-sysml-source-{}", std::process::id()));
         let repo = super::LocalPackageRepository::new(&temp_root);
         std::fs::create_dir_all(&temp_root).unwrap();
         let kpar_path = temp_root.join("ai-profile.kpar");
@@ -2651,6 +2686,44 @@ mod tests {
         assert_eq!(verification.source_count, 0);
         assert!(verification.has_precompiled_kir);
         assert_eq!(verification.precompiled_kir_element_count, Some(1));
+
+        std::fs::remove_dir_all(temp_root).unwrap();
+    }
+
+    #[test]
+    fn local_package_repository_verification_reports_precompiled_kir_semantic_warnings() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "mercurio-package-validation-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let source_path = temp_root.join("behavior.kpar");
+        let repo = super::LocalPackageRepository::new(temp_root.join("repo"));
+
+        write_kpar_package(
+            &source_path,
+            &KparPackageBuild {
+                name: "behavior-lib".to_string(),
+                version: Some("1.0.0".to_string()),
+                precompiled_kir: Some(package_validation_warning_document()),
+                sources: Vec::new(),
+            },
+        )
+        .unwrap();
+        repo.stage_kpar(&source_path, "behavior-lib", "1.0.0", None)
+            .unwrap();
+
+        let verification = repo.verify_package("behavior-lib", "1.0.0").unwrap();
+
+        assert_eq!(verification.validation_diagnostics.len(), 1);
+        assert_eq!(
+            verification.validation_diagnostics[0].code,
+            "kir.metamodel.endpoints.incomplete"
+        );
+        assert_eq!(
+            verification.validation_diagnostics[0].element_id.as_deref(),
+            Some("transition.Demo.start")
+        );
 
         std::fs::remove_dir_all(temp_root).unwrap();
     }
@@ -3387,6 +3460,71 @@ mod tests {
         }
 
         writer.finish().unwrap();
+    }
+
+    fn package_validation_warning_document() -> KirDocument {
+        KirDocument {
+            metadata: BTreeMap::from([(
+                "kir_schema_version".to_string(),
+                Value::String(KIR_SCHEMA_VERSION.to_string()),
+            )]),
+            elements: vec![
+                KirElement {
+                    id: "SysML::Systems::TransitionUsage".to_string(),
+                    kind: "Metaclass".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([(
+                        "qualified_name".to_string(),
+                        Value::String("SysML::Systems::TransitionUsage".to_string()),
+                    )]),
+                },
+                metamodel_feature(
+                    "metafeature.TransitionUsage.source",
+                    "SysML::Systems::TransitionUsage",
+                    "source",
+                ),
+                metamodel_feature(
+                    "metafeature.TransitionUsage.target",
+                    "SysML::Systems::TransitionUsage",
+                    "target",
+                ),
+                KirElement {
+                    id: "transition.Demo.start".to_string(),
+                    kind: "SysML::Systems::TransitionUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        (
+                            "qualified_name".to_string(),
+                            Value::String("Demo.start".to_string()),
+                        ),
+                        (
+                            "source".to_string(),
+                            Value::String("state.Demo.initial".to_string()),
+                        ),
+                    ]),
+                },
+            ],
+        }
+    }
+
+    fn metamodel_feature(id: &str, owner: &str, kir_property: &str) -> KirElement {
+        KirElement {
+            id: id.to_string(),
+            kind: "MetamodelFeature".to_string(),
+            layer: 1,
+            properties: BTreeMap::from([
+                ("qualified_name".to_string(), Value::String(id.to_string())),
+                ("owner".to_string(), Value::String(owner.to_string())),
+                (
+                    "kir_property".to_string(),
+                    Value::String(kir_property.to_string()),
+                ),
+                (
+                    "feature_kind".to_string(),
+                    Value::String("reference".to_string()),
+                ),
+            ]),
+        }
     }
 
     fn find_first_file_named(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
