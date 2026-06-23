@@ -71,6 +71,7 @@ impl std::error::Error for GraphError {}
 
 impl Graph {
     pub fn from_document(document: KirDocument) -> Result<Self, GraphError> {
+        let field_registry = KirFieldRegistry::from_document(&document);
         let mut by_element_id = HashMap::new();
         let mut elements = Vec::with_capacity(document.elements.len());
         let mut kind_interner = HashMap::new();
@@ -98,7 +99,7 @@ impl Graph {
             by_element_id,
             edges: Vec::new(),
         };
-        graph.build_edges()?;
+        graph.build_edges(&field_registry)?;
         Ok(graph)
     }
 
@@ -162,8 +163,7 @@ impl Graph {
         }
     }
 
-    fn build_edges(&mut self) -> Result<(), GraphError> {
-        let field_registry = KirFieldRegistry::standard();
+    fn build_edges(&mut self, field_registry: &KirFieldRegistry) -> Result<(), GraphError> {
         let mut relation_interner = HashMap::new();
 
         for element in &self.elements {
@@ -643,6 +643,81 @@ mod tests {
     }
 
     #[test]
+    fn metamodel_declared_reference_field_creates_edges() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                metamodel_feature(
+                    "metafeature.Demo.Thing.related_requirement",
+                    "Demo::Thing",
+                    "related_requirement",
+                    "reference",
+                    Some(Value::String("1".to_string())),
+                ),
+                KirElement {
+                    id: "type.Demo.Source".to_string(),
+                    kind: "Demo::Thing".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "related_requirement".to_string(),
+                        Value::String("requirement.Demo.R1".to_string()),
+                    )]),
+                },
+                KirElement {
+                    id: "requirement.Demo.R1".to_string(),
+                    kind: "Demo::Requirement".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        })
+        .unwrap();
+
+        let source = graph.node_id("type.Demo.Source").unwrap();
+        let target = graph.node_id("requirement.Demo.R1").unwrap();
+
+        assert!(
+            graph
+                .outgoing(source, "related_requirement")
+                .any(|edge| edge.target == target)
+        );
+    }
+
+    #[test]
+    fn metamodel_declared_scalar_field_does_not_create_edges() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                metamodel_feature(
+                    "metafeature.Demo.Thing.external_id",
+                    "Demo::Thing",
+                    "external_id",
+                    "attribute",
+                    None,
+                ),
+                KirElement {
+                    id: "type.Demo.Source".to_string(),
+                    kind: "Demo::Thing".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([(
+                        "external_id".to_string(),
+                        Value::String("type.Demo.Target".to_string()),
+                    )]),
+                },
+                KirElement {
+                    id: "type.Demo.Target".to_string(),
+                    kind: "Demo::Thing".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert!(graph.edges().is_empty());
+    }
+
+    #[test]
     fn registered_reference_list_scalar_creates_edge() {
         let graph = Graph::from_document(KirDocument {
             metadata: BTreeMap::new(),
@@ -691,5 +766,34 @@ mod tests {
                 .outgoing(package, "members")
                 .any(|edge| edge.target == activity)
         );
+    }
+
+    fn metamodel_feature(
+        id: &str,
+        owner: &str,
+        kir_property: &str,
+        feature_kind: &str,
+        upper: Option<Value>,
+    ) -> KirElement {
+        let mut properties = BTreeMap::from([
+            ("owner".to_string(), Value::String(owner.to_string())),
+            (
+                "kir_property".to_string(),
+                Value::String(kir_property.to_string()),
+            ),
+            (
+                "feature_kind".to_string(),
+                Value::String(feature_kind.to_string()),
+            ),
+        ]);
+        if let Some(upper) = upper {
+            properties.insert("upper".to_string(), upper);
+        }
+        KirElement {
+            id: id.to_string(),
+            kind: "MetamodelFeature".to_string(),
+            layer: 1,
+            properties,
+        }
     }
 }

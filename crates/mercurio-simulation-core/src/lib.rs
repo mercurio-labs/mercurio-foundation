@@ -104,6 +104,7 @@ pub struct SimTraceChannel {
 pub enum SimTraceChannelSource {
     StateMachine,
     RateEffect,
+    LookupTable,
     AssignEffect,
 }
 
@@ -274,6 +275,7 @@ pub enum SimulationActionNode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StateDoBehavior {
     RateIntegration { rates: Vec<SimulationRate> },
+    LookupTable { tables: Vec<SimulationLookupTable> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -287,6 +289,18 @@ pub enum SimulationRateSource {
     Constant(f64),
     Feature(String),
     ExpressionIr(Value),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SimulationLookupTable {
+    pub feature: String,
+    pub samples: Vec<SimulationLookupSample>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SimulationLookupSample {
+    pub t: f64,
+    pub value: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,6 +421,13 @@ pub fn run_concurrent_simulation_model(
                 &mut values,
                 &mut pending_signals,
             );
+            apply_state_lookup_tables(
+                subject.machine,
+                state_id,
+                &subject.subject_id,
+                &mut values,
+                0.0,
+            )?;
         }
     }
     propagate_model_values(model, &subjects, &mut values)?;
@@ -575,17 +596,16 @@ pub fn run_concurrent_simulation_model(
         .first()
         .map(|subject| subject.subject_id.clone())
         .unwrap_or_default();
-    let rate_integrated_channels = rate_integrated_channels(&subjects);
+    let generated_channels = generated_continuous_channels(&subjects);
     let channels = values
         .keys()
         .map(|(subject, feature)| SimTraceChannel {
             id: format!("{subject}.{feature}"),
             unit: None,
-            source: if rate_integrated_channels.contains(&(subject.clone(), feature.clone())) {
-                SimTraceChannelSource::RateEffect
-            } else {
-                SimTraceChannelSource::AssignEffect
-            },
+            source: generated_channels
+                .get(&(subject.clone(), feature.clone()))
+                .cloned()
+                .unwrap_or(SimTraceChannelSource::AssignEffect),
         })
         .collect();
     Ok(SimulationTrace {
@@ -815,15 +835,29 @@ fn collect_expression_paths(expression: &Value, paths: &mut BTreeSet<String>) {
     }
 }
 
-fn rate_integrated_channels(subjects: &[CoreSubjectRunState<'_>]) -> BTreeSet<(String, String)> {
-    let mut channels = BTreeSet::new();
+fn generated_continuous_channels(
+    subjects: &[CoreSubjectRunState<'_>],
+) -> BTreeMap<(String, String), SimTraceChannelSource> {
+    let mut channels = BTreeMap::new();
     for subject in subjects {
         for state in &subject.machine.states {
-            let Some(StateDoBehavior::RateIntegration { rates }) = &state.do_behavior else {
-                continue;
-            };
-            for rate in rates {
-                channels.insert((subject.subject_id.clone(), rate.feature.clone()));
+            match &state.do_behavior {
+                Some(StateDoBehavior::RateIntegration { rates }) => {
+                    for rate in rates {
+                        channels.insert(
+                            (subject.subject_id.clone(), rate.feature.clone()),
+                            SimTraceChannelSource::RateEffect,
+                        );
+                    }
+                }
+                Some(StateDoBehavior::LookupTable { tables }) => {
+                    for table in tables {
+                        channels
+                            .entry((subject.subject_id.clone(), table.feature.clone()))
+                            .or_insert(SimTraceChannelSource::LookupTable);
+                    }
+                }
+                None => {}
             }
         }
     }
@@ -1112,6 +1146,7 @@ fn apply_state_change(
     for state_id in &entry_states {
         elapsed.insert((subject_id.to_string(), state_id.clone()), 0.0);
         apply_state_behavior(machine, state_id, subject_id, values, pending_signals);
+        apply_state_lookup_tables(machine, state_id, subject_id, values, 0.0)?;
     }
     Ok(after)
 }
@@ -1268,6 +1303,7 @@ fn integrate_active_state_behaviors(
                     .or_default() += dt;
             }
         }
+        apply_active_lookup_tables(subjects, elapsed, values)?;
         cursor_t += dt;
         remaining -= dt;
         if sample_interval > 0.0 && remaining > f64::EPSILON {
@@ -1308,6 +1344,105 @@ fn integrate_active_rates_once(
         values.insert(active_rate.key, Value::from(current + delta));
     }
     Ok(())
+}
+
+fn apply_active_lookup_tables(
+    subjects: &[CoreSubjectRunState<'_>],
+    elapsed: &BTreeMap<(String, String), f64>,
+    values: &mut BTreeMap<(String, String), Value>,
+) -> Result<(), CoreSimulationError> {
+    for subject in subjects {
+        for state_id in &subject.active {
+            let active_for = elapsed
+                .get(&(subject.subject_id.clone(), state_id.clone()))
+                .copied()
+                .unwrap_or_default();
+            apply_state_lookup_tables(
+                subject.machine,
+                state_id,
+                &subject.subject_id,
+                values,
+                active_for,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_state_lookup_tables(
+    machine: &SimulationStateMachine,
+    state_id: &str,
+    subject_id: &str,
+    values: &mut BTreeMap<(String, String), Value>,
+    active_for_s: f64,
+) -> Result<(), CoreSimulationError> {
+    let Some(state) = machine.states.iter().find(|state| state.id == state_id) else {
+        return Ok(());
+    };
+    let Some(StateDoBehavior::LookupTable { tables }) = &state.do_behavior else {
+        return Ok(());
+    };
+    for table in tables {
+        if let Some(value) = lookup_table_value(table, active_for_s)? {
+            values.insert(
+                (subject_id.to_string(), table.feature.clone()),
+                Value::from(value),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn lookup_table_value(
+    table: &SimulationLookupTable,
+    active_for_s: f64,
+) -> Result<Option<f64>, CoreSimulationError> {
+    if table.samples.is_empty() {
+        return Ok(None);
+    }
+    if !active_for_s.is_finite() {
+        return Err(CoreSimulationError::InvalidExpression(format!(
+            "lookup table `{}` received non-finite elapsed time",
+            table.feature
+        )));
+    }
+    let mut samples = table.samples.clone();
+    samples.sort_by(|left, right| left.t.total_cmp(&right.t));
+    for sample in &samples {
+        if !sample.t.is_finite() || !sample.value.is_finite() {
+            return Err(CoreSimulationError::InvalidExpression(format!(
+                "lookup table `{}` contains a non-finite sample",
+                table.feature
+            )));
+        }
+    }
+    let Some(first) = samples.first() else {
+        return Ok(None);
+    };
+    if active_for_s <= first.t {
+        return Ok(Some(first.value));
+    }
+    let Some(last) = samples.last() else {
+        return Ok(None);
+    };
+    if active_for_s >= last.t {
+        return Ok(Some(last.value));
+    }
+    for window in samples.windows(2) {
+        let [left, right] = window else {
+            continue;
+        };
+        if active_for_s < left.t || active_for_s > right.t {
+            continue;
+        }
+        let span = right.t - left.t;
+        if span.abs() <= f64::EPSILON {
+            return Ok(Some(right.value));
+        }
+        let fraction = (active_for_s - left.t) / span;
+        return Ok(Some(left.value + (right.value - left.value) * fraction));
+    }
+    Ok(Some(last.value))
 }
 
 #[derive(Debug, Clone)]
@@ -2751,6 +2886,106 @@ mod tests {
 
         assert!(trace.channels.iter().any(|channel| {
             channel.id == "bed.temperature" && channel.source == SimTraceChannelSource::RateEffect
+        }));
+    }
+
+    #[test]
+    fn core_runner_applies_lookup_table_do_behavior() {
+        let heating = SimulationState {
+            do_behavior: Some(StateDoBehavior::LookupTable {
+                tables: vec![SimulationLookupTable {
+                    feature: "temperature".to_string(),
+                    samples: vec![
+                        SimulationLookupSample {
+                            t: 0.0,
+                            value: 20.0,
+                        },
+                        SimulationLookupSample {
+                            t: 5.0,
+                            value: 60.0,
+                        },
+                        SimulationLookupSample {
+                            t: 10.0,
+                            value: 100.0,
+                        },
+                    ],
+                }],
+            }),
+            ..state("heating", true)
+        };
+        let model = SimulationModel {
+            id: "demo".to_string(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".to_string(),
+                label: "Machine".to_string(),
+                states: vec![heating],
+                transitions: Vec::new(),
+            }],
+            derived_rules: Vec::new(),
+            binding_rules: Vec::new(),
+        };
+
+        let trace = run_concurrent_simulation_model(
+            &model,
+            ConcurrentSimulationScenario {
+                id: "scenario".to_string(),
+                subjects: vec![ConcurrentSubjectScenario {
+                    subject_id: "bed".to_string(),
+                    machine_id: "Machine".to_string(),
+                    initial_state_id: None,
+                    events: Vec::new(),
+                }],
+                max_steps: 2,
+                step_duration_s: 2.5,
+                clock_config: Some(SimulationClockConfig {
+                    max_time_s: 5.0,
+                    fixed_step_s: 2.5,
+                    sample_interval_s: 2.5,
+                    change_loop_limit: 20,
+                }),
+                initial_values: BTreeMap::new(),
+                requirements: Vec::new(),
+                objectives: Vec::new(),
+            },
+            SimulationClockConfig {
+                max_time_s: 5.0,
+                fixed_step_s: 2.5,
+                sample_interval_s: 2.5,
+                change_loop_limit: 20,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            trace
+                .timeline
+                .first()
+                .unwrap()
+                .values
+                .get(&("bed".to_string(), "temperature".to_string())),
+            Some(&Value::from(20.0))
+        );
+        let mid_temperature = trace
+            .timeline
+            .iter()
+            .find(|entry| (entry.t - 2.5).abs() <= f64::EPSILON)
+            .unwrap()
+            .values
+            .get(&("bed".to_string(), "temperature".to_string()))
+            .and_then(Value::as_f64)
+            .unwrap();
+        assert!((mid_temperature - 40.0).abs() <= f64::EPSILON);
+        let final_temperature = trace
+            .timeline
+            .last()
+            .unwrap()
+            .values
+            .get(&("bed".to_string(), "temperature".to_string()))
+            .and_then(Value::as_f64)
+            .unwrap();
+        assert!((final_temperature - 60.0).abs() <= f64::EPSILON);
+        assert!(trace.channels.iter().any(|channel| {
+            channel.id == "bed.temperature" && channel.source == SimTraceChannelSource::LookupTable
         }));
     }
 
