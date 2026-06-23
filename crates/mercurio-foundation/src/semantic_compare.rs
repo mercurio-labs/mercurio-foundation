@@ -1409,9 +1409,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        SnapshotMode, attribute_is_compare_optional_when_missing, attribute_values_are_equal,
-        build_semantic_snapshot, build_semantic_snapshot_with_registry,
-        canonical_compare_identifier_for_key, compare_snapshots, SemanticSnapshotAttribute,
+        SemanticSnapshotAttribute, SnapshotMode, attribute_is_compare_optional_when_missing,
+        attribute_values_are_equal, build_semantic_snapshot, build_semantic_snapshot_with_registry,
+        canonical_compare_identifier_for_key, compare_snapshots,
     };
     use crate::ir::{KirDocument, KirElement};
     use crate::{Graph, MetamodelAttributeRegistry};

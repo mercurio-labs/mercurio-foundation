@@ -2514,10 +2514,8 @@ mod tests {
 
     #[test]
     fn write_kpar_package_preserves_sysml_source_entries() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "mercurio-kpar-sysml-source-{}",
-            std::process::id()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("mercurio-kpar-sysml-source-{}", std::process::id()));
         let repo = super::LocalPackageRepository::new(&temp_root);
         std::fs::create_dir_all(&temp_root).unwrap();
         let kpar_path = temp_root.join("ai-profile.kpar");
