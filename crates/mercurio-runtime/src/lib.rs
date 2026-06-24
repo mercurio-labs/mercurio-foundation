@@ -9,8 +9,9 @@ mod datalog;
 mod runtime;
 
 pub use datalog::{
-    Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
-    Explanation, Fact, Rule, RulePack, Term, evaluate, extract_graph_facts, load_default_rulepacks,
+    Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, DiagnosticRule,
+    Evaluation, Explanation, Fact, Rule, RuleDiagnostic, RuleDiagnosticSeverity, RulePack, Term,
+    evaluate, evaluate_diagnostics, extract_graph_facts, load_default_rulepacks,
     materialize_core_indexes,
 };
 pub use runtime::{

@@ -8,9 +8,13 @@ use crate::authoring::{
     AttributeWritePolicy, AuthoringModule, AuthoringProject, ContainerSelector, Declaration,
     Mutation, QualifiedName, SemanticEdit,
 };
+use crate::datalog::RulePack;
 use crate::mutation::{
     ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, SemanticDiff,
     SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
+};
+use crate::semantic_legality::{
+    SemanticLegalityReport, SemanticLegalityService, SemanticLegalityStatus,
 };
 pub use crate::semantic_profile::{
     CapabilityAnswer, ConservativeSemanticCapabilityOracle, SemanticCapabilityOracle,
@@ -91,13 +95,13 @@ pub trait MutationFeasibilityService {
 
 #[derive(Debug, Clone)]
 pub struct CoreMutationFeasibilityService<O = ConservativeSemanticCapabilityOracle> {
-    oracle: O,
+    legality: SemanticLegalityService<O>,
 }
 
 impl CoreMutationFeasibilityService<ConservativeSemanticCapabilityOracle> {
     pub fn new() -> Self {
         Self {
-            oracle: ConservativeSemanticCapabilityOracle,
+            legality: SemanticLegalityService::new(),
         }
     }
 }
@@ -113,7 +117,15 @@ where
     O: SemanticCapabilityOracle,
 {
     pub fn with_oracle(oracle: O) -> Self {
-        Self { oracle }
+        Self {
+            legality: SemanticLegalityService::with_oracle(oracle),
+        }
+    }
+
+    pub fn with_oracle_and_rulepacks(oracle: O, rulepacks: Vec<RulePack>) -> Self {
+        Self {
+            legality: SemanticLegalityService::with_oracle_and_rulepacks(oracle, rulepacks),
+        }
     }
 
     pub fn apply_checked_plan(
@@ -364,7 +376,7 @@ where
                 specializes,
             } => Some(Mutation::AddDefinition {
                 container: container_selector_for(project, container),
-                keyword: self.oracle.normalize_definition_keyword(keyword),
+                keyword: self.legality.normalize_definition_keyword(keyword),
                 name: name.clone(),
                 specializes: specializes
                     .iter()
@@ -470,8 +482,8 @@ where
                 self.require_existing(project, container, index, "container", blocking_reasons);
                 let container_kind = declaration_kind_label(project, container)
                     .unwrap_or_else(|| "container".to_string());
-                self.warn_capability(
-                    self.oracle.can_contain(&container_kind, keyword),
+                self.apply_legality_report(
+                    self.legality.check_containment(&container_kind, keyword),
                     index,
                     "container capability",
                     warnings,
@@ -487,8 +499,8 @@ where
                     );
                     let target_kind = declaration_kind_label(project, target)
                         .unwrap_or_else(|| "specialization".to_string());
-                    self.warn_capability(
-                        self.oracle.can_specialize(keyword, &target_kind),
+                    self.apply_legality_report(
+                        self.legality.check_specialization(keyword, &target_kind),
                         index,
                         "specialization capability",
                         warnings,
@@ -506,8 +518,8 @@ where
                 self.require_existing(project, container, index, "container", blocking_reasons);
                 let container_kind = declaration_kind_label(project, container)
                     .unwrap_or_else(|| "container".to_string());
-                self.warn_capability(
-                    self.oracle.can_contain(&container_kind, keyword),
+                self.apply_legality_report(
+                    self.legality.check_containment(&container_kind, keyword),
                     index,
                     "container capability",
                     warnings,
@@ -515,8 +527,9 @@ where
                 );
                 if let Some(ty) = ty {
                     if !exists(project, ty) {
-                        if let Some(definition_keyword) =
-                            self.oracle.supporting_definition_keyword_for_usage(keyword)
+                        if let Some(definition_keyword) = self
+                            .legality
+                            .supporting_definition_keyword_for_usage(keyword)
                         {
                             *requires_supporting_changes = true;
                             suggested_supporting_changes.push(SemanticMutation::AddDefinition {
@@ -536,8 +549,8 @@ where
                     } else {
                         let definition_kind = declaration_kind_label(project, ty)
                             .unwrap_or_else(|| "definition".to_string());
-                        self.warn_capability(
-                            self.oracle.can_type_usage(keyword, &definition_kind),
+                        self.apply_legality_report(
+                            self.legality.check_usage_typing(keyword, &definition_kind),
                             index,
                             "typing capability",
                             warnings,
@@ -555,8 +568,8 @@ where
                     );
                     let target_kind = declaration_kind_label(project, target)
                         .unwrap_or_else(|| "specialization".to_string());
-                    self.warn_capability(
-                        self.oracle.can_specialize(keyword, &target_kind),
+                    self.apply_legality_report(
+                        self.legality.check_specialization(keyword, &target_kind),
                         index,
                         "specialization capability",
                         warnings,
@@ -587,8 +600,9 @@ where
                     .unwrap_or_else(|| target.qualified_name.clone());
                 let source_kind = declaration_kind_label(project, source)
                     .unwrap_or_else(|| source.qualified_name.clone());
-                self.warn_capability(
-                    self.oracle.can_relate(kind, &source_kind, &target_kind),
+                self.apply_legality_report(
+                    self.legality
+                        .check_relationship(kind, &source_kind, &target_kind),
                     index,
                     "relationship capability",
                     warnings,
@@ -635,16 +649,13 @@ where
                 self.require_existing(project, element, index, "element", blocking_reasons);
                 let kind = declaration_kind_label(project, element)
                     .unwrap_or_else(|| "element".to_string());
-                let policy = self.oracle.attribute_policy(&kind, "expression");
-                if !policy.writable {
-                    blocking_reasons.push(FeasibilityIssue {
-                        kind: FeasibilityIssueKind::MetamodelViolation,
-                        operation_index: Some(index),
-                        message: policy
-                            .reason
-                            .unwrap_or_else(|| "expression is not writable".to_string()),
-                    });
-                }
+                self.apply_legality_report(
+                    self.legality.check_attribute_write(&kind, "expression"),
+                    index,
+                    "attribute capability",
+                    warnings,
+                    blocking_reasons,
+                );
             }
             SemanticMutation::SetAttribute {
                 element, attribute, ..
@@ -652,16 +663,13 @@ where
                 self.require_existing(project, element, index, "element", blocking_reasons);
                 let kind = declaration_kind_label(project, element)
                     .unwrap_or_else(|| "element".to_string());
-                let policy = self.oracle.attribute_policy(&kind, attribute);
-                if !policy.writable {
-                    blocking_reasons.push(FeasibilityIssue {
-                        kind: FeasibilityIssueKind::MetamodelViolation,
-                        operation_index: Some(index),
-                        message: policy
-                            .reason
-                            .unwrap_or_else(|| format!("attribute `{attribute}` is not writable")),
-                    });
-                }
+                self.apply_legality_report(
+                    self.legality.check_attribute_write(&kind, attribute),
+                    index,
+                    "attribute capability",
+                    warnings,
+                    blocking_reasons,
+                );
             }
             SemanticMutation::UpdateUsageType { element, ty } => {
                 self.require_existing(project, element, index, "element", blocking_reasons);
@@ -671,8 +679,9 @@ where
                         .unwrap_or_else(|| "usage".to_string());
                     let definition_kind = declaration_kind_label(project, ty)
                         .unwrap_or_else(|| "definition".to_string());
-                    self.warn_capability(
-                        self.oracle.can_type_usage(&usage_kind, &definition_kind),
+                    self.apply_legality_report(
+                        self.legality
+                            .check_usage_typing(&usage_kind, &definition_kind),
                         index,
                         "typing capability",
                         warnings,
@@ -697,8 +706,9 @@ where
                     );
                     let target_kind = declaration_kind_label(project, target)
                         .unwrap_or_else(|| "specialization".to_string());
-                    self.warn_capability(
-                        self.oracle.can_specialize(&source_kind, &target_kind),
+                    self.apply_legality_report(
+                        self.legality
+                            .check_specialization(&source_kind, &target_kind),
                         index,
                         "specialization capability",
                         warnings,
@@ -730,26 +740,36 @@ where
         }
     }
 
-    fn warn_capability(
+    fn apply_legality_report(
         &self,
-        answer: CapabilityAnswer,
+        report: SemanticLegalityReport,
         index: usize,
         subject: &str,
         warnings: &mut Vec<FeasibilityIssue>,
         blocking_reasons: &mut Vec<FeasibilityIssue>,
     ) {
-        match answer {
-            CapabilityAnswer::Allowed => {}
-            CapabilityAnswer::Denied(message) => blocking_reasons.push(FeasibilityIssue {
+        if report.diagnostics.is_empty() {
+            if report.status == SemanticLegalityStatus::Unknown {
+                warnings.push(FeasibilityIssue {
+                    kind: FeasibilityIssueKind::MetamodelViolation,
+                    operation_index: Some(index),
+                    message: format!("{subject}: semantic legality is unknown"),
+                });
+            }
+            return;
+        }
+
+        for diagnostic in report.diagnostics {
+            let issue = FeasibilityIssue {
                 kind: FeasibilityIssueKind::MetamodelViolation,
                 operation_index: Some(index),
-                message: format!("{subject}: {message}"),
-            }),
-            CapabilityAnswer::Unknown(message) => warnings.push(FeasibilityIssue {
-                kind: FeasibilityIssueKind::MetamodelViolation,
-                operation_index: Some(index),
-                message: format!("{subject}: {message}"),
-            }),
+                message: format!("{subject}: {}", diagnostic.message),
+            };
+            match diagnostic.severity {
+                crate::datalog::RuleDiagnosticSeverity::Error => blocking_reasons.push(issue),
+                crate::datalog::RuleDiagnosticSeverity::Warning
+                | crate::datalog::RuleDiagnosticSeverity::Info => warnings.push(issue),
+            }
         }
     }
 }

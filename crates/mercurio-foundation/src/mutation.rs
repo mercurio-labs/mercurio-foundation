@@ -138,7 +138,26 @@ pub struct SemanticMutationCapabilityContext {
     pub definition_keywords: Vec<String>,
     pub usage_keywords: Vec<String>,
     pub relationship_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usage_typing_rules: Vec<SemanticUsageTypingRuleContext>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationship_target_rules: Vec<SemanticRelationshipTargetRuleContext>,
     pub guidance: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticUsageTypingRuleContext {
+    pub usage_keyword: String,
+    pub expected_definition_keyword: String,
+    pub expected_definition_kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticRelationshipTargetRuleContext {
+    pub relationship_kind: String,
+    pub expected_target_kind: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -990,6 +1009,8 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
         definition_keywords: Vec::new(),
         usage_keywords: Vec::new(),
         relationship_kinds: Vec::new(),
+        usage_typing_rules: Vec::new(),
+        relationship_target_rules: Vec::new(),
         guidance: vec![
             "Use a language-specific mutation profile for concrete keywords and relationships."
                 .to_string(),

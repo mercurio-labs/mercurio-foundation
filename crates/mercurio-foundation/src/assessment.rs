@@ -337,6 +337,7 @@ mod tests {
                         terms: vec![Term::Var("P".to_string())],
                     }],
                 }],
+                diagnostics: vec![],
             }],
             spec: AssessmentSpec {
                 id: "runtime.package.demo".to_string(),

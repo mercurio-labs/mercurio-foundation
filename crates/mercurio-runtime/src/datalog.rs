@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,6 +23,8 @@ pub struct RulePack {
     pub facts: Vec<Fact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<Rule>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<DiagnosticRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,6 +40,35 @@ pub struct Rule {
     pub id: String,
     pub head: Atom,
     pub body: Vec<Atom>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticRule {
+    pub id: String,
+    pub severity: RuleDiagnosticSeverity,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<Term>,
+    pub when: Vec<Atom>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleDiagnosticSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleDiagnostic {
+    pub rule_id: String,
+    pub severity: RuleDiagnosticSeverity,
+    pub message: String,
+    pub subjects: Vec<String>,
+    pub source_facts: Vec<Fact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -293,6 +326,7 @@ impl RulePack {
                     ],
                 ),
             ],
+            diagnostics: Vec::new(),
         }
     }
 
@@ -331,6 +365,7 @@ impl RulePack {
             ]),
             facts: facts.into_iter().collect(),
             rules: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -862,6 +897,44 @@ where
     })
 }
 
+pub fn evaluate_diagnostics(
+    evaluation: &Evaluation,
+    diagnostics: &[DiagnosticRule],
+) -> Result<Vec<RuleDiagnostic>, DatalogError> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| evaluate_diagnostic_rule(evaluation, diagnostic))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|groups| groups.into_iter().flatten().collect())
+}
+
+fn evaluate_diagnostic_rule(
+    evaluation: &Evaluation,
+    diagnostic: &DiagnosticRule,
+) -> Result<Vec<RuleDiagnostic>, DatalogError> {
+    let rule = Rule {
+        id: diagnostic.id.clone(),
+        head: Atom {
+            predicate: format!("__diagnostic_{}", diagnostic.id),
+            terms: diagnostic.subjects.clone(),
+        },
+        body: diagnostic.when.clone(),
+    };
+    validate_rules(std::slice::from_ref(&rule))?;
+    derive_rule(&rule, evaluation.facts()).map(|matches| {
+        matches
+            .into_iter()
+            .map(|(fact, source_facts)| RuleDiagnostic {
+                rule_id: diagnostic.id.clone(),
+                severity: diagnostic.severity,
+                message: diagnostic.message.clone(),
+                subjects: fact.terms,
+                source_facts,
+            })
+            .collect()
+    })
+}
+
 fn validate_rules(rules: &[Rule]) -> Result<(), DatalogError> {
     for rule in rules {
         if rule.body.is_empty() {
@@ -1030,7 +1103,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Fact, RulePack, extract_graph_facts, load_default_rulepacks, materialize_core_indexes,
+        Atom, DiagnosticRule, Fact, RuleDiagnosticSeverity, RulePack, Term, evaluate,
+        evaluate_diagnostics, extract_graph_facts, load_default_rulepacks,
+        materialize_core_indexes,
     };
     use mercurio_model::Graph;
     use mercurio_model::{KirDocument, KirElement};
@@ -1069,6 +1144,45 @@ mod tests {
                 "feature.engine".to_string()
             ]
         )));
+    }
+
+    #[test]
+    fn evaluates_diagnostic_rules_with_subjects_and_source_facts() {
+        let evaluation = evaluate(
+            vec![Fact::new(
+                "legality_relationship_request",
+                [
+                    "satisfy".to_string(),
+                    "part".to_string(),
+                    "part".to_string(),
+                ],
+            )],
+            &[],
+        )
+        .unwrap();
+
+        let diagnostics = evaluate_diagnostics(
+            &evaluation,
+            &[DiagnosticRule {
+                id: "sysml.satisfy.target_requirement".to_string(),
+                severity: RuleDiagnosticSeverity::Error,
+                message: "satisfy must target a requirement-like element".to_string(),
+                subjects: vec![Term::Var("Target".to_string())],
+                when: vec![Atom {
+                    predicate: "legality_relationship_request".to_string(),
+                    terms: vec![
+                        Term::Const("satisfy".to_string()),
+                        Term::Var("Source".to_string()),
+                        Term::Var("Target".to_string()),
+                    ],
+                }],
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].subjects, ["part"]);
+        assert_eq!(diagnostics[0].source_facts.len(), 1);
     }
 
     #[test]

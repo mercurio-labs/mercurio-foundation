@@ -42,7 +42,7 @@ pub struct ProjectDescriptor {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "ProjectModelConfig::is_empty")]
     pub model: ProjectModelConfig,
-    #[serde(default)]
+    #[serde(default, alias = "libraries")]
     pub dependencies: Vec<WorkspaceLibraryConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<serde_json::Value>,
@@ -899,8 +899,8 @@ mod tests {
     }
 
     #[test]
-    fn project_descriptor_rejects_libraries_dependency_alias() {
-        let err = serde_json::from_str::<ProjectDescriptor>(
+    fn project_descriptor_accepts_libraries_dependency_alias() {
+        let descriptor = serde_json::from_str::<ProjectDescriptor>(
             r#"{
   "name": "Project Plugin Pacti Analysis",
   "libraries": [
@@ -914,9 +914,14 @@ mod tests {
   ]
 }"#,
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.to_string().contains("unknown field"));
+        assert_eq!(descriptor.dependencies.len(), 1);
+        assert_eq!(descriptor.dependencies[0].id, "stdlib");
+        assert_eq!(
+            descriptor.dependencies[0].role,
+            WorkspaceLibraryRole::Baseline
+        );
     }
 
     #[test]

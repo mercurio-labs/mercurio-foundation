@@ -21,9 +21,10 @@ pub mod cognitive;
 #[doc(hidden)]
 pub mod datalog {
     pub use mercurio_runtime::{
-        Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
-        Explanation, Fact, Rule, RulePack, Term, evaluate, extract_graph_facts,
-        load_default_rulepacks, materialize_core_indexes,
+        Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes,
+        DiagnosticRule, Evaluation, Explanation, Fact, Rule, RuleDiagnostic,
+        RuleDiagnosticSeverity, RulePack, Term, evaluate, evaluate_diagnostics,
+        extract_graph_facts, load_default_rulepacks, materialize_core_indexes,
     };
 }
 #[doc(hidden)]
@@ -117,6 +118,8 @@ pub mod runtime {
 }
 #[doc(hidden)]
 pub mod semantic_compare;
+pub mod semantic_legality;
+pub mod semantic_next_actions;
 #[doc(hidden)]
 pub mod semantic_profile;
 #[doc(hidden)]
@@ -176,8 +179,9 @@ pub use cognitive::{
     design_intent_to_assessment_spec, design_intent_to_semantic_goal_spec, explore, propose,
 };
 pub use datalog::{
-    Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, Evaluation,
-    Explanation, Fact, Rule, RulePack, Term, evaluate, extract_graph_facts, load_default_rulepacks,
+    Atom, CORE_RULEPACK_ID, CORE_RULEPACK_VERSION, DatalogError, DerivedIndexes, DiagnosticRule,
+    Evaluation, Explanation, Fact, Rule, RuleDiagnostic, RuleDiagnosticSeverity, RulePack, Term,
+    evaluate, evaluate_diagnostics, extract_graph_facts, load_default_rulepacks,
     materialize_core_indexes,
 };
 pub use derived::{
@@ -271,7 +275,8 @@ pub use mutation::{
     RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef,
     SemanticElementContext, SemanticExpression, SemanticFactContext, SemanticMutation,
     SemanticMutationCapabilityContext, SemanticReasoningContext, SemanticRelationshipContext,
-    WorkspaceRevision, default_semantic_mutation_capability_context, diff_kir_documents,
+    SemanticRelationshipTargetRuleContext, SemanticUsageTypingRuleContext, WorkspaceRevision,
+    default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
     enrich_semantic_reasoning_context_with_child_affordances_for_capability,
     enrich_semantic_reasoning_context_with_graph,
@@ -324,6 +329,16 @@ pub use semantic_compare::{
     SemanticElementMismatch, SemanticSnapshot, SemanticSnapshotAttribute, SemanticSnapshotElement,
     SemanticSourceSpan, SemanticValueMismatch, SnapshotMode, build_semantic_snapshot,
     build_semantic_snapshot_with_registry, compare_snapshots, compare_snapshots_with_options,
+};
+pub use semantic_legality::{
+    SEMANTIC_LEGALITY_SCHEMA_VERSION, SemanticLegalityDiagnostic, SemanticLegalityDiagnosticSource,
+    SemanticLegalityOperation, SemanticLegalityReport, SemanticLegalityRequest,
+    SemanticLegalityService, SemanticLegalityStatus,
+};
+pub use semantic_next_actions::{
+    SEMANTIC_NEXT_ACTIONS_SCHEMA_VERSION, SemanticNextAction, SemanticNextActionOperation,
+    SemanticNextActionsReport, SemanticNextActionsRequest, SemanticNextActionsService,
+    enrich_semantic_reasoning_context_with_next_action_affordances,
 };
 pub use semantic_profile::{
     AttributePolicyAnswer, AttributePolicyKey, CapabilityAnswer, CapabilityPair,
