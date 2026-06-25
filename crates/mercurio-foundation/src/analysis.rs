@@ -3,15 +3,10 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::capability::SemanticElementRef;
 use crate::graph::{Element, Graph};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AnalysisElementRef {
-    pub element_id: String,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
+pub type AnalysisElementRef = SemanticElementRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -580,23 +575,7 @@ where
 }
 
 fn element_ref(element: &Element) -> AnalysisElementRef {
-    AnalysisElementRef {
-        element_id: element.element_id.clone(),
-        kind: element.kind.to_string(),
-        label: label(element),
-    }
-}
-
-fn label(element: &Element) -> Option<String> {
-    string_property(element, "declared_name")
-        .or_else(|| string_property(element, "name"))
-        .or_else(|| {
-            element
-                .element_id
-                .rsplit([':', '.'])
-                .find(|part| !part.is_empty())
-                .map(ToOwned::to_owned)
-        })
+    AnalysisElementRef::from_graph_element(element)
 }
 
 fn string_property(element: &Element, name: &str) -> Option<String> {
