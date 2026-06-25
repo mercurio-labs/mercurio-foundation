@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::authoring::{
     AuthoringModule, AuthoringProject, Declaration, MutationResult, QualifiedName,
 };
+use crate::capability::SemanticElementRef;
 use crate::graph::Graph;
 use crate::ir::{
     KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE, KirDocument, KirElement,
@@ -32,7 +33,7 @@ impl ElementRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct WorkspaceRevision {
     pub fingerprint: String,
 }
@@ -1160,46 +1161,7 @@ pub struct RelationshipChange {
     pub target: SemanticDiffElementRef,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct SemanticDiffElementRef {
-    pub element_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub qualified_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-}
-
-impl SemanticDiffElementRef {
-    pub fn new(element_id: impl Into<String>) -> Self {
-        Self {
-            element_id: element_id.into(),
-            qualified_name: None,
-            label: None,
-            kind: None,
-        }
-    }
-
-    pub fn unresolved(value: impl Into<String>) -> Self {
-        let value = value.into();
-        Self {
-            element_id: value.clone(),
-            qualified_name: Some(value),
-            label: None,
-            kind: None,
-        }
-    }
-
-    pub fn from_element(element: &KirElement) -> Self {
-        Self {
-            element_id: element.id.clone(),
-            qualified_name: string_property(&element.properties, "qualified_name"),
-            label: element_label(element),
-            kind: Some(element.kind.clone()),
-        }
-    }
-}
+pub type SemanticDiffElementRef = SemanticElementRef;
 
 pub fn diff_kir_documents(before: &KirDocument, after: &KirDocument) -> SemanticDiff {
     let mut diff = SemanticDiff::default();
@@ -1367,32 +1329,12 @@ fn document_relationships(document: &KirDocument) -> BTreeSet<RelationshipChange
         .edges()
         .iter()
         .filter_map(|edge| {
-            let source = graph.element_id(edge.source)?;
-            let target = graph.element_id(edge.target)?;
             let source_element = graph.element(edge.source)?;
             let target_element = graph.element(edge.target)?;
             Some(RelationshipChange {
                 kind: edge.relation.to_string(),
-                source: SemanticDiffElementRef {
-                    element_id: source.to_string(),
-                    qualified_name: source_element
-                        .properties
-                        .get("qualified_name")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
-                    label: graph_element_label(source_element),
-                    kind: Some(source_element.kind.to_string()),
-                },
-                target: SemanticDiffElementRef {
-                    element_id: target.to_string(),
-                    qualified_name: target_element
-                        .properties
-                        .get("qualified_name")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
-                    label: graph_element_label(target_element),
-                    kind: Some(target_element.kind.to_string()),
-                },
+                source: SemanticDiffElementRef::from_graph_element(source_element),
+                target: SemanticDiffElementRef::from_graph_element(target_element),
             })
         })
         .collect()
@@ -1536,51 +1478,20 @@ pub(crate) fn diff_for_operation(
 }
 
 fn diff_ref_from_element_ref(element: &ElementRef) -> SemanticDiffElementRef {
-    SemanticDiffElementRef {
-        element_id: element.qualified_name.clone(),
-        qualified_name: Some(element.qualified_name.clone()),
-        label: element
+    SemanticDiffElementRef::unresolved(element.qualified_name.clone()).with_label_optional(
+        element
             .qualified_name
             .rsplit('.')
             .next()
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
-        kind: None,
-    }
+    )
 }
 
 fn element_name(element: &KirElement) -> Option<String> {
     string_property(&element.properties, KIR_PROP_NAME)
         .or_else(|| string_property(&element.properties, "name"))
         .or_else(|| string_property(&element.properties, "qualified_name"))
-}
-
-fn element_label(element: &KirElement) -> Option<String> {
-    string_property(&element.properties, "declared_name")
-        .or_else(|| string_property(&element.properties, "name"))
-        .or_else(|| {
-            element
-                .id
-                .rsplit(['.', ':', '/'])
-                .find(|part| !part.is_empty())
-                .map(ToOwned::to_owned)
-        })
-}
-
-fn graph_element_label(element: &crate::graph::Element) -> Option<String> {
-    element
-        .properties
-        .get("declared_name")
-        .or_else(|| element.properties.get("name"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            element
-                .element_id
-                .rsplit(['.', ':', '/'])
-                .find(|part| !part.is_empty())
-                .map(ToOwned::to_owned)
-        })
 }
 
 fn owner_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {

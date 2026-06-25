@@ -2,8 +2,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::Value;
 
+use mercurio_kir::Severity;
+
 use crate::derived::derived_properties;
 use crate::graph::{Graph, NodeId};
+use crate::ir::{Diagnostic, DiagnosticKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementSummary {
@@ -104,12 +107,7 @@ pub struct DerivedMetamodelCapabilities {
     pub can_have_endpoints: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MetamodelValidationDiagnostic {
-    pub code: &'static str,
-    pub message: String,
-    pub element_id: String,
-}
+pub type MetamodelValidationDiagnostic = Diagnostic;
 
 impl MetamodelFeatureRegistry {
     pub fn build(graph: &Graph) -> Self {
@@ -279,14 +277,18 @@ pub fn validate_derived_metamodel_semantics(
 
         let capabilities = derive_metamodel_capabilities(graph, registry, element.id);
         if element.properties.get("features").is_some() && !capabilities.can_own_features {
-            diagnostics.push(MetamodelValidationDiagnostic {
-                code: "kir.metamodel.features.unsupported",
-                message: format!(
+            diagnostics.push(
+                MetamodelValidationDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Severity::Error,
+                    "kir.metamodel.features.unsupported",
+                    format!(
                     "KIR element {} declares `features`, but its derived metamodel capabilities do not allow feature ownership",
                     element.element_id
                 ),
-                element_id: element.element_id.clone(),
-            });
+                )
+                .with_subject(element.element_id.clone()),
+            );
         }
 
         let declares_source = element.properties.get("source").is_some()
@@ -294,23 +296,31 @@ pub fn validate_derived_metamodel_semantics(
         let declares_target = element.properties.get("target").is_some()
             || element.properties.get("targets").is_some();
         if (declares_source || declares_target) && !capabilities.can_have_endpoints {
-            diagnostics.push(MetamodelValidationDiagnostic {
-                code: "kir.metamodel.endpoints.unsupported",
-                message: format!(
+            diagnostics.push(
+                MetamodelValidationDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Severity::Error,
+                    "kir.metamodel.endpoints.unsupported",
+                    format!(
                     "KIR element {} declares relationship endpoints, but its derived metamodel capabilities do not allow endpoints",
                     element.element_id
                 ),
-                element_id: element.element_id.clone(),
-            });
+                )
+                .with_subject(element.element_id.clone()),
+            );
         } else if capabilities.can_have_endpoints && declares_source != declares_target {
-            diagnostics.push(MetamodelValidationDiagnostic {
-                code: "kir.metamodel.endpoints.incomplete",
-                message: format!(
-                    "KIR element {} declares only one side of a relationship endpoint pair",
-                    element.element_id
-                ),
-                element_id: element.element_id.clone(),
-            });
+            diagnostics.push(
+                MetamodelValidationDiagnostic::new(
+                    DiagnosticKind::Validation,
+                    Severity::Error,
+                    "kir.metamodel.endpoints.incomplete",
+                    format!(
+                        "KIR element {} declares only one side of a relationship endpoint pair",
+                        element.element_id
+                    ),
+                )
+                .with_subject(element.element_id.clone()),
+            );
         }
     }
 
@@ -1290,7 +1300,7 @@ mod tests {
         let diagnostics = validate_derived_metamodel_semantics(&graph, &registry);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "kir.metamodel.endpoints.incomplete");
-        assert_eq!(diagnostics[0].element_id, "transition.Demo.start");
+        assert_eq!(diagnostics[0].subjects, ["transition.Demo.start"]);
     }
 
     #[test]
@@ -1321,7 +1331,7 @@ mod tests {
         let diagnostics = validate_derived_metamodel_semantics(&graph, &registry);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "kir.metamodel.features.unsupported");
-        assert_eq!(diagnostics[0].element_id, "plain.Demo.Element");
+        assert_eq!(diagnostics[0].subjects, ["plain.Demo.Element"]);
     }
 
     fn metamodel_feature(id: &str, owner: &str, kir_property: &str) -> KirElement {

@@ -24,6 +24,8 @@ pub use types::{DslEdge, DslElement, ElementSet};
 
 pub const DSL_QUERY_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/query-report";
 pub const DSL_ANALYSIS_RUN_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/analysis-run-report";
+pub const DSL_QUERY_CAPABILITY_ID: &str = "mercurio.dsl.query";
+pub const DSL_QUERY_RESULT_SCHEMA: &str = "mercurio.dsl.query_result.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DslQueryResult {
@@ -222,6 +224,43 @@ pub struct DslQueryReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_name: Option<String>,
     pub result: DslQueryResult,
+}
+
+impl DslQueryReport {
+    pub fn to_capability_run_report(
+        &self,
+        run_id: impl Into<String>,
+    ) -> Result<CapabilityRunReport, DslError> {
+        let payload = serde_json::to_value(&self.result)
+            .map_err(|error| DslError::internal(error.to_string()))?;
+        let payload_digest_input = payload.to_string();
+        let digest = stable_digest([(
+            DSL_QUERY_RESULT_SCHEMA.as_bytes(),
+            payload_digest_input.as_bytes(),
+        )]);
+        Ok(CapabilityRunReport {
+            run_id: run_id.into(),
+            capability_id: DSL_QUERY_CAPABILITY_ID.to_string(),
+            status: CapabilityRunStatus::Passed,
+            target: CapabilityTarget::Workspace,
+            insights: Vec::new(),
+            artifacts: vec![SemanticArtifact {
+                id: self
+                    .script_name
+                    .as_ref()
+                    .map(|name| format!("dsl_query_result.{name}"))
+                    .unwrap_or_else(|| "dsl_query_result".to_string()),
+                kind: DSL_QUERY_ARTIFACT_KIND.to_string(),
+                schema: DSL_QUERY_RESULT_SCHEMA.to_string(),
+                digest,
+                element_refs: Vec::new(),
+                payload,
+            }],
+            evidence: EvidenceGraph::default(),
+            diagnostics: Vec::new(),
+            limitations: Vec::new(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,12 +752,8 @@ fn insight_from_result(
     Some(SemanticInsight {
         id: format!("insight.{run_id}.verdict"),
         kind,
-        subject: subject.unwrap_or_else(|| SemanticElementRef {
-            element_id: "workspace".to_string(),
-            qualified_name: None,
-            label: Some("Workspace".to_string()),
-            semantic_anchor: None,
-        }),
+        subject: subject
+            .unwrap_or_else(|| SemanticElementRef::new("workspace").with_label("Workspace")),
         claim: claim.to_string(),
         polarity,
         severity,
@@ -770,27 +805,8 @@ fn first_row_metrics(payload: &Value) -> BTreeMap<String, Value> {
 fn semantic_element_ref(graph: &Graph, element_id: &str) -> SemanticElementRef {
     graph
         .element_by_element_id(element_id)
-        .map(|element| SemanticElementRef {
-            element_id: element.element_id.clone(),
-            qualified_name: element
-                .properties
-                .get("qualified_name")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            label: element
-                .properties
-                .get("declared_name")
-                .or_else(|| element.properties.get("name"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            semantic_anchor: None,
-        })
-        .unwrap_or_else(|| SemanticElementRef {
-            element_id: element_id.to_string(),
-            qualified_name: None,
-            label: None,
-            semantic_anchor: None,
-        })
+        .map(SemanticElementRef::from_graph_element)
+        .unwrap_or_else(|| SemanticElementRef::new(element_id))
 }
 
 fn value_digest(value: &Value) -> String {
@@ -1137,6 +1153,33 @@ mod tests {
             Some("queries/count_parts.mercurio-query.dsl")
         );
         assert_eq!(report.result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn dsl_query_report_converts_to_capability_run_report() {
+        let report = DslQueryReport {
+            script_name: Some("queries/count_parts.mercurio-query.dsl".to_string()),
+            result: DslQueryResult {
+                columns: vec!["value".to_string()],
+                rows: vec![vec![serde_json::json!(3)]],
+            },
+        };
+
+        let capability_report = report.to_capability_run_report("run.dsl.query").unwrap();
+
+        assert_eq!(capability_report.run_id, "run.dsl.query");
+        assert_eq!(capability_report.capability_id, DSL_QUERY_CAPABILITY_ID);
+        assert_eq!(capability_report.status, CapabilityRunStatus::Passed);
+        assert_eq!(capability_report.artifacts.len(), 1);
+        assert_eq!(capability_report.artifacts[0].kind, DSL_QUERY_ARTIFACT_KIND);
+        assert_eq!(
+            capability_report.artifacts[0].schema,
+            DSL_QUERY_RESULT_SCHEMA
+        );
+        assert_eq!(
+            capability_report.artifacts[0].payload["rows"][0][0],
+            serde_json::json!(3)
+        );
     }
 
     #[test]

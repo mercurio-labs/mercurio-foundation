@@ -227,7 +227,7 @@ pub enum Severity {
 
 /// A resolved source location: a file plus a line/column range. Canonical home
 /// for what was duplicated as `SourceSpanRef` in higher crates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SourceSpanRef {
     pub file: String,
     pub start_line: u32,
