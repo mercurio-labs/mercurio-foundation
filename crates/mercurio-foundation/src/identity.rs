@@ -26,14 +26,9 @@ pub struct ProfileId(String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct StdlibVersion(String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceSpanRef {
-    pub file: String,
-    pub start_line: u32,
-    pub start_col: u32,
-    pub end_line: u32,
-    pub end_col: u32,
-}
+/// Canonical source location lives in [`mercurio_kir`]; re-exported here so the
+/// existing `identity::SourceSpanRef` path keeps resolving.
+pub use mercurio_kir::SourceSpanRef;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticAnchor {

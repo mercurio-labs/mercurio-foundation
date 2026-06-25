@@ -1,4 +1,4 @@
-﻿//! Kernel intermediate representation (KIR) persistence contract.
+//! Kernel intermediate representation (KIR) persistence contract.
 //!
 //! KIR is the stable interchange boundary between source frontends, model
 //! graph construction, runtime evaluation, and view generation.
@@ -217,14 +217,23 @@ pub enum KirError {
 /// Single-word variants serialize identically under `snake_case`, `lowercase`,
 /// and `camelCase`, so this is wire-compatible with the per-crate severity
 /// enums it replaces. Ordering is `Info < Warning < Error`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Info,
     Warning,
     Error,
+}
+
+/// A resolved source location: a file plus a line/column range. Canonical home
+/// for what was duplicated as `SourceSpanRef` in higher crates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceSpanRef {
+    pub file: String,
+    pub start_line: u32,
+    pub start_col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
 }
 
 /// Family a [`Diagnostic`] belongs to. Replaces the per-crate diagnostic
@@ -260,6 +269,9 @@ pub struct Diagnostic {
     pub message: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subjects: Vec<String>,
+    /// Source locations associated with the diagnostic, when known.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_spans: Vec<SourceSpanRef>,
 }
 
 impl Diagnostic {
@@ -276,6 +288,7 @@ impl Diagnostic {
             kind,
             message: message.into(),
             subjects: Vec::new(),
+            source_spans: Vec::new(),
         }
     }
 
@@ -294,6 +307,12 @@ impl Diagnostic {
     /// Add an element id this diagnostic is about.
     pub fn with_subject(mut self, subject: impl Into<String>) -> Self {
         self.subjects.push(subject.into());
+        self
+    }
+
+    /// Attach source locations to the diagnostic.
+    pub fn with_source_spans(mut self, spans: impl IntoIterator<Item = SourceSpanRef>) -> Self {
+        self.source_spans.extend(spans);
         self
     }
 }
@@ -426,11 +445,7 @@ impl KirFieldRegistry {
         })
     }
 
-    fn unknown_field_diagnostic(
-        &self,
-        field: &str,
-        element_id: &str,
-    ) -> Option<Diagnostic> {
+    fn unknown_field_diagnostic(&self, field: &str, element_id: &str) -> Option<Diagnostic> {
         (self.field(field).is_none() && !field.starts_with("x_")).then(|| {
             Diagnostic::validation(
                 "kir.element.property.unknown",
@@ -949,11 +964,7 @@ fn validate_structured_property(
     }
 }
 
-fn validate_metadata(
-    value: &Value,
-    element_id: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn validate_metadata(value: &Value, element_id: &str, diagnostics: &mut Vec<Diagnostic>) {
     let Some(metadata) = value.as_object() else {
         return;
     };
@@ -973,9 +984,7 @@ fn validate_metadata(
     {
         diagnostics.push(Diagnostic::validation(
             "kir.element.metadata.source_language.shape",
-            format!(
-                "KIR element {element_id} metadata `source_language` must be a string"
-            ),
+            format!("KIR element {element_id} metadata `source_language` must be a string"),
             Some(element_id.to_string()),
         ));
     }
@@ -1028,9 +1037,7 @@ fn validate_source_span(
         {
             diagnostics.push(Diagnostic::validation(
                 "kir.element.source_span.shape",
-                format!(
-                    "KIR element {element_id} `{field}.{key}` must be a number when present"
-                ),
+                format!("KIR element {element_id} `{field}.{key}` must be a number when present"),
                 Some(element_id.to_string()),
             ));
         }
