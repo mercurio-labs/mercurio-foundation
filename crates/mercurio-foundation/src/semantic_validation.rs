@@ -3,10 +3,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::Graph;
-use crate::ir::{Diagnostic, DiagnosticKind, KirDocument, KirError};
-use crate::metamodel::{
-    MetamodelFeatureRegistry, MetamodelValidationDiagnostic, validate_derived_metamodel_semantics,
-};
+use crate::ir::{Diagnostic, KirDocument, KirError};
+use crate::metamodel::{MetamodelFeatureRegistry, validate_derived_metamodel_semantics};
 
 pub const SEMANTIC_VALIDATION_POLICY_VERSION: u32 = 1;
 
@@ -181,28 +179,23 @@ fn validate_kir_semantics_for_graph_targets(
     let registry = MetamodelFeatureRegistry::build(graph);
     let diagnostics = validate_derived_metamodel_semantics(graph, &registry)
         .into_iter()
-        .filter(|diagnostic| {
+        .filter_map(|mut diagnostic| {
             target_element_ids
-                .map(|ids| ids.contains(&diagnostic.element_id))
+                .map(|ids| {
+                    diagnostic
+                        .subjects
+                        .iter()
+                        .any(|subject| ids.contains(subject))
+                })
                 .unwrap_or(true)
+                .then(|| {
+                    diagnostic.severity = severity;
+                    diagnostic
+                })
         })
-        .map(|diagnostic| semantic_diagnostic_from_metamodel(diagnostic, severity))
         .collect();
 
     SemanticValidationReport { diagnostics }
-}
-
-fn semantic_diagnostic_from_metamodel(
-    diagnostic: MetamodelValidationDiagnostic,
-    severity: SemanticValidationSeverity,
-) -> Diagnostic {
-    Diagnostic::new(
-        DiagnosticKind::Validation,
-        severity,
-        diagnostic.code,
-        diagnostic.message,
-    )
-    .with_subject(diagnostic.element_id)
 }
 
 #[cfg(test)]
