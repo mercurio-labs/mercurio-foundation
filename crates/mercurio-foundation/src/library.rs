@@ -4,14 +4,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ir::{KIR_SCHEMA_VERSION, KirDocument, KirError};
+use crate::ir::{Diagnostic, KIR_SCHEMA_VERSION, KirDocument, KirError};
 use crate::paths::{
     bundled_package_repo_path, bundled_stdlib_package_set_path, default_model_library_path,
     default_package_kir_cache_path, default_package_repo_path, default_user_config_path,
 };
 use crate::semantic_validation::{
-    SemanticValidationDiagnostic, SemanticValidationReport, validate_kir_semantics,
-    validate_kir_semantics_with_context,
+    SemanticValidationReport, validate_kir_semantics, validate_kir_semantics_with_context,
 };
 
 pub const DEFAULT_STDLIB_LOCATOR: &str = "kpar:org.omg/model-stdlib:2.0.0";
@@ -197,7 +196,7 @@ pub struct PackageVerification {
     pub has_precompiled_kir: bool,
     pub precompiled_kir_element_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub validation_diagnostics: Vec<SemanticValidationDiagnostic>,
+    pub validation_diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1747,7 +1746,7 @@ struct KparArchiveVerification {
     source_count: usize,
     has_precompiled_kir: bool,
     precompiled_kir_element_count: Option<usize>,
-    validation_diagnostics: Vec<SemanticValidationDiagnostic>,
+    validation_diagnostics: Vec<Diagnostic>,
 }
 
 fn verify_kpar_archive(path: &Path) -> Result<KparArchiveVerification, KirError> {
@@ -2721,8 +2720,8 @@ mod tests {
             "kir.metamodel.endpoints.incomplete"
         );
         assert_eq!(
-            verification.validation_diagnostics[0].element_id.as_deref(),
-            Some("transition.Demo.start")
+            verification.validation_diagnostics[0].subjects,
+            vec!["transition.Demo.start".to_string()]
         );
 
         std::fs::remove_dir_all(temp_root).unwrap();

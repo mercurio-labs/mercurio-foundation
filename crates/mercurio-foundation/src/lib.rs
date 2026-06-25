@@ -361,7 +361,7 @@ pub use semantic_target::{
     SemanticTargetResolver, TargetLayers,
 };
 pub use semantic_validation::{
-    SEMANTIC_VALIDATION_POLICY_VERSION, SemanticValidationDiagnostic, SemanticValidationMode,
+    SEMANTIC_VALIDATION_POLICY_VERSION, SemanticValidationMode,
     SemanticValidationPolicy, SemanticValidationReport, SemanticValidationSeverity,
     validate_kir_semantics, validate_kir_semantics_for_graph,
     validate_kir_semantics_for_graph_with_policy, validate_kir_semantics_with_context,

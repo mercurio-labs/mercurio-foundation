@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::Graph;
-use crate::ir::{KirDocument, KirError};
+use crate::ir::{Diagnostic, DiagnosticKind, KirDocument, KirError};
 use crate::metamodel::{
     MetamodelFeatureRegistry, MetamodelValidationDiagnostic, validate_derived_metamodel_semantics,
 };
@@ -77,19 +77,10 @@ fn default_semantic_validation_policy_version() -> u32 {
 /// [`mercurio_kir::Severity`].
 pub use mercurio_kir::Severity as SemanticValidationSeverity;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SemanticValidationDiagnostic {
-    pub code: String,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub element_id: Option<String>,
-    pub severity: SemanticValidationSeverity,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticValidationReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub diagnostics: Vec<SemanticValidationDiagnostic>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl SemanticValidationReport {
@@ -204,13 +195,14 @@ fn validate_kir_semantics_for_graph_targets(
 fn semantic_diagnostic_from_metamodel(
     diagnostic: MetamodelValidationDiagnostic,
     severity: SemanticValidationSeverity,
-) -> SemanticValidationDiagnostic {
-    SemanticValidationDiagnostic {
-        code: diagnostic.code.to_string(),
-        message: diagnostic.message,
-        element_id: Some(diagnostic.element_id),
+) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticKind::Validation,
         severity,
-    }
+        diagnostic.code,
+        diagnostic.message,
+    )
+    .with_subject(diagnostic.element_id)
 }
 
 #[cfg(test)]
@@ -247,8 +239,8 @@ mod tests {
             "kir.metamodel.endpoints.incomplete"
         );
         assert_eq!(
-            report.diagnostics[0].element_id.as_deref(),
-            Some("transition.Demo.start")
+            report.diagnostics[0].subjects,
+            vec!["transition.Demo.start".to_string()]
         );
     }
 
