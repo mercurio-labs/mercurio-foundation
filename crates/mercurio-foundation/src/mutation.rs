@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+﻿use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -7,7 +7,9 @@ use crate::authoring::{
     AuthoringModule, AuthoringProject, Declaration, MutationResult, QualifiedName,
 };
 use crate::graph::Graph;
-use crate::ir::{KirDocument, KirElement};
+use crate::ir::{
+    KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE, KirDocument, KirElement,
+};
 use crate::semantic_profile::SemanticCapabilityOracle;
 use crate::variant::{
     SemanticVariantCapabilityContext, default_semantic_variant_capability_context,
@@ -46,8 +48,7 @@ impl WorkspaceRevision {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MutationProposal {
     pub intent: String,
-    pub affected_elements: Vec<ElementRef>,
-    pub operations: Vec<SemanticMutation>,
+        pub operations: Vec<SemanticMutation>,
     pub evidence: Vec<MutationEvidence>,
     pub rationale: Option<String>,
     pub workspace_revision: WorkspaceRevision,
@@ -96,10 +97,7 @@ pub enum SemanticMutation {
         metadata_type: String,
         properties: BTreeMap<String, String>,
     },
-    RemoveDeclaration {
-        element: ElementRef,
-    },
-    RemoveUsage {
+    Remove {
         element: ElementRef,
     },
     RemoveRelationship {
@@ -166,23 +164,8 @@ pub struct SemanticRelationshipTargetRuleContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SemanticReasoningContext {
-    pub metamodel_version: String,
-    pub workspace_revision: WorkspaceRevision,
-    pub focus: Vec<ElementRef>,
-    pub elements: Vec<SemanticElementContext>,
-    pub relationships: Vec<SemanticRelationshipContext>,
-    pub facts: Vec<SemanticFactContext>,
-    pub affordances: Vec<SemanticAffordanceContext>,
-    pub source_files: Vec<String>,
-    pub truncated: bool,
-}
-
-pub const AI_SEMANTIC_CONTEXT_SCHEMA_VERSION: &str = "mercurio.ai.semantic_context.v1";
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AiSemanticContextSnapshot {
+pub struct SemanticReasoningContext {
     pub schema_version: String,
     pub metamodel_version: String,
     pub workspace_revision: WorkspaceRevision,
@@ -196,6 +179,8 @@ pub struct AiSemanticContextSnapshot {
     pub usage: AiSemanticContextUsage,
 }
 
+pub const AI_SEMANTIC_CONTEXT_SCHEMA_VERSION: &str = "mercurio.ai.semantic_context.v1";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSemanticContextUsage {
@@ -203,29 +188,6 @@ pub struct AiSemanticContextUsage {
     pub prefer_ranked_allowed_affordances: bool,
     pub cite_rule_diagnostics: bool,
     pub element_ref_format: String,
-}
-
-impl From<&SemanticReasoningContext> for AiSemanticContextSnapshot {
-    fn from(context: &SemanticReasoningContext) -> Self {
-        Self {
-            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
-            metamodel_version: context.metamodel_version.clone(),
-            workspace_revision: context.workspace_revision.clone(),
-            focus: context.focus.clone(),
-            elements: context.elements.clone(),
-            relationships: context.relationships.clone(),
-            facts: context.facts.clone(),
-            affordances: context.affordances.clone(),
-            source_files: context.source_files.clone(),
-            truncated: context.truncated,
-            usage: AiSemanticContextUsage {
-                authoritative_for_existing_elements: true,
-                prefer_ranked_allowed_affordances: true,
-                cite_rule_diagnostics: true,
-                element_ref_format: "dot_qualified".to_string(),
-            },
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -306,6 +268,7 @@ pub fn semantic_reasoning_context_from_authoring_project_with_oracle(
         select_reasoning_context_elements(all_elements, all_relationships, &focus, max_elements);
 
     SemanticReasoningContext {
+        schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
         metamodel_version: "model-v2-authoring-context-v1".to_string(),
         workspace_revision,
         focus,
@@ -315,6 +278,12 @@ pub fn semantic_reasoning_context_from_authoring_project_with_oracle(
         affordances: Vec::new(),
         source_files,
         truncated,
+        usage: AiSemanticContextUsage {
+            authoritative_for_existing_elements: true,
+            prefer_ranked_allowed_affordances: true,
+            cite_rule_diagnostics: true,
+            element_ref_format: "dot_qualified".to_string(),
+        },
     }
 }
 
@@ -1051,8 +1020,7 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
             "AddUsage".to_string(),
             "AddRelationship".to_string(),
             "AddMetadataAnnotation".to_string(),
-            "RemoveDeclaration".to_string(),
-            "RemoveUsage".to_string(),
+            "Remove".to_string(),
             "RemoveRelationship".to_string(),
             "RenameDeclaration".to_string(),
             "UpdateUsageType".to_string(),
@@ -1432,8 +1400,7 @@ pub(crate) fn diff_for_operation(
                 after: None,
             });
         }
-        SemanticMutation::RemoveDeclaration { element }
-        | SemanticMutation::RemoveUsage { element } => {
+        SemanticMutation::Remove { element } => {
             diff.removed_elements
                 .push(diff_ref_from_element_ref(element));
         }
@@ -1543,7 +1510,7 @@ fn diff_ref_from_element_ref(element: &ElementRef) -> SemanticDiffElementRef {
 }
 
 fn element_name(element: &KirElement) -> Option<String> {
-    string_property(&element.properties, "declared_name")
+    string_property(&element.properties, KIR_PROP_NAME)
         .or_else(|| string_property(&element.properties, "name"))
         .or_else(|| string_property(&element.properties, "qualified_name"))
 }
@@ -1578,7 +1545,7 @@ fn graph_element_label(element: &crate::graph::Element) -> Option<String> {
 
 fn owner_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {
     for key in [
-        "owner",
+        KIR_PROP_OWNER,
         "owning_namespace",
         "owning_type",
         "owning_definition",
@@ -1592,7 +1559,7 @@ fn owner_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {
 }
 
 fn type_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {
-    for key in ["type", "definition", "feature_typings"] {
+    for key in [KIR_PROP_TYPE, "definition", "feature_typings"] {
         if let Some(value) = element.properties.get(key) {
             if let Some(reference) = first_reference_value(value) {
                 return Some(SemanticDiffElementRef::unresolved(reference));
@@ -1604,7 +1571,7 @@ fn type_ref(element: &KirElement) -> Option<SemanticDiffElementRef> {
 
 fn specialization_refs(element: &KirElement) -> Vec<SemanticDiffElementRef> {
     [
-        "specializes",
+        KIR_PROP_SPECIALIZES,
         "specialized_features",
         "subsets",
         "redefines",
@@ -1646,18 +1613,18 @@ fn string_property(properties: &BTreeMap<String, Value>, key: &str) -> Option<St
 fn classified_property(name: &str) -> bool {
     matches!(
         name,
-        "declared_name"
+        KIR_PROP_NAME
             | "name"
             | "qualified_name"
-            | "owner"
+            | KIR_PROP_OWNER
             | "owning_namespace"
             | "owning_type"
             | "owning_definition"
             | "featuring_type"
-            | "type"
+            | KIR_PROP_TYPE
             | "definition"
             | "feature_typings"
-            | "specializes"
+            | KIR_PROP_SPECIALIZES
             | "specialized_features"
             | "subsets"
             | "redefines"

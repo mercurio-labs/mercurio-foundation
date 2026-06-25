@@ -542,13 +542,24 @@ fn relationship_kind_matches(actual: &str, expected: &str) -> bool {
 mod tests {
     use super::*;
     use crate::mutation::{
-        SemanticElementContext, SemanticFactContext, SemanticRelationshipContext,
+        AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextUsage, SemanticElementContext,
+        SemanticFactContext, SemanticRelationshipContext,
     };
     use std::collections::BTreeMap;
+
+    fn test_ai_context_usage() -> AiSemanticContextUsage {
+        AiSemanticContextUsage {
+            authoritative_for_existing_elements: true,
+            prefer_ranked_allowed_affordances: true,
+            cite_rule_diagnostics: true,
+            element_ref_format: "dot_qualified".to_string(),
+        }
+    }
 
     #[test]
     fn evaluates_required_elements_and_relationships() {
         let context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
             focus: Vec::new(),
@@ -583,6 +594,7 @@ mod tests {
             affordances: Vec::new(),
             source_files: Vec::new(),
             truncated: false,
+            usage: test_ai_context_usage(),
         };
         let goal = SemanticGoalSpec {
             policy: GoalPolicy::All,
@@ -609,6 +621,7 @@ mod tests {
     #[test]
     fn evaluates_named_elements_and_relationships() {
         let context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
             focus: Vec::new(),
@@ -643,6 +656,7 @@ mod tests {
             affordances: Vec::new(),
             source_files: Vec::new(),
             truncated: false,
+            usage: test_ai_context_usage(),
         };
         let goal = SemanticGoalSpec {
             policy: GoalPolicy::All,
@@ -676,6 +690,7 @@ mod tests {
     #[test]
     fn default_quality_profile_flags_requirements_without_id_text_and_untyped_part_usages() {
         let context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
             focus: Vec::new(),
@@ -706,6 +721,7 @@ mod tests {
             affordances: Vec::new(),
             source_files: Vec::new(),
             truncated: false,
+            usage: test_ai_context_usage(),
         };
 
         let evaluation = evaluate_semantic_goal(&context, &default_model_quality_profile().goal);
@@ -742,6 +758,7 @@ mod tests {
     #[test]
     fn default_quality_profile_accepts_requirement_id_text_and_typed_part_usage() {
         let context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
             focus: Vec::new(),
@@ -790,6 +807,7 @@ mod tests {
             affordances: Vec::new(),
             source_files: Vec::new(),
             truncated: false,
+            usage: test_ai_context_usage(),
         };
 
         let evaluation = evaluate_semantic_goal(&context, &default_model_quality_profile().goal);

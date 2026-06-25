@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+﻿use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
@@ -1610,7 +1610,7 @@ fn apply_transient_transaction(
     for (operation_index, operation) in operations.iter().enumerate() {
         match operation {
             TransactionOperation::ChangeSet { change_set } => {
-                for action in &change_set.actions {
+                for action in &change_set.operations {
                     apply_transient_action(&mut next, action)
                         .map_err(|error| format!("operation {operation_index}: {error}"))?;
                 }
@@ -2066,8 +2066,7 @@ fn semantic_mutation_label(action: &SemanticMutation) -> &'static str {
         SemanticMutation::AddUsage { .. } => "add_usage",
         SemanticMutation::AddRelationship { .. } => "add_relationship",
         SemanticMutation::AddMetadataAnnotation { .. } => "add_metadata_annotation",
-        SemanticMutation::RemoveDeclaration { .. } => "remove_declaration",
-        SemanticMutation::RemoveUsage { .. } => "remove_usage",
+        SemanticMutation::Remove { .. } => "remove",
         SemanticMutation::RemoveRelationship { .. } => "remove_relationship",
         SemanticMutation::RenameDeclaration { .. } => "rename_declaration",
         SemanticMutation::UpdateUsageType { .. } => "update_usage_type",

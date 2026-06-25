@@ -958,6 +958,15 @@ fn stable_payload_digest(payload: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_ai_context_usage() -> crate::mutation::AiSemanticContextUsage {
+        crate::mutation::AiSemanticContextUsage {
+            authoritative_for_existing_elements: true,
+            prefer_ranked_allowed_affordances: true,
+            cite_rule_diagnostics: true,
+            element_ref_format: "dot_qualified".to_string(),
+        }
+    }
     use crate::ir::KirElement;
 
     fn test_document() -> KirDocument {
@@ -1072,6 +1081,7 @@ mod tests {
         );
 
         let context = crate::mutation::SemanticReasoningContext {
+            schema_version: crate::mutation::AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
             metamodel_version: "test".to_string(),
             workspace_revision: crate::mutation::WorkspaceRevision::unchecked(),
             focus: Vec::new(),
@@ -1120,6 +1130,7 @@ mod tests {
             affordances: Vec::new(),
             source_files: Vec::new(),
             truncated: false,
+            usage: test_ai_context_usage(),
         };
         let goal = design_intent_to_semantic_goal_spec(&intent);
         let goal_evaluation = crate::goal::evaluate_semantic_goal(&context, &goal);

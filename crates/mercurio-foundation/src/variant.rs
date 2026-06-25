@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
 use crate::feasibility::{
     CoreMutationFeasibilityService, FeasibilityStatus, MutationContext, MutationFeasibilityReport,
@@ -232,7 +232,6 @@ mod tests {
         let context = context();
         let proposal = MutationProposal {
             intent: "Explore electric motor alternative".to_string(),
-            affected_elements: vec![ElementRef::new("Vehicle")],
             operations: vec![SemanticMutation::AddDefinition {
                 container: ElementRef::new("Vehicle"),
                 keyword: "part".to_string(),
@@ -270,7 +269,6 @@ mod tests {
         let context = context();
         let proposal = MutationProposal {
             intent: "Explore impossible nested type".to_string(),
-            affected_elements: vec![ElementRef::new("Vehicle.Missing")],
             operations: vec![SemanticMutation::AddDefinition {
                 container: ElementRef::new("Vehicle.Missing"),
                 keyword: "part".to_string(),

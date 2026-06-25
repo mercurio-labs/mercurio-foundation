@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
 use crate::feasibility::{FeasibilityStatus, MutationFeasibilityReport};
 use crate::mutation::MutationProposal;
@@ -188,7 +188,6 @@ mod tests {
     fn proposal() -> MutationProposal {
         MutationProposal {
             intent: "Evaluate proposal".to_string(),
-            affected_elements: Vec::new(),
             operations: Vec::new(),
             evidence: Vec::new(),
             rationale: None,

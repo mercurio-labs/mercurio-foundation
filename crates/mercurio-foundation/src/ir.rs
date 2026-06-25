@@ -1,4 +1,5 @@
-pub use mercurio_kir::{
+﻿pub use mercurio_kir::{
+    KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE,
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
     KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON,
 };

@@ -1,4 +1,4 @@
-//! Kernel intermediate representation (KIR) persistence contract.
+﻿//! Kernel intermediate representation (KIR) persistence contract.
 //!
 //! KIR is the stable interchange boundary between source frontends, model
 //! graph construction, runtime evaluation, and view generation.
@@ -23,6 +23,11 @@ pub use expression::{
 pub const KIR_SCHEMA_VERSION: &str = "0.4";
 pub const KIR_SCHEMA_VERSION_METADATA_KEY: &str = "kir_schema_version";
 pub const SUPPORTED_KIR_SCHEMA_VERSIONS: &[&str] = &[KIR_SCHEMA_VERSION];
+pub const KIR_PROP_MEMBERS: &str = "members";
+pub const KIR_PROP_NAME: &str = "declared_name";
+pub const KIR_PROP_OWNER: &str = "owner";
+pub const KIR_PROP_SPECIALIZES: &str = "specializes";
+pub const KIR_PROP_TYPE: &str = "type";
 pub const REPRESENTATIVE_KIR_JSON: &str = r#"{
   "metadata": {
     "kir_schema_version": "0.4",

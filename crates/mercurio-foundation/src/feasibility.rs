@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+﻿use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -479,8 +479,7 @@ where
                 metadata_type: metadata_type.clone(),
                 properties: properties.clone(),
             }),
-            SemanticMutation::RemoveDeclaration { element }
-            | SemanticMutation::RemoveUsage { element } => Some(Mutation::RemoveDeclaration {
+            SemanticMutation::Remove { element } => Some(Mutation::RemoveDeclaration {
                 qualified_name: element.as_qualified_name(),
             }),
             SemanticMutation::RemoveRelationship { .. } => None,
@@ -650,11 +649,8 @@ where
                     });
                 }
             }
-            SemanticMutation::RemoveDeclaration { element } => {
+            SemanticMutation::Remove { element } => {
                 self.require_existing(project, element, index, "element", blocking_reasons);
-            }
-            SemanticMutation::RemoveUsage { element } => {
-                self.require_existing(project, element, index, "usage", blocking_reasons);
             }
             SemanticMutation::RemoveRelationship { source, target, .. } => {
                 self.require_existing(
@@ -1183,7 +1179,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Add diagnostics to the system model".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![
                 SemanticMutation::AddDefinition {
                     container: ElementRef::new("SystemModel"),
@@ -1251,7 +1246,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Add policy-blocked diagnostics usage".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
                 container: ElementRef::new("SystemModel.System"),
                 keyword: "component".to_string(),
@@ -1281,7 +1275,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Add policy-unknown diagnostics usage".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
                 container: ElementRef::new("SystemModel.System"),
                 keyword: "component".to_string(),
@@ -1311,7 +1304,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Add diagnostics usage before its definition exists".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
                 container: ElementRef::new("SystemModel.System"),
                 keyword: "component".to_string(),
@@ -1345,7 +1337,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Add diagnostics usage before its definition exists".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
                 container: ElementRef::new("SystemModel.System"),
                 keyword: "component".to_string(),
@@ -1390,7 +1381,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Relate the system to its objective".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddRelationship {
                 kind: "relate".to_string(),
                 source: ElementRef::new("SystemModel.System"),
@@ -1449,7 +1439,6 @@ package SystemModel {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Stale proposal".to_string(),
-            affected_elements: Vec::new(),
             operations: vec![SemanticMutation::AddDefinition {
                 container: ElementRef::new("SystemModel"),
                 keyword: "component".to_string(),
@@ -1483,7 +1472,6 @@ package SystemModel {
         let context = MutationContext::from_project(AuthoringProject::default());
         let proposal = MutationProposal {
             intent: "Generate a minimal system model".to_string(),
-            affected_elements: Vec::new(),
             operations: vec![
                 SemanticMutation::AddPackage {
                     target_file: "system.model".to_string(),
@@ -1590,7 +1578,6 @@ package Demo {
         let context = MutationContext::from_project(project);
         let proposal = MutationProposal {
             intent: "Set element score expression".to_string(),
-            affected_elements: vec![ElementRef::new("Demo.element.score")],
             operations: vec![SemanticMutation::SetExpression {
                 element: ElementRef::new("Demo.element.score"),
                 expression: Some(SemanticExpression::Text("0.42".to_string())),
@@ -1635,7 +1622,6 @@ package Demo {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Profile-specific relationship target".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddRelationship {
                 kind: "profile-link".to_string(),
                 source: ElementRef::new("SystemModel.System"),
@@ -1657,7 +1643,6 @@ package Demo {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Profile-specific usage typing".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::AddUsage {
                 container: ElementRef::new("SystemModel.System"),
                 keyword: "component".to_string(),
@@ -1681,7 +1666,6 @@ package Demo {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Invalid attribute write".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.System")],
             operations: vec![SemanticMutation::SetAttribute {
                 element: ElementRef::new("SystemModel.System"),
                 attribute: "owner".to_string(),
@@ -1706,7 +1690,6 @@ package Demo {
         let context = MutationContext::from_project(neutral_model_project());
         let proposal = MutationProposal {
             intent: "Fill objective metadata".to_string(),
-            affected_elements: vec![ElementRef::new("SystemModel.ReliabilityObjective")],
             operations: vec![
                 SemanticMutation::SetAttribute {
                     element: ElementRef::new("SystemModel.ReliabilityObjective"),

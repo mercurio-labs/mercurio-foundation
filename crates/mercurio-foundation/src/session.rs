@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+﻿use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, RwLock};
 
@@ -51,6 +51,7 @@ pub struct ModelFork {
     base: Arc<WorkspaceSnapshot>,
     workspace: Option<ModelWorkspace>,
     overlay: KirOverlay,
+    operation_log: ForkOperationLog,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,7 +147,6 @@ pub struct KirOverlay {
     pub updated_properties: BTreeMap<String, BTreeMap<String, Value>>,
     pub added_members: BTreeMap<String, Vec<String>>,
     pub removed_elements: BTreeSet<String>,
-    operations: Vec<ForkOperation>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +163,29 @@ enum ForkOperation {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+struct ForkOperationLog {
+    operations: Vec<ForkOperation>,
+}
+
+impl ForkOperationLog {
+    fn push(&mut self, operation: ForkOperation) {
+        self.operations.push(operation);
+    }
+
+    fn is_all_renames(&self) -> bool {
+        !self.operations.is_empty()
+            && self.operations.iter().all(|op| matches!(op, ForkOperation::RenameDeclaration { .. }))
+    }
+
+    fn rename_operations(&self) -> impl Iterator<Item = (&ElementRef, &str)> {
+        self.operations.iter().filter_map(|op| match op {
+            ForkOperation::RenameDeclaration { element, new_name } => Some((element, new_name.as_str())),
+            _ => None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommitMode {
@@ -174,6 +197,24 @@ pub enum CommitMode {
 pub struct ForkElement {
     pub id: String,
     pub qualified_name: String,
+}
+
+impl ForkElement {
+    pub fn as_element_ref(&self) -> crate::mutation::ElementRef {
+        crate::mutation::ElementRef::new(self.qualified_name.clone())
+    }
+}
+
+impl From<ForkElement> for crate::mutation::ElementRef {
+    fn from(fork: ForkElement) -> Self {
+        Self::new(fork.qualified_name)
+    }
+}
+
+impl From<&ForkElement> for crate::mutation::ElementRef {
+    fn from(fork: &ForkElement) -> Self {
+        Self::new(fork.qualified_name.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -333,6 +374,7 @@ impl ModelSession {
             base: Arc::clone(&self.snapshot),
             workspace: self.workspace.clone(),
             overlay: KirOverlay::default(),
+            operation_log: ForkOperationLog::default(),
         }
     }
 }
@@ -377,12 +419,13 @@ impl ModelFork {
             properties,
         };
         self.overlay.added_elements.insert(id.clone(), element);
-        self.overlay.operations.push(ForkOperation::AddPackage {
+        let operation = ForkOperation::AddPackage {
             id: id.clone(),
             qualified_name: qualified_name.clone(),
             owner: owner.map(|owner| owner.id.clone()),
             source_file,
-        });
+        };
+        self.operation_log.push(operation);
         Ok(ForkElement { id, qualified_name })
     }
 
@@ -474,9 +517,8 @@ impl ModelFork {
             .entry(element_id)
             .or_default()
             .insert("declared_name".to_string(), Value::String(new_name.clone()));
-        self.overlay
-            .operations
-            .push(ForkOperation::RenameDeclaration { element, new_name });
+        let operation = ForkOperation::RenameDeclaration { element, new_name };
+        self.operation_log.push(operation);
         Ok(())
     }
 
@@ -541,17 +583,11 @@ impl ModelFork {
         };
         let context = MutationContext::from_project(project);
         let operations = self
-            .overlay
-            .operations
-            .iter()
-            .filter_map(|operation| match operation {
-                ForkOperation::RenameDeclaration { element, new_name } => {
-                    Some(SemanticMutation::RenameDeclaration {
-                        element: element.clone(),
-                        new_name: new_name.clone(),
-                    })
-                }
-                _ => None,
+            .operation_log
+            .rename_operations()
+            .map(|(element, new_name)| SemanticMutation::RenameDeclaration {
+                element: element.clone(),
+                new_name: new_name.to_string(),
             })
             .collect::<Vec<_>>();
         let proposal = MutationProposal {
@@ -559,13 +595,6 @@ impl ModelFork {
                 .label
                 .clone()
                 .unwrap_or_else(|| "Apply source-preserving session fork".to_string()),
-            affected_elements: operations
-                .iter()
-                .filter_map(|operation| match operation {
-                    SemanticMutation::RenameDeclaration { element, .. } => Some(element.clone()),
-                    _ => None,
-                })
-                .collect(),
             operations,
             evidence: vec![MutationEvidence {
                 element: None,
@@ -658,13 +687,8 @@ impl ModelFork {
             && self.overlay.added_elements.is_empty()
             && self.overlay.added_members.is_empty()
             && self.overlay.removed_elements.is_empty()
-            && !self.overlay.operations.is_empty()
-            && self
-                .overlay
-                .operations
-                .iter()
-                .all(|operation| matches!(operation, ForkOperation::RenameDeclaration { .. }))
-            && self.overlay.operations.len() <= GENERATED_FILE_THRESHOLD
+            && self.operation_log.is_all_renames()
+            && self.operation_log.operations.len() <= GENERATED_FILE_THRESHOLD
     }
 
     fn render_generated_companion_files(&self) -> Result<BTreeMap<String, String>, SessionError> {
@@ -806,7 +830,6 @@ impl KirOverlay {
             && self.updated_properties.is_empty()
             && self.added_members.is_empty()
             && self.removed_elements.is_empty()
-            && self.operations.is_empty()
     }
 
     fn added_elements_with_member_patches(&self) -> Vec<KirElement> {

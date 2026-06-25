@@ -443,14 +443,24 @@ mod tests {
     use serde_json::Value;
 
     use crate::mutation::{
-        SemanticElementContext, SemanticFactContext, SemanticMutationCapabilityContext,
-        SemanticReasoningContext, SemanticRelationshipContext, WorkspaceRevision,
+        AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextUsage, SemanticElementContext,
+        SemanticFactContext, SemanticMutationCapabilityContext, SemanticReasoningContext,
+        SemanticRelationshipContext, WorkspaceRevision,
     };
     use crate::semantic_profile::{
         AttributePolicyAnswer, SemanticCapabilityProfile, TableSemanticCapabilityOracle,
     };
 
     use super::*;
+
+    fn test_ai_context_usage() -> AiSemanticContextUsage {
+        AiSemanticContextUsage {
+            authoritative_for_existing_elements: true,
+            prefer_ranked_allowed_affordances: true,
+            cite_rule_diagnostics: true,
+            element_ref_format: "dot_qualified".to_string(),
+        }
+    }
 
     #[test]
     fn next_actions_attach_legality_reports_to_candidates() {
@@ -653,6 +663,7 @@ mod tests {
             },
         );
         let mut context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
             metamodel_version: "test".to_string(),
             workspace_revision: WorkspaceRevision::unchecked(),
             focus: vec![ElementRef::new("vehicle")],
@@ -671,6 +682,7 @@ mod tests {
             affordances: Vec::new(),
             source_files: Vec::new(),
             truncated: false,
+            usage: test_ai_context_usage(),
         };
 
         enrich_semantic_reasoning_context_with_next_action_affordances(&mut context, 8, &service);

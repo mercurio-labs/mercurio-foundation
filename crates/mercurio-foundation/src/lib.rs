@@ -1,4 +1,4 @@
-//! Curated facade for Mercurio foundation APIs.
+﻿//! Curated facade for Mercurio foundation APIs.
 //!
 //! This crate is the primary integration surface for tools that need to load
 //! KIR, build model graphs, run semantic/runtime queries, produce view DTOs,
@@ -234,6 +234,7 @@ pub use identity::{
     workspace_revision_for_kir_document,
 };
 pub use ir::{
+    KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE,
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
     KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON, load_model_stack,
     load_model_stack_with_registry,
@@ -279,7 +280,7 @@ pub use mpack::{
     MpackValidationError, validate_mpack_manifest,
 };
 pub use mutation::{
-    AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextSnapshot, AiSemanticContextUsage,
+    AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextUsage,
     ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
     MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
     RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef,
