@@ -408,16 +408,10 @@ pub struct SemanticArtifact {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SemanticDiagnostic {
-    pub code: String,
-    pub severity: SemanticDiagnosticSeverity,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub element: Option<SemanticElementRef>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub source_spans: Vec<SourceSpanRef>,
-}
+/// A capability/analysis diagnostic. Alias of the canonical
+/// [`mercurio_kir::Diagnostic`]; element references live in `subjects` and
+/// locations in `source_spans`.
+pub use mercurio_kir::Diagnostic as SemanticDiagnostic;
 
 /// Severity for a [`SemanticDiagnostic`]. Alias of the canonical
 /// [`mercurio_kir::Severity`].
