@@ -7,10 +7,7 @@ use serde_json::{Value, json};
 use crate::assessment::{
     AssessmentAssertion, AssessmentExpectation, AssessmentQuery, AssessmentSpec,
 };
-use crate::capability::{
-    SemanticArtifact, SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticElementRef,
-    SemanticWorkspaceSnapshot,
-};
+use crate::capability::{SemanticArtifact, SemanticElementRef, SemanticWorkspaceSnapshot};
 use crate::datalog::{Atom, Term};
 use crate::goal::{GoalPolicy, SemanticGoalCheck, SemanticGoalSpec};
 use crate::graph::{Element, Graph, GraphError};
@@ -292,16 +289,9 @@ pub enum CognitiveConfidence {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CognitiveDiagnostic {
-    pub code: String,
-    pub severity: CognitiveDiagnosticSeverity,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub element: Option<SemanticElementRef>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub source_spans: Vec<SourceSpanRef>,
-}
+/// A cognitive-provider diagnostic. Alias of the canonical
+/// [`mercurio_kir::Diagnostic`] — the same type as [`SemanticDiagnostic`].
+pub use mercurio_kir::Diagnostic as CognitiveDiagnostic;
 
 /// Severity for a [`CognitiveDiagnostic`]. Alias of the canonical
 /// [`mercurio_kir::Severity`].
@@ -357,22 +347,6 @@ impl std::error::Error for CognitiveError {}
 impl From<GraphError> for CognitiveError {
     fn from(value: GraphError) -> Self {
         Self::ContextBuild(value.to_string())
-    }
-}
-
-impl From<SemanticDiagnostic> for CognitiveDiagnostic {
-    fn from(value: SemanticDiagnostic) -> Self {
-        Self {
-            code: value.code,
-            severity: match value.severity {
-                SemanticDiagnosticSeverity::Info => CognitiveDiagnosticSeverity::Info,
-                SemanticDiagnosticSeverity::Warning => CognitiveDiagnosticSeverity::Warning,
-                SemanticDiagnosticSeverity::Error => CognitiveDiagnosticSeverity::Error,
-            },
-            message: value.message,
-            element: value.element,
-            source_spans: value.source_spans,
-        }
     }
 }
 
