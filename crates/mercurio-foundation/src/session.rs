@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::authoring::AuthoringProject;
-use crate::capability::{CapabilityRunReport, SemanticArtifact, SemanticDiagnostic};
+use crate::capability::{
+    CapabilityRunReport, SemanticArtifact, SemanticDiagnostic, SemanticWorkspaceSnapshot,
+};
 use crate::feasibility::{
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
     MutationContext, MutationFeasibilityService,
@@ -318,6 +320,14 @@ impl WorkspaceSnapshot {
         )
     }
 
+    pub fn semantic_workspace_snapshot(
+        &self,
+    ) -> Result<SemanticWorkspaceSnapshot, ModelStateError> {
+        Ok(SemanticWorkspaceSnapshot::from_model_revision(
+            &self.model_revision()?,
+        ))
+    }
+
     fn model_build_record(&self) -> ModelBuildRecord {
         let Some(project) = &self.source_project else {
             return ModelBuildRecord::new(ModelRevisionProducer::WorkspaceSnapshot);
@@ -359,6 +369,12 @@ impl ModelWorkspace {
         ))
     }
 
+    pub fn semantic_workspace_snapshot(
+        &self,
+    ) -> Result<SemanticWorkspaceSnapshot, ModelStateError> {
+        self.current_snapshot().semantic_workspace_snapshot()
+    }
+
     fn publish_snapshot(&self, snapshot: WorkspaceSnapshot) {
         *self.current.write().expect("workspace lock poisoned") = Arc::new(snapshot);
     }
@@ -371,6 +387,12 @@ impl ModelSession {
 
     pub fn model_revision(&self) -> Result<ModelRevision, ModelStateError> {
         self.snapshot.model_revision()
+    }
+
+    pub fn semantic_workspace_snapshot(
+        &self,
+    ) -> Result<SemanticWorkspaceSnapshot, ModelStateError> {
+        self.snapshot.semantic_workspace_snapshot()
     }
 
     pub fn fork(&self, label: impl Into<String>) -> ModelFork {
@@ -1025,6 +1047,21 @@ mod tests {
 
         assert!(Arc::ptr_eq(&session.snapshot().kir, &fork.base.kir));
         assert_eq!(fork.base_revision(), &snapshot.revision);
+    }
+
+    #[test]
+    fn session_exposes_canonical_semantic_workspace_snapshot() {
+        let snapshot = Arc::new(WorkspaceSnapshot::new(empty_document()).unwrap());
+        let session = snapshot.session();
+
+        let semantic_snapshot = session.semantic_workspace_snapshot().unwrap();
+
+        assert_eq!(semantic_snapshot.revision, snapshot.revision);
+        assert_eq!(*semantic_snapshot.kir, *snapshot.kir);
+        assert_eq!(
+            semantic_snapshot.graph.elements().len(),
+            snapshot.kir.elements.len()
+        );
     }
 
     #[test]
