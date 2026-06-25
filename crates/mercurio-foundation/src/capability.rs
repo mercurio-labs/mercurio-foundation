@@ -300,7 +300,7 @@ pub struct SemanticInsight {
     pub limitations: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticElementRef {
     pub element_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,7 +308,83 @@ pub struct SemanticElementRef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_anchor: Option<SemanticAnchor>,
+}
+
+impl SemanticElementRef {
+    pub fn new(element_id: impl Into<String>) -> Self {
+        Self {
+            element_id: element_id.into(),
+            qualified_name: None,
+            label: None,
+            kind: None,
+            semantic_anchor: None,
+        }
+    }
+
+    pub fn unresolved(value: impl Into<String>) -> Self {
+        let value = value.into();
+        Self::new(value.clone()).with_qualified_name(value)
+    }
+
+    pub fn from_element(element: &KirElement) -> Self {
+        Self::new(element.id.clone())
+            .with_qualified_name_optional(string_property_from_json(
+                &element.properties,
+                "qualified_name",
+            ))
+            .with_label_optional(kir_element_label(element))
+            .with_kind(element.kind.clone())
+    }
+
+    pub fn from_graph_element(element: &crate::graph::Element) -> Self {
+        Self::new(element.element_id.clone())
+            .with_qualified_name_optional(string_property(element, "qualified_name"))
+            .with_label_optional(graph_element_label(element))
+            .with_kind(element.kind.to_string())
+    }
+
+    pub fn with_qualified_name(mut self, qualified_name: impl Into<String>) -> Self {
+        self.qualified_name = Some(qualified_name.into());
+        self
+    }
+
+    pub fn with_qualified_name_optional(mut self, qualified_name: Option<String>) -> Self {
+        self.qualified_name = qualified_name;
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_label_optional(mut self, label: Option<String>) -> Self {
+        self.label = label;
+        self
+    }
+
+    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = Some(kind.into());
+        self
+    }
+
+    pub fn with_kind_optional(mut self, kind: Option<String>) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn with_anchor(mut self, anchor: SemanticAnchor) -> Self {
+        self.semantic_anchor = Some(anchor);
+        self
+    }
+
+    pub fn with_anchor_optional(mut self, anchor: Option<SemanticAnchor>) -> Self {
+        self.semantic_anchor = anchor;
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -647,12 +723,7 @@ impl SemanticWorkspaceSnapshot {
                 reference.semantic_anchor = self.anchor_for_element(element_id).ok().flatten();
                 reference
             })
-            .unwrap_or_else(|| SemanticElementRef {
-                element_id: element_id.to_string(),
-                qualified_name: None,
-                label: None,
-                semantic_anchor: None,
-            })
+            .unwrap_or_else(|| SemanticElementRef::new(element_id))
     }
 
     pub fn source_spans(&self, element_id: &str) -> Vec<SourceSpanRef> {
@@ -1242,11 +1313,8 @@ impl SemanticCapability for GenericAnalysisOpportunityCapability {
                     .elements
                     .first()
                     .map(|element| workspace.element_ref(&element.element_id))
-                    .unwrap_or_else(|| SemanticElementRef {
-                        element_id: "workspace".to_string(),
-                        qualified_name: None,
-                        label: Some("workspace".to_string()),
-                        semantic_anchor: None,
+                    .unwrap_or_else(|| {
+                        SemanticElementRef::new("workspace").with_label("workspace")
                     });
                 SemanticInsight {
                     id: format!("{}.{}", request.run_id, opportunity.id),
@@ -1703,12 +1771,7 @@ fn inspect_workspace_summary(
     let insight = SemanticInsight {
         id: format!("insight.{run_id}.inspection.workspace"),
         kind: InsightKind::TraceCompleteness,
-        subject: SemanticElementRef {
-            element_id: "workspace".to_string(),
-            qualified_name: None,
-            label: Some("Workspace".to_string()),
-            semantic_anchor: None,
-        },
+        subject: SemanticElementRef::new("workspace").with_label("Workspace"),
         claim: format!(
             "Workspace inspection found {scoped_count} elements in analysis scope `{}` from {authored_count} authored elements, {library_count} library elements, and {metamodel_count} metamodel elements.",
             analysis_scope.as_str()
@@ -1827,12 +1890,7 @@ fn inspect_query(
         insights.push(SemanticInsight {
             id: format!("insight.{run_id}.inspection.no_match"),
             kind: InsightKind::MissingEvidence,
-            subject: SemanticElementRef {
-                element_id: "workspace".to_string(),
-                qualified_name: None,
-                label: Some("Workspace".to_string()),
-                semantic_anchor: None,
-            },
+            subject: SemanticElementRef::new("workspace").with_label("Workspace"),
             claim: format!("Inspection query `{query}` matched no compiled KIR elements."),
             polarity: InsightPolarity::Neutral,
             severity: InsightSeverity::Info,
@@ -2108,20 +2166,7 @@ fn normalize_inspection_name(value: &str) -> String {
 }
 
 fn element_ref(element: &crate::graph::Element) -> SemanticElementRef {
-    SemanticElementRef {
-        element_id: element.element_id.clone(),
-        qualified_name: string_property(element, "qualified_name"),
-        label: string_property(element, "declared_name")
-            .or_else(|| string_property(element, "name"))
-            .or_else(|| {
-                element
-                    .element_id
-                    .rsplit(['.', ':', '/'])
-                    .find(|part| !part.is_empty())
-                    .map(ToOwned::to_owned)
-            }),
-        semantic_anchor: None,
-    }
+    SemanticElementRef::from_graph_element(element)
 }
 
 fn source_span_for_element(element: &crate::graph::Element) -> Option<SourceSpanRef> {
@@ -2170,6 +2215,44 @@ fn string_property(element: &crate::graph::Element, key: &str) -> Option<String>
                 .get("metadata")
                 .and_then(|metadata| metadata.get(key))
                 .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn string_property_from_json(properties: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+    properties
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            properties
+                .get("metadata")
+                .and_then(|metadata| metadata.get(key))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn graph_element_label(element: &crate::graph::Element) -> Option<String> {
+    string_property(element, "declared_name")
+        .or_else(|| string_property(element, "name"))
+        .or_else(|| {
+            element
+                .element_id
+                .rsplit(['.', ':', '/'])
+                .find(|part| !part.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn kir_element_label(element: &KirElement) -> Option<String> {
+    string_property_from_json(&element.properties, "declared_name")
+        .or_else(|| string_property_from_json(&element.properties, "name"))
+        .or_else(|| {
+            element
+                .id
+                .rsplit(['.', ':', '/'])
+                .find(|part| !part.is_empty())
                 .map(ToOwned::to_owned)
         })
 }
@@ -2865,12 +2948,7 @@ mod tests {
         SemanticInsight {
             id: "insight.test".to_string(),
             kind,
-            subject: SemanticElementRef {
-                element_id: "element.test".to_string(),
-                qualified_name: None,
-                label: Some("Test Element".to_string()),
-                semantic_anchor: None,
-            },
+            subject: SemanticElementRef::new("element.test").with_label("Test Element"),
             claim: "test insight".to_string(),
             polarity,
             severity,

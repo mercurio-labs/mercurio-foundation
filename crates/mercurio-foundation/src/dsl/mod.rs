@@ -713,12 +713,8 @@ fn insight_from_result(
     Some(SemanticInsight {
         id: format!("insight.{run_id}.verdict"),
         kind,
-        subject: subject.unwrap_or_else(|| SemanticElementRef {
-            element_id: "workspace".to_string(),
-            qualified_name: None,
-            label: Some("Workspace".to_string()),
-            semantic_anchor: None,
-        }),
+        subject: subject
+            .unwrap_or_else(|| SemanticElementRef::new("workspace").with_label("Workspace")),
         claim: claim.to_string(),
         polarity,
         severity,
@@ -770,27 +766,8 @@ fn first_row_metrics(payload: &Value) -> BTreeMap<String, Value> {
 fn semantic_element_ref(graph: &Graph, element_id: &str) -> SemanticElementRef {
     graph
         .element_by_element_id(element_id)
-        .map(|element| SemanticElementRef {
-            element_id: element.element_id.clone(),
-            qualified_name: element
-                .properties
-                .get("qualified_name")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            label: element
-                .properties
-                .get("declared_name")
-                .or_else(|| element.properties.get("name"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            semantic_anchor: None,
-        })
-        .unwrap_or_else(|| SemanticElementRef {
-            element_id: element_id.to_string(),
-            qualified_name: None,
-            label: None,
-            semantic_anchor: None,
-        })
+        .map(SemanticElementRef::from_graph_element)
+        .unwrap_or_else(|| SemanticElementRef::new(element_id))
 }
 
 fn value_digest(value: &Value) -> String {

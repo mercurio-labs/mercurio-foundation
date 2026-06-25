@@ -837,20 +837,7 @@ fn cognitive_element(element: &Element) -> CognitiveElement {
 }
 
 fn semantic_element_ref(element: &Element) -> SemanticElementRef {
-    SemanticElementRef {
-        element_id: element.element_id.clone(),
-        qualified_name: string_property(element, "qualified_name"),
-        label: string_property(element, "declared_name")
-            .or_else(|| string_property(element, "name"))
-            .or_else(|| {
-                element
-                    .element_id
-                    .rsplit(['.', ':', '/'])
-                    .find(|part| !part.is_empty())
-                    .map(ToOwned::to_owned)
-            }),
-        semantic_anchor: None,
-    }
+    SemanticElementRef::from_graph_element(element)
 }
 
 fn source_span_for_element(element: &Element) -> Option<SourceSpanRef> {
@@ -1004,12 +991,11 @@ mod tests {
 
     #[test]
     fn focused_context_limits_elements_but_keeps_adjacent_relationships() {
-        let focus = CognitiveFocus::elements(vec![SemanticElementRef {
-            element_id: "Vehicle.engine".to_string(),
-            qualified_name: Some("Vehicle.engine".to_string()),
-            label: Some("engine".to_string()),
-            semantic_anchor: None,
-        }]);
+        let focus = CognitiveFocus::elements(vec![
+            SemanticElementRef::new("Vehicle.engine")
+                .with_qualified_name("Vehicle.engine")
+                .with_label("engine"),
+        ]);
         let context = CognitiveContext::from_document(test_document(), focus).unwrap();
 
         assert_eq!(context.elements.len(), 1);
