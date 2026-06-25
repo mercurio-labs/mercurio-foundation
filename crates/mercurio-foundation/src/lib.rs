@@ -337,10 +337,14 @@ pub use runtime::{
     RuntimeProfileTimings,
 };
 pub use semantic_compare::{
-    SemanticCompareError, SemanticCompareOptions, SemanticComparisonReport,
-    SemanticElementMismatch, SemanticSnapshot, SemanticSnapshotAttribute, SemanticSnapshotElement,
-    SemanticSourceSpan, SemanticValueMismatch, SnapshotMode, build_semantic_snapshot,
-    build_semantic_snapshot_with_registry, compare_snapshots, compare_snapshots_with_options,
+    SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION, SemanticCompareError, SemanticCompareOptions,
+    SemanticComparisonReport, SemanticElementMismatch, SemanticModelChange,
+    SemanticModelChangeKind, SemanticModelCompareReport, SemanticModelCompareSection,
+    SemanticModelCompareSummary, SemanticModelPropertyChange, SemanticModelRelationshipChange,
+    SemanticModelRelationshipChangeKind, SemanticSnapshot, SemanticSnapshotAttribute,
+    SemanticSnapshotElement, SemanticSourceSpan, SemanticValueMismatch, SnapshotMode,
+    build_semantic_snapshot, build_semantic_snapshot_with_registry, compare_snapshots,
+    compare_snapshots_with_options, semantic_model_compare_report_from_diff,
 };
 pub use semantic_legality::{
     SEMANTIC_LEGALITY_SCHEMA_VERSION, SemanticLegalityDiagnostic, SemanticLegalityDiagnosticSource,

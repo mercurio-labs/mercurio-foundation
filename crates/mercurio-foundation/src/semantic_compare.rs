@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::graph::{Graph, GraphError, NodeId};
@@ -10,6 +10,12 @@ use crate::metamodel::{
     AttributeRow, ElementAttributeQuery, MetamodelAttributeRegistry, MetatypeQueryOverride,
     collect_specialization_ancestors, query_element_attributes,
 };
+use crate::mutation::{
+    ChangedAttribute, ChangedSpecialization, MovedElement, RelationshipChange, RenamedElement,
+    RetypedUsage, SemanticDiff, SemanticDiffElementRef, WorkspaceRevision,
+};
+
+pub const SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION: &str = "mercurio.semantic_model_compare.v1";
 
 #[derive(Debug, Clone, Copy)]
 pub enum SnapshotMode {
@@ -88,6 +94,91 @@ pub struct SemanticElementMismatch {
 pub struct SemanticValueMismatch<T> {
     pub mercurio: T,
     pub pilot: T,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticModelCompareReport {
+    pub schema_version: String,
+    pub left_revision: WorkspaceRevision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right_revision: Option<WorkspaceRevision>,
+    pub summary: SemanticModelCompareSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<SemanticModelCompareSection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<SemanticModelChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticModelCompareSummary {
+    pub added_count: usize,
+    pub removed_count: usize,
+    pub modified_count: usize,
+    pub unchanged_count: usize,
+    pub added_relationship_count: usize,
+    pub removed_relationship_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticModelCompareSection {
+    pub key: String,
+    pub label: String,
+    pub added_count: usize,
+    pub removed_count: usize,
+    pub modified_count: usize,
+    pub unchanged_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticModelChange {
+    pub kind: SemanticModelChangeKind,
+    pub element: SemanticDiffElementRef,
+    pub section: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<SemanticDiffElementRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<SemanticDiffElementRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub property_changes: Vec<SemanticModelPropertyChange>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationship_changes: Vec<SemanticModelRelationshipChange>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticModelChangeKind {
+    Added,
+    Removed,
+    Modified,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticModelPropertyChange {
+    pub property: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticModelRelationshipChange {
+    pub kind: SemanticModelRelationshipChangeKind,
+    pub relationship: RelationshipChange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticModelRelationshipChangeKind {
+    Added,
+    Removed,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
@@ -219,6 +310,297 @@ pub fn compare_snapshots_with_options(
         pilot_only,
         mismatches,
     })
+}
+
+pub fn semantic_model_compare_report_from_diff(
+    left_revision: WorkspaceRevision,
+    right_revision: Option<WorkspaceRevision>,
+    diff: &SemanticDiff,
+) -> SemanticModelCompareReport {
+    let mut changes = Vec::new();
+    for element in &diff.added_elements {
+        changes.push(element_change(
+            SemanticModelChangeKind::Added,
+            element.clone(),
+            None,
+            Some(element.clone()),
+        ));
+    }
+    for element in &diff.removed_elements {
+        changes.push(element_change(
+            SemanticModelChangeKind::Removed,
+            element.clone(),
+            Some(element.clone()),
+            None,
+        ));
+    }
+
+    let mut modified = BTreeMap::<String, SemanticModelChange>::new();
+    for renamed in &diff.renamed_elements {
+        record_renamed_element(&mut modified, renamed);
+    }
+    for moved in &diff.moved_elements {
+        record_moved_element(&mut modified, moved);
+    }
+    for retyped in &diff.retyped_usages {
+        record_retyped_usage(&mut modified, retyped);
+    }
+    for specialization in &diff.changed_specializations {
+        record_changed_specialization(&mut modified, specialization);
+    }
+    for attribute in &diff.changed_attributes {
+        record_changed_attribute(&mut modified, attribute);
+    }
+    for relationship in &diff.added_relationships {
+        record_relationship_change(
+            &mut modified,
+            SemanticModelRelationshipChangeKind::Added,
+            relationship,
+        );
+    }
+    for relationship in &diff.removed_relationships {
+        record_relationship_change(
+            &mut modified,
+            SemanticModelRelationshipChangeKind::Removed,
+            relationship,
+        );
+    }
+
+    changes.extend(modified.into_values());
+    changes.sort_by(|left, right| {
+        semantic_model_change_kind_rank(left.kind)
+            .cmp(&semantic_model_change_kind_rank(right.kind))
+            .then_with(|| left.section.cmp(&right.section))
+            .then_with(|| {
+                element_display_key(&left.element).cmp(&element_display_key(&right.element))
+            })
+    });
+
+    let summary = SemanticModelCompareSummary {
+        added_count: changes
+            .iter()
+            .filter(|change| change.kind == SemanticModelChangeKind::Added)
+            .count(),
+        removed_count: changes
+            .iter()
+            .filter(|change| change.kind == SemanticModelChangeKind::Removed)
+            .count(),
+        modified_count: changes
+            .iter()
+            .filter(|change| change.kind == SemanticModelChangeKind::Modified)
+            .count(),
+        unchanged_count: 0,
+        added_relationship_count: diff.added_relationships.len(),
+        removed_relationship_count: diff.removed_relationships.len(),
+    };
+    let sections = semantic_model_compare_sections(&changes);
+
+    SemanticModelCompareReport {
+        schema_version: SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION.to_string(),
+        left_revision,
+        right_revision,
+        summary,
+        sections,
+        changes,
+    }
+}
+
+fn element_change(
+    kind: SemanticModelChangeKind,
+    element: SemanticDiffElementRef,
+    left: Option<SemanticDiffElementRef>,
+    right: Option<SemanticDiffElementRef>,
+) -> SemanticModelChange {
+    SemanticModelChange {
+        kind,
+        section: semantic_model_section_key(&element),
+        element,
+        left,
+        right,
+        property_changes: Vec::new(),
+        relationship_changes: Vec::new(),
+    }
+}
+
+fn modified_change<'a>(
+    changes: &'a mut BTreeMap<String, SemanticModelChange>,
+    element: &SemanticDiffElementRef,
+) -> &'a mut SemanticModelChange {
+    changes
+        .entry(element.element_id.clone())
+        .or_insert_with(|| {
+            element_change(
+                SemanticModelChangeKind::Modified,
+                element.clone(),
+                Some(element.clone()),
+                Some(element.clone()),
+            )
+        })
+}
+
+fn record_renamed_element(
+    changes: &mut BTreeMap<String, SemanticModelChange>,
+    renamed: &RenamedElement,
+) {
+    modified_change(changes, &renamed.element)
+        .property_changes
+        .push(SemanticModelPropertyChange {
+            property: "name".to_string(),
+            before: renamed.before_name.clone().map(Value::String),
+            after: renamed.after_name.clone().map(Value::String),
+        });
+}
+
+fn record_moved_element(changes: &mut BTreeMap<String, SemanticModelChange>, moved: &MovedElement) {
+    modified_change(changes, &moved.element)
+        .property_changes
+        .push(SemanticModelPropertyChange {
+            property: "owner".to_string(),
+            before: moved.before_owner.as_ref().map(|value| json!(value)),
+            after: moved.after_owner.as_ref().map(|value| json!(value)),
+        });
+}
+
+fn record_retyped_usage(
+    changes: &mut BTreeMap<String, SemanticModelChange>,
+    retyped: &RetypedUsage,
+) {
+    modified_change(changes, &retyped.element)
+        .property_changes
+        .push(SemanticModelPropertyChange {
+            property: "type".to_string(),
+            before: retyped.before_type.as_ref().map(|value| json!(value)),
+            after: retyped.after_type.as_ref().map(|value| json!(value)),
+        });
+}
+
+fn record_changed_specialization(
+    changes: &mut BTreeMap<String, SemanticModelChange>,
+    specialization: &ChangedSpecialization,
+) {
+    modified_change(changes, &specialization.element)
+        .property_changes
+        .push(SemanticModelPropertyChange {
+            property: "specializes".to_string(),
+            before: Some(json!(specialization.before_specializes)),
+            after: Some(json!(specialization.after_specializes)),
+        });
+}
+
+fn record_changed_attribute(
+    changes: &mut BTreeMap<String, SemanticModelChange>,
+    attribute: &ChangedAttribute,
+) {
+    modified_change(changes, &attribute.element)
+        .property_changes
+        .push(SemanticModelPropertyChange {
+            property: attribute.attribute.clone(),
+            before: attribute.before.clone(),
+            after: attribute.after.clone(),
+        });
+}
+
+fn record_relationship_change(
+    changes: &mut BTreeMap<String, SemanticModelChange>,
+    kind: SemanticModelRelationshipChangeKind,
+    relationship: &RelationshipChange,
+) {
+    modified_change(changes, &relationship.source)
+        .relationship_changes
+        .push(SemanticModelRelationshipChange {
+            kind,
+            relationship: relationship.clone(),
+        });
+}
+
+fn semantic_model_compare_sections(
+    changes: &[SemanticModelChange],
+) -> Vec<SemanticModelCompareSection> {
+    let mut sections = BTreeMap::<String, SemanticModelCompareSection>::new();
+    for change in changes {
+        let section =
+            sections
+                .entry(change.section.clone())
+                .or_insert_with(|| SemanticModelCompareSection {
+                    key: change.section.clone(),
+                    label: semantic_model_section_label(&change.section).to_string(),
+                    added_count: 0,
+                    removed_count: 0,
+                    modified_count: 0,
+                    unchanged_count: 0,
+                });
+        match change.kind {
+            SemanticModelChangeKind::Added => section.added_count += 1,
+            SemanticModelChangeKind::Removed => section.removed_count += 1,
+            SemanticModelChangeKind::Modified => section.modified_count += 1,
+            SemanticModelChangeKind::Unchanged => section.unchanged_count += 1,
+        }
+    }
+    sections.into_values().collect()
+}
+
+fn semantic_model_change_kind_rank(kind: SemanticModelChangeKind) -> u8 {
+    match kind {
+        SemanticModelChangeKind::Added => 0,
+        SemanticModelChangeKind::Removed => 1,
+        SemanticModelChangeKind::Modified => 2,
+        SemanticModelChangeKind::Unchanged => 3,
+    }
+}
+
+fn element_display_key(element: &SemanticDiffElementRef) -> String {
+    element
+        .qualified_name
+        .as_deref()
+        .or(element.label.as_deref())
+        .unwrap_or(element.element_id.as_str())
+        .to_string()
+}
+
+fn semantic_model_section_key(element: &SemanticDiffElementRef) -> String {
+    let kind = element
+        .kind
+        .as_deref()
+        .unwrap_or(element.element_id.as_str())
+        .replace([':', '.', ' ', '_'], "")
+        .to_ascii_lowercase();
+    if kind.contains("package") {
+        "packages"
+    } else if kind.contains("part") {
+        "parts"
+    } else if kind.contains("port") {
+        "ports"
+    } else if kind.contains("requirement") {
+        "requirements"
+    } else if kind.contains("constraint") {
+        "constraints"
+    } else if kind.contains("state") {
+        "states"
+    } else if kind.contains("transition") {
+        "transitions"
+    } else if kind.contains("action") || kind.contains("behavior") {
+        "behaviors"
+    } else if kind.contains("connection") || kind.contains("connector") {
+        "connections"
+    } else {
+        "elements"
+    }
+    .to_string()
+}
+
+fn semantic_model_section_label(key: &str) -> &'static str {
+    match key {
+        "packages" => "Packages",
+        "parts" => "Parts",
+        "ports" => "Ports",
+        "requirements" => "Requirements",
+        "constraints" => "Constraints",
+        "states" => "States",
+        "transitions" => "Transitions",
+        "behaviors" => "Behaviors",
+        "connections" => "Connections",
+        _ => "Elements",
+    }
 }
 
 fn disambiguate_duplicate_match_keys(elements: &mut [SemanticSnapshotElement]) {
@@ -1412,9 +1794,10 @@ mod tests {
         SemanticSnapshotAttribute, SnapshotMode, attribute_is_compare_optional_when_missing,
         attribute_values_are_equal, build_semantic_snapshot, build_semantic_snapshot_with_registry,
         canonical_compare_identifier_for_key, compare_snapshots,
+        semantic_model_compare_report_from_diff,
     };
     use crate::ir::{KirDocument, KirElement};
-    use crate::{Graph, MetamodelAttributeRegistry};
+    use crate::{Graph, MetamodelAttributeRegistry, WorkspaceRevision, diff_kir_documents};
 
     #[test]
     fn builds_and_compares_basic_snapshots() {
@@ -1533,6 +1916,73 @@ mod tests {
         assert_eq!(report.exact_match_count, 0);
         assert_eq!(report.mismatches.len(), 1);
         assert_eq!(report.mismatches[0].match_key, "demo.model:2:Vehicle");
+    }
+
+    #[test]
+    fn semantic_model_compare_report_groups_diff_rows_for_display() {
+        let before = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![KirElement {
+                id: "part.Vehicle".to_string(),
+                kind: "PartDefinition".to_string(),
+                layer: 2,
+                properties: BTreeMap::from([
+                    ("qualified_name".to_string(), json!("Demo.Vehicle")),
+                    ("declared_name".to_string(), json!("Vehicle")),
+                ]),
+            }],
+        };
+        let after = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "part.Vehicle".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("qualified_name".to_string(), json!("Demo.Vehicle")),
+                        ("declared_name".to_string(), json!("Vehicle")),
+                        ("documentation".to_string(), json!("updated")),
+                    ]),
+                },
+                KirElement {
+                    id: "constraint.SafeStart".to_string(),
+                    kind: "ConstraintUsage".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([
+                        ("qualified_name".to_string(), json!("Demo.SafeStart")),
+                        ("declared_name".to_string(), json!("SafeStart")),
+                    ]),
+                },
+            ],
+        };
+
+        let diff = diff_kir_documents(&before, &after);
+        let report = semantic_model_compare_report_from_diff(
+            WorkspaceRevision {
+                fingerprint: "left".to_string(),
+            },
+            Some(WorkspaceRevision {
+                fingerprint: "right".to_string(),
+            }),
+            &diff,
+        );
+
+        assert_eq!(report.schema_version, "mercurio.semantic_model_compare.v1");
+        assert_eq!(report.summary.added_count, 1);
+        assert_eq!(report.summary.modified_count, 1);
+        assert!(
+            report
+                .sections
+                .iter()
+                .any(|section| { section.key == "constraints" && section.added_count == 1 })
+        );
+        assert!(report.changes.iter().any(|change| {
+            change.element.element_id == "part.Vehicle"
+                && change.property_changes.iter().any(|property| {
+                    property.property == "documentation" && property.after == Some(json!("updated"))
+                })
+        }));
     }
 
     #[test]
