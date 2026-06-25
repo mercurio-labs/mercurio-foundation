@@ -207,7 +207,7 @@ pub enum KirError {
     Io(std::io::Error),
     Json(serde_json::Error),
     DuplicateId(String),
-    Validation(Vec<KirValidationDiagnostic>),
+    Validation(Vec<Diagnostic>),
     Frontend(String),
     Model(String),
 }
@@ -227,11 +227,75 @@ pub enum Severity {
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KirValidationDiagnostic {
-    pub code: &'static str,
+/// Family a [`Diagnostic`] belongs to. Replaces the per-crate diagnostic
+/// taxonomy; consumers discriminate on this instead of on the Rust type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticKind {
+    /// KIR/schema or semantic validation finding.
+    Validation,
+    /// Rulepack or legality finding.
+    Legality,
+    /// Runtime, datalog, or simulation execution issue.
+    Execution,
+    /// Capability or analysis readiness issue.
+    Readiness,
+    /// Mutation or transaction feasibility issue.
+    Mutation,
+    /// Source lint finding.
+    Lint,
+}
+
+/// Canonical diagnostic shared across every Mercurio layer.
+///
+/// One type, discriminated by [`DiagnosticKind`], replaces the family of
+/// per-crate `*Diagnostic` structs. `subjects` holds the element ids the
+/// diagnostic is about (zero, one, or many); richer provenance belongs on the
+/// Evidence noun rather than here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub code: String,
+    pub severity: Severity,
+    pub kind: DiagnosticKind,
     pub message: String,
-    pub element_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<String>,
+}
+
+impl Diagnostic {
+    /// Construct a diagnostic of the given family and severity.
+    pub fn new(
+        kind: DiagnosticKind,
+        severity: Severity,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            severity,
+            kind,
+            message: message.into(),
+            subjects: Vec::new(),
+        }
+    }
+
+    /// Construct a KIR validation diagnostic (`Validation` / `Error`),
+    /// optionally about a single element.
+    pub fn validation(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        subject: Option<String>,
+    ) -> Self {
+        let mut diagnostic = Self::new(DiagnosticKind::Validation, Severity::Error, code, message);
+        diagnostic.subjects = subject.into_iter().collect();
+        diagnostic
+    }
+
+    /// Add an element id this diagnostic is about.
+    pub fn with_subject(mut self, subject: impl Into<String>) -> Self {
+        self.subjects.push(subject.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,7 +366,7 @@ impl KirFieldRegistry {
         element_id: &str,
         strict_shapes: bool,
         current_schema_shapes: bool,
-    ) -> Option<KirValidationDiagnostic> {
+    ) -> Option<Diagnostic> {
         let spec = self.field(field)?;
         let valid = match spec.kind {
             KirFieldKind::Scalar => {
@@ -350,13 +414,15 @@ impl KirFieldRegistry {
             }
         };
 
-        (!valid).then(|| KirValidationDiagnostic {
-            code: "kir.element.property.shape",
-            message: format!(
-                "KIR element {element_id} property `{field}` has invalid shape for {:?}",
-                spec.kind
-            ),
-            element_id: Some(element_id.to_string()),
+        (!valid).then(|| {
+            Diagnostic::validation(
+                "kir.element.property.shape",
+                format!(
+                    "KIR element {element_id} property `{field}` has invalid shape for {:?}",
+                    spec.kind
+                ),
+                Some(element_id.to_string()),
+            )
         })
     }
 
@@ -364,15 +430,15 @@ impl KirFieldRegistry {
         &self,
         field: &str,
         element_id: &str,
-    ) -> Option<KirValidationDiagnostic> {
+    ) -> Option<Diagnostic> {
         (self.field(field).is_none() && !field.starts_with("x_")).then(|| {
-            KirValidationDiagnostic {
-                code: "kir.element.property.unknown",
-                message: format!(
+            Diagnostic::validation(
+                "kir.element.property.unknown",
+                format!(
                     "KIR element {element_id} property `{field}` is not registered in the field contract"
                 ),
-                element_id: Some(element_id.to_string()),
-            }
+                Some(element_id.to_string()),
+            )
         })
     }
 }
@@ -674,75 +740,75 @@ impl KirDocument {
         if options.require_schema_version {
             match self.metadata.get(KIR_SCHEMA_VERSION_METADATA_KEY) {
                 Some(Value::String(version)) if SUPPORTED_KIR_SCHEMA_VERSIONS.contains(&version.as_str()) => {}
-                Some(Value::String(version)) => diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.document.schema_version.unsupported",
-                    message: format!(
+                Some(Value::String(version)) => diagnostics.push(Diagnostic::validation(
+                    "kir.document.schema_version.unsupported",
+                    format!(
                         "KIR document schema version `{version}` is not supported; expected one of {}",
                         SUPPORTED_KIR_SCHEMA_VERSIONS.join(", ")
                     ),
-                    element_id: None,
-                }),
-                Some(_) => diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.document.schema_version.invalid",
-                    message: format!(
+                    None,
+                )),
+                Some(_) => diagnostics.push(Diagnostic::validation(
+                    "kir.document.schema_version.invalid",
+                    format!(
                         "KIR document metadata `{KIR_SCHEMA_VERSION_METADATA_KEY}` must be a string"
                     ),
-                    element_id: None,
-                }),
-                None => diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.document.schema_version.missing",
-                    message: format!(
+                    None,
+                )),
+                None => diagnostics.push(Diagnostic::validation(
+                    "kir.document.schema_version.missing",
+                    format!(
                         "KIR document metadata must include `{KIR_SCHEMA_VERSION_METADATA_KEY}`"
                     ),
-                    element_id: None,
-                }),
+                    None,
+                )),
             }
         }
 
         for element in &self.elements {
             let trimmed_id = element.id.trim();
             if trimmed_id.is_empty() {
-                diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.element.id.empty",
-                    message: "KIR element id must not be empty".to_string(),
-                    element_id: None,
-                });
+                diagnostics.push(Diagnostic::validation(
+                    "kir.element.id.empty",
+                    "KIR element id must not be empty".to_string(),
+                    None,
+                ));
             } else if trimmed_id != element.id {
-                diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.element.id.invalid",
-                    message: format!(
+                diagnostics.push(Diagnostic::validation(
+                    "kir.element.id.invalid",
+                    format!(
                         "KIR element id must not contain leading or trailing whitespace: {}",
                         element.id
                     ),
-                    element_id: Some(element.id.clone()),
-                });
+                    Some(element.id.clone()),
+                ));
             }
 
             if element.kind.trim().is_empty() {
-                diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.element.kind.empty",
-                    message: format!("KIR element {} must declare a semantic kind", element.id),
-                    element_id: Some(element.id.clone()),
-                });
+                diagnostics.push(Diagnostic::validation(
+                    "kir.element.kind.empty",
+                    format!("KIR element {} must declare a semantic kind", element.id),
+                    Some(element.id.clone()),
+                ));
             }
 
             if element.layer > 2 {
-                diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.element.layer.unsupported",
-                    message: format!(
+                diagnostics.push(Diagnostic::validation(
+                    "kir.element.layer.unsupported",
+                    format!(
                         "KIR element {} uses unsupported layer {}",
                         element.id, element.layer
                     ),
-                    element_id: Some(element.id.clone()),
-                });
+                    Some(element.id.clone()),
+                ));
             }
 
             if !element.id.is_empty() && !seen.insert(element.id.clone()) {
-                diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.element.id.duplicate",
-                    message: format!("duplicate KIR element id: {}", element.id),
-                    element_id: Some(element.id.clone()),
-                });
+                diagnostics.push(Diagnostic::validation(
+                    "kir.element.id.duplicate",
+                    format!("duplicate KIR element id: {}", element.id),
+                    Some(element.id.clone()),
+                ));
             }
 
             if options.strict_field_shapes
@@ -752,14 +818,14 @@ impl KirDocument {
                     .get("qualified_name")
                     .is_some_and(Value::is_string)
             {
-                diagnostics.push(KirValidationDiagnostic {
-                    code: "kir.element.qualified_name.missing",
-                    message: format!(
+                diagnostics.push(Diagnostic::validation(
+                    "kir.element.qualified_name.missing",
+                    format!(
                         "KIR element {} must include string property `qualified_name`",
                         element.id
                     ),
-                    element_id: Some(element.id.clone()),
-                });
+                    Some(element.id.clone()),
+                ));
             }
 
             for (property, value) in &element.properties {
@@ -873,7 +939,7 @@ fn validate_structured_property(
     property: &str,
     value: &Value,
     element_id: &str,
-    diagnostics: &mut Vec<KirValidationDiagnostic>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     match property {
         "metadata" => validate_metadata(value, element_id, diagnostics),
@@ -886,7 +952,7 @@ fn validate_structured_property(
 fn validate_metadata(
     value: &Value,
     element_id: &str,
-    diagnostics: &mut Vec<KirValidationDiagnostic>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     let Some(metadata) = value.as_object() else {
         return;
@@ -895,33 +961,33 @@ fn validate_metadata(
     if let Some(source_file) = metadata.get("source_file")
         && !(source_file.is_string() || source_file.is_null())
     {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.metadata.source_file.shape",
-            message: format!("KIR element {element_id} metadata `source_file` must be a string"),
-            element_id: Some(element_id.to_string()),
-        });
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.metadata.source_file.shape",
+            format!("KIR element {element_id} metadata `source_file` must be a string"),
+            Some(element_id.to_string()),
+        ));
     }
 
     if let Some(source_language) = metadata.get("source_language")
         && !(source_language.is_string() || source_language.is_null())
     {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.metadata.source_language.shape",
-            message: format!(
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.metadata.source_language.shape",
+            format!(
                 "KIR element {element_id} metadata `source_language` must be a string"
             ),
-            element_id: Some(element_id.to_string()),
-        });
+            Some(element_id.to_string()),
+        ));
     }
 
     if let Some(generated) = metadata.get("generated")
         && !(generated.is_boolean() || generated.is_null())
     {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.metadata.generated.shape",
-            message: format!("KIR element {element_id} metadata `generated` must be a boolean"),
-            element_id: Some(element_id.to_string()),
-        });
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.metadata.generated.shape",
+            format!("KIR element {element_id} metadata `generated` must be a boolean"),
+            Some(element_id.to_string()),
+        ));
     }
 
     if let Some(source_span) = metadata.get("source_span") {
@@ -933,40 +999,40 @@ fn validate_source_span(
     value: &Value,
     element_id: &str,
     field: &'static str,
-    diagnostics: &mut Vec<KirValidationDiagnostic>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     if value.is_null() {
         return;
     }
     let Some(span) = value.as_object() else {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.source_span.shape",
-            message: format!("KIR element {element_id} `{field}` must be an object"),
-            element_id: Some(element_id.to_string()),
-        });
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.source_span.shape",
+            format!("KIR element {element_id} `{field}` must be an object"),
+            Some(element_id.to_string()),
+        ));
         return;
     };
 
     for key in ["start_line", "end_line"] {
         if !span.get(key).is_some_and(Value::is_number) {
-            diagnostics.push(KirValidationDiagnostic {
-                code: "kir.element.source_span.shape",
-                message: format!("KIR element {element_id} `{field}.{key}` must be a number"),
-                element_id: Some(element_id.to_string()),
-            });
+            diagnostics.push(Diagnostic::validation(
+                "kir.element.source_span.shape",
+                format!("KIR element {element_id} `{field}.{key}` must be a number"),
+                Some(element_id.to_string()),
+            ));
         }
     }
     for key in ["start_col", "end_col"] {
         if let Some(value) = span.get(key)
             && !value.is_number()
         {
-            diagnostics.push(KirValidationDiagnostic {
-                code: "kir.element.source_span.shape",
-                message: format!(
+            diagnostics.push(Diagnostic::validation(
+                "kir.element.source_span.shape",
+                format!(
                     "KIR element {element_id} `{field}.{key}` must be a number when present"
                 ),
-                element_id: Some(element_id.to_string()),
-            });
+                Some(element_id.to_string()),
+            ));
         }
     }
 }
@@ -975,35 +1041,35 @@ fn validate_expression_ir(
     value: &Value,
     element_id: &str,
     field: &'static str,
-    diagnostics: &mut Vec<KirValidationDiagnostic>,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     if value.is_null() {
         return;
     }
     if !value.is_object() {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.expression_ir.shape",
-            message: format!("KIR element {element_id} `{field}` must be an object"),
-            element_id: Some(element_id.to_string()),
-        });
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.expression_ir.shape",
+            format!("KIR element {element_id} `{field}` must be an object"),
+            Some(element_id.to_string()),
+        ));
         return;
     }
 
     if !value.get("kind").is_some_and(Value::is_string) {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.expression_ir.kind.missing",
-            message: format!("KIR element {element_id} `{field}.kind` must be a string"),
-            element_id: Some(element_id.to_string()),
-        });
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.expression_ir.kind.missing",
+            format!("KIR element {element_id} `{field}.kind` must be a string"),
+            Some(element_id.to_string()),
+        ));
         return;
     }
 
     if let Err(err) = ExpressionIr::from_value(value) {
-        diagnostics.push(KirValidationDiagnostic {
-            code: "kir.element.expression_ir.shape",
-            message: format!("KIR element {element_id} `{field}` is invalid: {err}"),
-            element_id: Some(element_id.to_string()),
-        });
+        diagnostics.push(Diagnostic::validation(
+            "kir.element.expression_ir.shape",
+            format!("KIR element {element_id} `{field}` is invalid: {err}"),
+            Some(element_id.to_string()),
+        ));
     }
 }
 

@@ -1,4 +1,4 @@
 pub use mercurio_kir::{
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON,
+    KirFieldSpec, Diagnostic, DiagnosticKind, REPRESENTATIVE_KIR_JSON,
 };
