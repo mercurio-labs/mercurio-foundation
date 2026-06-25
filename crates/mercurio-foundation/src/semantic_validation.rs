@@ -73,13 +73,9 @@ fn default_semantic_validation_policy_version() -> u32 {
     SEMANTIC_VALIDATION_POLICY_VERSION
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SemanticValidationSeverity {
-    Info,
-    Warning,
-    Error,
-}
+/// Severity for a [`SemanticValidationDiagnostic`]. Alias of the canonical
+/// [`mercurio_kir::Severity`].
+pub use mercurio_kir::Severity as SemanticValidationSeverity;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticValidationDiagnostic {

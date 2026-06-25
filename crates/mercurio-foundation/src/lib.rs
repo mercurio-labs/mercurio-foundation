@@ -236,7 +236,7 @@ pub use identity::{
 pub use ir::{
     KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE,
     KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON, load_model_stack,
+    KirFieldSpec, KirValidationDiagnostic, REPRESENTATIVE_KIR_JSON, Severity, load_model_stack,
     load_model_stack_with_registry,
 };
 pub use language::{

@@ -303,13 +303,9 @@ pub struct CognitiveDiagnostic {
     pub source_spans: Vec<SourceSpanRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CognitiveDiagnosticSeverity {
-    Info,
-    Warning,
-    Error,
-}
+/// Severity for a [`CognitiveDiagnostic`]. Alias of the canonical
+/// [`mercurio_kir::Severity`].
+pub use mercurio_kir::Severity as CognitiveDiagnosticSeverity;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CognitiveCitation {

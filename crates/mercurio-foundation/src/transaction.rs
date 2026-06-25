@@ -32,13 +32,9 @@ pub enum TransactionStatus {
     Rejected,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TransactionDiagnosticSeverity {
-    Info,
-    Warning,
-    Error,
-}
+/// Severity for a [`TransactionDiagnostic`]. Alias of the canonical
+/// [`mercurio_kir::Severity`].
+pub use mercurio_kir::Severity as TransactionDiagnosticSeverity;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransactionDiagnostic {

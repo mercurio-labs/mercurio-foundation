@@ -418,13 +418,9 @@ pub struct SemanticDiagnostic {
     pub source_spans: Vec<SourceSpanRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SemanticDiagnosticSeverity {
-    Info,
-    Warning,
-    Error,
-}
+/// Severity for a [`SemanticDiagnostic`]. Alias of the canonical
+/// [`mercurio_kir::Severity`].
+pub use mercurio_kir::Severity as SemanticDiagnosticSeverity;
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct EvidenceGraph {

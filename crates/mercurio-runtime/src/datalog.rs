@@ -53,13 +53,9 @@ pub struct DiagnosticRule {
     pub when: Vec<Atom>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum RuleDiagnosticSeverity {
-    Info,
-    Warning,
-    Error,
-}
+/// Severity for a datalog rule diagnostic. Alias of the canonical
+/// [`mercurio_kir::Severity`]; retained as a name for rule-facing call sites.
+pub use mercurio_kir::Severity as RuleDiagnosticSeverity;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

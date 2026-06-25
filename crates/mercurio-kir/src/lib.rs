@@ -212,6 +212,21 @@ pub enum KirError {
     Model(String),
 }
 
+/// Canonical diagnostic severity shared across every Mercurio diagnostic type.
+///
+/// Single-word variants serialize identically under `snake_case`, `lowercase`,
+/// and `camelCase`, so this is wire-compatible with the per-crate severity
+/// enums it replaces. Ordering is `Info < Warning < Error`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KirValidationDiagnostic {
     pub code: &'static str,
