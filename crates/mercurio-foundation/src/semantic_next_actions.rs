@@ -470,6 +470,7 @@ mod tests {
             SemanticMutationCapabilityContext {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
+                variant_capabilities: crate::default_semantic_variant_capability_context(),
                 definition_keywords: vec!["part".to_string()],
                 usage_keywords: Vec::new(),
                 relationship_kinds: vec!["satisfy".to_string()],
@@ -537,6 +538,7 @@ mod tests {
             SemanticMutationCapabilityContext {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
+                variant_capabilities: crate::default_semantic_variant_capability_context(),
                 definition_keywords: vec![
                     "part".to_string(),
                     "requirement".to_string(),
@@ -608,6 +610,7 @@ mod tests {
             SemanticMutationCapabilityContext {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
+                variant_capabilities: crate::default_semantic_variant_capability_context(),
                 definition_keywords: Vec::new(),
                 usage_keywords: Vec::new(),
                 relationship_kinds: Vec::new(),
@@ -640,6 +643,7 @@ mod tests {
             SemanticMutationCapabilityContext {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
+                variant_capabilities: crate::default_semantic_variant_capability_context(),
                 definition_keywords: vec!["part".to_string()],
                 usage_keywords: Vec::new(),
                 relationship_kinds: Vec::new(),

@@ -9,6 +9,9 @@ use crate::authoring::{
 use crate::graph::Graph;
 use crate::ir::{KirDocument, KirElement};
 use crate::semantic_profile::SemanticCapabilityOracle;
+use crate::variant::{
+    SemanticVariantCapabilityContext, default_semantic_variant_capability_context,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ElementRef {
@@ -135,6 +138,8 @@ pub enum SemanticMutation {
 pub struct SemanticMutationCapabilityContext {
     pub metamodel_version: String,
     pub supported_operations: Vec<String>,
+    #[serde(default)]
+    pub variant_capabilities: SemanticVariantCapabilityContext,
     pub definition_keywords: Vec<String>,
     pub usage_keywords: Vec<String>,
     pub relationship_kinds: Vec<String>,
@@ -171,6 +176,56 @@ pub struct SemanticReasoningContext {
     pub affordances: Vec<SemanticAffordanceContext>,
     pub source_files: Vec<String>,
     pub truncated: bool,
+}
+
+pub const AI_SEMANTIC_CONTEXT_SCHEMA_VERSION: &str = "mercurio.ai.semantic_context.v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSemanticContextSnapshot {
+    pub schema_version: String,
+    pub metamodel_version: String,
+    pub workspace_revision: WorkspaceRevision,
+    pub focus: Vec<ElementRef>,
+    pub elements: Vec<SemanticElementContext>,
+    pub relationships: Vec<SemanticRelationshipContext>,
+    pub facts: Vec<SemanticFactContext>,
+    pub affordances: Vec<SemanticAffordanceContext>,
+    pub source_files: Vec<String>,
+    pub truncated: bool,
+    pub usage: AiSemanticContextUsage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSemanticContextUsage {
+    pub authoritative_for_existing_elements: bool,
+    pub prefer_ranked_allowed_affordances: bool,
+    pub cite_rule_diagnostics: bool,
+    pub element_ref_format: String,
+}
+
+impl From<&SemanticReasoningContext> for AiSemanticContextSnapshot {
+    fn from(context: &SemanticReasoningContext) -> Self {
+        Self {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
+            metamodel_version: context.metamodel_version.clone(),
+            workspace_revision: context.workspace_revision.clone(),
+            focus: context.focus.clone(),
+            elements: context.elements.clone(),
+            relationships: context.relationships.clone(),
+            facts: context.facts.clone(),
+            affordances: context.affordances.clone(),
+            source_files: context.source_files.clone(),
+            truncated: context.truncated,
+            usage: AiSemanticContextUsage {
+                authoritative_for_existing_elements: true,
+                prefer_ranked_allowed_affordances: true,
+                cite_rule_diagnostics: true,
+                element_ref_format: "dot_qualified".to_string(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1006,6 +1061,7 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
             "MoveDeclaration".to_string(),
             "SetAttribute".to_string(),
         ],
+        variant_capabilities: default_semantic_variant_capability_context(),
         definition_keywords: Vec::new(),
         usage_keywords: Vec::new(),
         relationship_kinds: Vec::new(),
@@ -1653,6 +1709,16 @@ mod tests {
         assert!(context.definition_keywords.is_empty());
         assert!(context.usage_keywords.is_empty());
         assert!(context.relationship_kinds.is_empty());
+        assert_eq!(
+            context.variant_capabilities.schema_version,
+            crate::SEMANTIC_VARIANT_SCHEMA_VERSION
+        );
+        assert!(
+            context
+                .variant_capabilities
+                .supported_operations
+                .contains(&"PreviewVariant".to_string())
+        );
         assert!(
             context
                 .guidance

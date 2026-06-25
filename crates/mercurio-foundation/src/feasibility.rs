@@ -44,6 +44,8 @@ pub struct MutationFeasibilityReport {
     pub warnings: Vec<FeasibilityIssue>,
     pub required_choices: Vec<RequiredChoice>,
     pub suggested_supporting_changes: Vec<SemanticMutation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repair_hints: Vec<FeasibilityRepairHint>,
     pub resulting_diff: Option<SemanticDiff>,
     pub checked_against: WorkspaceRevision,
 }
@@ -83,6 +85,27 @@ pub struct RequiredChoice {
     pub operation_index: usize,
     pub message: String,
     pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeasibilityRepairHint {
+    pub kind: FeasibilityRepairHintKind,
+    pub operation_index: Option<usize>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_operation: Option<SemanticMutation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeasibilityRepairHintKind {
+    UseExistingElement,
+    AddSupportingDefinition,
+    ReplaceDeprecatedVocabulary,
+    UseAllowedRelationshipTarget,
+    UseAllowedUsageType,
+    RemoveUnsupportedOperation,
+    RefreshWorkspaceRevision,
+    ReviseProposal,
 }
 
 pub trait MutationFeasibilityService {
@@ -342,6 +365,9 @@ where
             None
         };
 
+        let repair_hints =
+            feasibility_repair_hints(&blocking_reasons, &warnings, &suggested_supporting_changes);
+
         MutationFeasibilityReport {
             status,
             normalized_plan,
@@ -349,6 +375,7 @@ where
             warnings,
             required_choices,
             suggested_supporting_changes,
+            repair_hints,
             resulting_diff: Some(resulting_diff),
             checked_against: context.workspace_revision.clone(),
         }
@@ -815,6 +842,92 @@ fn parent_ref(element: &ElementRef) -> Option<ElementRef> {
         .map(|(parent, _)| ElementRef::new(parent.to_string()))
 }
 
+fn feasibility_repair_hints(
+    blocking_reasons: &[FeasibilityIssue],
+    warnings: &[FeasibilityIssue],
+    suggested_supporting_changes: &[SemanticMutation],
+) -> Vec<FeasibilityRepairHint> {
+    let mut hints = Vec::new();
+    for issue in blocking_reasons.iter().chain(warnings.iter()) {
+        let message = issue.message.to_ascii_lowercase();
+        let kind = match issue.kind {
+            FeasibilityIssueKind::StaleWorkspaceRevision => {
+                FeasibilityRepairHintKind::RefreshWorkspaceRevision
+            }
+            FeasibilityIssueKind::ResolutionFailure => {
+                FeasibilityRepairHintKind::UseExistingElement
+            }
+            FeasibilityIssueKind::UnsupportedByAuthoringBackend => {
+                FeasibilityRepairHintKind::RemoveUnsupportedOperation
+            }
+            FeasibilityIssueKind::MetamodelViolation
+                if message.contains("block") && message.contains("part") =>
+            {
+                FeasibilityRepairHintKind::ReplaceDeprecatedVocabulary
+            }
+            FeasibilityIssueKind::MetamodelViolation
+                if message.contains("relationship") || message.contains("target") =>
+            {
+                FeasibilityRepairHintKind::UseAllowedRelationshipTarget
+            }
+            FeasibilityIssueKind::MetamodelViolation
+                if message.contains("typing") || message.contains("typed") =>
+            {
+                FeasibilityRepairHintKind::UseAllowedUsageType
+            }
+            FeasibilityIssueKind::RequiresSupportingChange
+            | FeasibilityIssueKind::RequiresImport => {
+                FeasibilityRepairHintKind::AddSupportingDefinition
+            }
+            _ => FeasibilityRepairHintKind::ReviseProposal,
+        };
+        hints.push(FeasibilityRepairHint {
+            kind,
+            operation_index: issue.operation_index,
+            message: repair_hint_message(kind, issue),
+            suggested_operation: None,
+        });
+    }
+    for operation in suggested_supporting_changes {
+        hints.push(FeasibilityRepairHint {
+            kind: FeasibilityRepairHintKind::AddSupportingDefinition,
+            operation_index: None,
+            message: "Add the supporting semantic definition before applying this proposal"
+                .to_string(),
+            suggested_operation: Some(operation.clone()),
+        });
+    }
+    hints
+}
+
+fn repair_hint_message(kind: FeasibilityRepairHintKind, issue: &FeasibilityIssue) -> String {
+    match kind {
+        FeasibilityRepairHintKind::UseExistingElement => {
+            "Use an existing element reference from the semantic context".to_string()
+        }
+        FeasibilityRepairHintKind::AddSupportingDefinition => {
+            "Add or import the missing supporting definition first".to_string()
+        }
+        FeasibilityRepairHintKind::ReplaceDeprecatedVocabulary => {
+            "Replace deprecated SysML v1 vocabulary with the SysML v2 term `part`".to_string()
+        }
+        FeasibilityRepairHintKind::UseAllowedRelationshipTarget => {
+            "Choose a relationship target allowed by the core semantic legality service".to_string()
+        }
+        FeasibilityRepairHintKind::UseAllowedUsageType => {
+            "Choose a usage type allowed by the core semantic legality service".to_string()
+        }
+        FeasibilityRepairHintKind::RemoveUnsupportedOperation => {
+            "Remove or revise the operation until an authoring write-back path exists".to_string()
+        }
+        FeasibilityRepairHintKind::RefreshWorkspaceRevision => {
+            "Refresh semantic context and regenerate the proposal for the current workspace revision"
+                .to_string()
+        }
+        FeasibilityRepairHintKind::ReviseProposal => issue.message.clone(),
+    }
+}
+
 fn declaration_kind_label(project: &AuthoringProject, element: &ElementRef) -> Option<String> {
     for (_, module) in project.files() {
         if module
@@ -978,6 +1091,46 @@ mod tests {
                 writable: true,
                 reason: None,
             }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct SupportingDefinitionOracle;
+
+    impl SemanticCapabilityOracle for SupportingDefinitionOracle {
+        fn can_contain(&self, container_kind: &str, child_kind: &str) -> CapabilityAnswer {
+            ConservativeSemanticCapabilityOracle.can_contain(container_kind, child_kind)
+        }
+
+        fn can_specialize(&self, source_kind: &str, target_kind: &str) -> CapabilityAnswer {
+            ConservativeSemanticCapabilityOracle.can_specialize(source_kind, target_kind)
+        }
+
+        fn can_type_usage(&self, usage_kind: &str, definition_kind: &str) -> CapabilityAnswer {
+            ConservativeSemanticCapabilityOracle.can_type_usage(usage_kind, definition_kind)
+        }
+
+        fn can_relate(
+            &self,
+            relationship_kind: &str,
+            source_kind: &str,
+            target_kind: &str,
+        ) -> CapabilityAnswer {
+            ConservativeSemanticCapabilityOracle.can_relate(
+                relationship_kind,
+                source_kind,
+                target_kind,
+            )
+        }
+
+        fn attribute_policy(&self, kind: &str, attribute: &str) -> AttributePolicyAnswer {
+            ConservativeSemanticCapabilityOracle.attribute_policy(kind, attribute)
+        }
+
+        fn supporting_definition_keyword_for_usage(&self, usage_kind: &str) -> Option<String> {
+            usage_kind
+                .eq_ignore_ascii_case("component")
+                .then(|| "component".to_string())
         }
     }
 
@@ -1181,6 +1334,55 @@ package SystemModel {
                     .message
                     .contains("missing type: SystemModel.DiagnosticsModule")
         }));
+        assert!(report.repair_hints.iter().any(|hint| {
+            hint.kind == FeasibilityRepairHintKind::UseExistingElement
+                && hint.operation_index == Some(0)
+        }));
+    }
+
+    #[test]
+    fn feasibility_suggests_supporting_definition_repair_hint_when_profile_can_supply_type() {
+        let context = MutationContext::from_project(neutral_model_project());
+        let proposal = MutationProposal {
+            intent: "Add diagnostics usage before its definition exists".to_string(),
+            affected_elements: vec![ElementRef::new("SystemModel.System")],
+            operations: vec![SemanticMutation::AddUsage {
+                container: ElementRef::new("SystemModel.System"),
+                keyword: "component".to_string(),
+                name: "diagnostics".to_string(),
+                ty: Some(ElementRef::new("SystemModel.DiagnosticsModule")),
+                specializes: Vec::new(),
+            }],
+            evidence: Vec::new(),
+            rationale: None,
+            workspace_revision: context.workspace_revision.clone(),
+        };
+
+        let report = CoreMutationFeasibilityService::with_oracle(SupportingDefinitionOracle)
+            .check(&context, &proposal);
+
+        assert_eq!(
+            report.status,
+            FeasibilityStatus::RequiresSupportingChanges,
+            "{report:#?}"
+        );
+        assert!(
+            report
+                .suggested_supporting_changes
+                .iter()
+                .any(|operation| matches!(
+                    operation,
+                    SemanticMutation::AddDefinition { name, .. } if name == "DiagnosticsModule"
+                ))
+        );
+        assert!(report.repair_hints.iter().any(|hint| {
+            hint.kind == FeasibilityRepairHintKind::AddSupportingDefinition
+                && matches!(
+                    &hint.suggested_operation,
+                    Some(SemanticMutation::AddDefinition { name, .. })
+                        if name == "DiagnosticsModule"
+                )
+        }));
     }
 
     #[test]
@@ -1270,6 +1472,10 @@ package SystemModel {
                 .iter()
                 .any(|issue| { issue.kind == FeasibilityIssueKind::StaleWorkspaceRevision })
         );
+        assert!(report.repair_hints.iter().any(|hint| {
+            hint.kind == FeasibilityRepairHintKind::RefreshWorkspaceRevision
+                && hint.operation_index.is_none()
+        }));
     }
 
     #[test]

@@ -9,6 +9,7 @@
 //! modules are hidden from generated documentation so the rustdoc surface
 //! reflects the intended API contract.
 
+pub mod ai_review;
 pub mod analysis;
 #[doc(hidden)]
 pub mod assessment;
@@ -135,6 +136,7 @@ pub mod syntax_compare;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod transaction;
+pub mod variant;
 #[doc(hidden)]
 pub mod views;
 #[doc(hidden)]
@@ -142,6 +144,13 @@ pub mod workspace;
 #[doc(hidden)]
 pub mod workspace_cache;
 
+pub use ai_review::{
+    AI_MUTATION_REVIEW_SCHEMA_VERSION, SemanticMutationFeedbackSummary,
+    SemanticMutationProposalFeedback, SemanticMutationProposalFeedbackDecision,
+    SemanticMutationProposalReview, SemanticMutationProposalReviewInput,
+    SemanticMutationProposalReviewStatus, evaluate_semantic_mutation_proposal_review,
+    semantic_mutation_feedback_summary,
+};
 pub use analysis::{
     AnalysisCaseModel, AnalysisElementRef, AnalysisInventory, AnalysisTechniqueKind,
     AnalysisWorkflow, AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
@@ -203,9 +212,9 @@ pub use expression::{
     UnaryExpressionOp,
 };
 pub use feasibility::{
-    CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityStatus,
-    MutationContext, MutationFeasibilityReport, MutationFeasibilityService, RequiredChoice,
-    workspace_revision_for_project,
+    CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityRepairHint,
+    FeasibilityRepairHintKind, FeasibilityStatus, MutationContext, MutationFeasibilityReport,
+    MutationFeasibilityService, RequiredChoice, workspace_revision_for_project,
 };
 pub use frontend::pilot::{
     PilotDocumentationBlock, PilotExportDocument, PilotExportElement, PilotExportRelationship,
@@ -270,6 +279,7 @@ pub use mpack::{
     MpackValidationError, validate_mpack_manifest,
 };
 pub use mutation::{
+    AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextSnapshot, AiSemanticContextUsage,
     ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
     MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
     RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef,
@@ -373,6 +383,11 @@ pub use transaction::{
     SEMANTIC_CHANGE_SET_SCHEMA, SEMANTIC_TRANSACTION_SCHEMA, SemanticChangeSet,
     SemanticTransaction, SemanticTransactionReport, TransactionArtifact, TransactionDiagnostic,
     TransactionDiagnosticSeverity, TransactionIsolation, TransactionOperation, TransactionStatus,
+};
+pub use variant::{
+    CoreSemanticVariantService, SEMANTIC_VARIANT_SCHEMA_VERSION, SemanticVariantAuthority,
+    SemanticVariantCapabilityContext, SemanticVariantPreview, SemanticVariantRequest,
+    SemanticVariantService, SemanticVariantStatus, default_semantic_variant_capability_context,
 };
 pub use views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
