@@ -30,7 +30,7 @@ pub struct StdlibVersion(String);
 /// existing `identity::SourceSpanRef` path keeps resolving.
 pub use mercurio_kir::SourceSpanRef;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SemanticAnchor {
     #[serde(default = "semantic_anchor_schema")]
     pub schema: String,

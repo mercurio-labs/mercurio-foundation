@@ -300,7 +300,7 @@ pub struct SemanticInsight {
     pub limitations: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SemanticElementRef {
     pub element_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
