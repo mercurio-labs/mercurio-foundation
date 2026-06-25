@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value, json};
 
+use crate::analysis::AnalysisInventory;
 use crate::graph::{Edge, Graph};
 use crate::identity::{
     SemanticAnchor, SemanticAnchorResolution, SourceSpanRef, resolve_semantic_anchor,
@@ -558,6 +559,9 @@ pub struct GenericImpactCapability;
 #[derive(Debug, Clone, Default)]
 pub struct GenericModelInspectionCapability;
 
+#[derive(Debug, Clone, Default)]
+pub struct GenericAnalysisOpportunityCapability;
+
 impl SemanticWorkspaceSnapshot {
     pub fn from_document(kir: KirDocument) -> Result<Self, CapabilityError> {
         Self::from_document_with_profile(kir, None)
@@ -694,6 +698,9 @@ impl CapabilityRegistry {
         registry
             .register(GenericModelInspectionCapability)
             .expect("foundation inspection capability id is unique");
+        registry
+            .register(GenericAnalysisOpportunityCapability)
+            .expect("foundation analysis opportunity capability id is unique");
         registry
     }
 
@@ -1157,6 +1164,146 @@ impl SemanticCapability for GenericModelInspectionCapability {
             evidence,
             diagnostics: Vec::new(),
             limitations: Vec::new(),
+        })
+    }
+}
+
+impl SemanticCapability for GenericAnalysisOpportunityCapability {
+    fn descriptor(&self) -> CapabilityDescriptor {
+        CapabilityDescriptor {
+            id: "foundation.analysis.opportunities".to_string(),
+            name: "Semantic Analysis Opportunity Discovery".to_string(),
+            kind: CapabilityKind::Custom,
+            profile_id: None,
+            target_kinds: Vec::new(),
+            relationship_kinds: Vec::new(),
+            input_artifact_kinds: Vec::new(),
+            produced_insight_kinds: vec![InsightKind::RecommendedNextAction],
+            produced_artifact_kinds: vec!["analysis_opportunity_report".to_string()],
+            deterministic: true,
+            cost_class: CapabilityCostClass::Cheap,
+            maturity: CapabilityMaturity::Prototype,
+        }
+    }
+
+    fn readiness(
+        &self,
+        workspace: &SemanticWorkspaceSnapshot,
+        target: &CapabilityTarget,
+    ) -> CapabilityReadinessReport {
+        if workspace.graph.elements().is_empty() {
+            return readiness(
+                self.descriptor().id,
+                target.clone(),
+                CapabilityReadinessStatus::NotApplicable,
+                "workspace has no semantic elements",
+            );
+        }
+
+        let report = AnalysisInventory::from_graph(&workspace.graph).opportunities();
+        if report.opportunities.is_empty() {
+            readiness(
+                self.descriptor().id,
+                target.clone(),
+                CapabilityReadinessStatus::NotApplicable,
+                "workspace has no analysis cases, constraints, requirements, or executable behavior opportunities",
+            )
+        } else {
+            readiness(
+                self.descriptor().id,
+                target.clone(),
+                CapabilityReadinessStatus::Ready,
+                format!(
+                    "{} semantic analysis opportunity(s) are available",
+                    report.opportunities.len()
+                ),
+            )
+        }
+    }
+
+    fn run(
+        &self,
+        workspace: &SemanticWorkspaceSnapshot,
+        request: CapabilityRunRequest,
+    ) -> Result<CapabilityRunReport, CapabilityError> {
+        let readiness = self.readiness(workspace, &request.target);
+        let report = AnalysisInventory::from_graph(&workspace.graph).opportunities();
+        let payload = serde_json::to_value(&report)
+            .map_err(|err| CapabilityError::Execution(err.to_string()))?;
+        let mut element_refs = Vec::new();
+        let mut seen_elements = BTreeSet::new();
+        for opportunity in &report.opportunities {
+            for element in &opportunity.elements {
+                if seen_elements.insert(element.element_id.clone()) {
+                    element_refs.push(workspace.element_ref(&element.element_id));
+                }
+            }
+        }
+        let insights = report
+            .opportunities
+            .iter()
+            .take(12)
+            .map(|opportunity| {
+                let subject = opportunity
+                    .elements
+                    .first()
+                    .map(|element| workspace.element_ref(&element.element_id))
+                    .unwrap_or_else(|| SemanticElementRef {
+                        element_id: "workspace".to_string(),
+                        qualified_name: None,
+                        label: Some("workspace".to_string()),
+                        semantic_anchor: None,
+                    });
+                SemanticInsight {
+                    id: format!("{}.{}", request.run_id, opportunity.id),
+                    kind: InsightKind::RecommendedNextAction,
+                    subject,
+                    claim: format!("{}: {}", opportunity.label, opportunity.description),
+                    polarity: InsightPolarity::Supports,
+                    severity: InsightSeverity::Info,
+                    confidence: InsightConfidence::High,
+                    scope: InsightScope::Workspace,
+                    evidence_ids: Vec::new(),
+                    source_spans: Vec::new(),
+                    metrics: BTreeMap::from([(
+                        "runnable".to_string(),
+                        Value::Bool(opportunity.runnable),
+                    )]),
+                    assumptions: Vec::new(),
+                    limitations: Vec::new(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let artifact = SemanticArtifact {
+            id: format!("artifact.{}.analysis_opportunities", request.run_id),
+            kind: "analysis_opportunity_report".to_string(),
+            schema: "mercurio.capability.analysis_opportunities.v1".to_string(),
+            digest: value_digest(&payload),
+            element_refs,
+            payload,
+        };
+
+        Ok(CapabilityRunReport {
+            run_id: request.run_id,
+            capability_id: request.capability_id,
+            status: match readiness.status {
+                CapabilityReadinessStatus::NotApplicable => CapabilityRunStatus::NotApplicable,
+                CapabilityReadinessStatus::Blocked | CapabilityReadinessStatus::Error => {
+                    CapabilityRunStatus::Error
+                }
+                _ if report.opportunities.is_empty() => CapabilityRunStatus::Inconclusive,
+                _ => CapabilityRunStatus::Passed,
+            },
+            target: request.target,
+            insights,
+            artifacts: vec![artifact],
+            evidence: EvidenceGraph::default(),
+            diagnostics: Vec::new(),
+            limitations: if readiness.status == CapabilityReadinessStatus::Ready {
+                Vec::new()
+            } else {
+                vec![readiness.message]
+            },
         })
     }
 }

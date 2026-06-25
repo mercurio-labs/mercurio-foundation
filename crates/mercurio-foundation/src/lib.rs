@@ -1,4 +1,4 @@
-﻿//! Curated facade for Mercurio foundation APIs.
+//! Curated facade for Mercurio foundation APIs.
 //!
 //! This crate is the primary integration surface for tools that need to load
 //! KIR, build model graphs, run semantic/runtime queries, produce view DTOs,
@@ -152,8 +152,9 @@ pub use ai_review::{
     semantic_mutation_feedback_summary,
 };
 pub use analysis::{
-    AnalysisCaseModel, AnalysisElementRef, AnalysisInventory, AnalysisTechniqueKind,
-    AnalysisWorkflow, AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
+    AnalysisCaseModel, AnalysisElementRef, AnalysisInventory, AnalysisOpportunity,
+    AnalysisOpportunityKind, AnalysisOpportunityReport, AnalysisTechniqueKind, AnalysisWorkflow,
+    AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
 };
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
@@ -234,10 +235,10 @@ pub use identity::{
     workspace_revision_for_kir_document,
 };
 pub use ir::{
-    KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE,
-    KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, Diagnostic, DiagnosticKind, REPRESENTATIVE_KIR_JSON, Severity, load_model_stack,
-    load_model_stack_with_registry,
+    Diagnostic, DiagnosticKind, KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER,
+    KIR_PROP_SPECIALIZES, KIR_PROP_TYPE, KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError,
+    KirFieldKind, KirFieldRegistry, KirFieldSpec, REPRESENTATIVE_KIR_JSON, Severity,
+    load_model_stack, load_model_stack_with_registry,
 };
 pub use language::{
     BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
@@ -280,11 +281,11 @@ pub use mpack::{
     MpackValidationError, validate_mpack_manifest,
 };
 pub use mutation::{
-    AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextUsage,
-    ChangedAttribute, ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult,
-    MutationEvidence, MutationPlan, MutationProposal, RelationshipChange, RenamedElement,
-    RetypedUsage, SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef,
-    SemanticElementContext, SemanticExpression, SemanticFactContext, SemanticMutation,
+    AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextUsage, ChangedAttribute,
+    ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult, MutationEvidence,
+    MutationPlan, MutationProposal, RelationshipChange, RenamedElement, RetypedUsage,
+    SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef, SemanticElementContext,
+    SemanticElementKind, SemanticExpression, SemanticFactContext, SemanticMutation,
     SemanticMutationCapabilityContext, SemanticReasoningContext, SemanticRelationshipContext,
     SemanticRelationshipTargetRuleContext, SemanticUsageTypingRuleContext, WorkspaceRevision,
     default_semantic_mutation_capability_context, diff_kir_documents,
@@ -354,18 +355,19 @@ pub use semantic_next_actions::{
 pub use semantic_profile::{
     AttributePolicyAnswer, AttributePolicyKey, CapabilityAnswer, CapabilityPair,
     ConservativeSemanticCapabilityOracle, RelationshipCapability, SemanticCapabilityOracle,
-    SemanticCapabilityProfile, TableSemanticCapabilityOracle, normalize_capability_token,
+    SemanticCapabilityProfile, SemanticElementAuthoring, SemanticElementForm,
+    TableSemanticCapabilityOracle, normalize_capability_token,
 };
 pub use semantic_target::{
     IncludeSubtypes, ResolvedSemanticTarget, SemanticTarget, SemanticTargetError,
     SemanticTargetResolver, TargetLayers,
 };
 pub use semantic_validation::{
-    SEMANTIC_VALIDATION_POLICY_VERSION, SemanticValidationMode,
-    SemanticValidationPolicy, SemanticValidationReport, SemanticValidationSeverity,
-    validate_kir_semantics, validate_kir_semantics_for_graph,
-    validate_kir_semantics_for_graph_with_policy, validate_kir_semantics_with_context,
-    validate_kir_semantics_with_context_and_policy, validate_kir_semantics_with_policy,
+    SEMANTIC_VALIDATION_POLICY_VERSION, SemanticValidationMode, SemanticValidationPolicy,
+    SemanticValidationReport, SemanticValidationSeverity, validate_kir_semantics,
+    validate_kir_semantics_for_graph, validate_kir_semantics_for_graph_with_policy,
+    validate_kir_semantics_with_context, validate_kir_semantics_with_context_and_policy,
+    validate_kir_semantics_with_policy,
 };
 pub use session::{
     CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,

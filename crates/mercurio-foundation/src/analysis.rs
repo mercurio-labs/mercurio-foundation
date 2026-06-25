@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::graph::{Element, Graph};
 
@@ -110,6 +110,45 @@ pub struct AnalysisInventory {
     pub views: Vec<AnalysisElementRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub concerns: Vec<AnalysisElementRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub simulations: Vec<AnalysisElementRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisOpportunityKind {
+    AnalysisCase,
+    ConstraintEvaluation,
+    RequirementEvaluation,
+    Simulation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalysisOpportunity {
+    pub id: String,
+    pub kind: AnalysisOpportunityKind,
+    pub label: String,
+    pub description: String,
+    pub runnable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elements: Vec<AnalysisElementRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub techniques: Vec<AnalysisTechniqueKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub metadata: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalysisOpportunityReport {
+    pub schema: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opportunities: Vec<AnalysisOpportunity>,
 }
 
 impl AnalysisInventory {
@@ -124,6 +163,7 @@ impl AnalysisInventory {
         let verification_cases = collect_by_kind(graph, is_verification_case_kind);
         let views = collect_by_kind(graph, is_view_kind);
         let concerns = collect_by_kind(graph, is_concern_or_viewpoint_kind);
+        let simulations = collect_by_kind(graph, is_simulation_kind);
 
         let analysis_cases = graph
             .elements()
@@ -151,6 +191,128 @@ impl AnalysisInventory {
             verification_cases,
             views,
             concerns,
+            simulations,
+        }
+    }
+
+    pub fn opportunities(&self) -> AnalysisOpportunityReport {
+        let mut opportunities = Vec::new();
+
+        for case in &self.analysis_cases {
+            opportunities.push(AnalysisOpportunity {
+                id: format!("analysis_case.{}", case.element.element_id),
+                kind: AnalysisOpportunityKind::AnalysisCase,
+                label: format!(
+                    "Run analysis case {}",
+                    case.element
+                        .label
+                        .as_deref()
+                        .unwrap_or(case.element.element_id.as_str())
+                ),
+                description: "Authored analysis case with a semantic execution workflow."
+                    .to_string(),
+                runnable: true,
+                elements: vec![case.element.clone()],
+                techniques: case.techniques.clone(),
+                capability_id: Some("sysml.analysis.case".to_string()),
+                action_id: Some("run_analysis_case".to_string()),
+                route_hint: Some("/api/analysis/cases/run".to_string()),
+                metadata: serde_json::Map::from_iter([
+                    ("caseId".to_string(), json!(case.element.element_id)),
+                    ("workflow".to_string(), json!(case.workflow())),
+                    ("subjectCount".to_string(), json!(case.subjects.len())),
+                    ("constraintCount".to_string(), json!(case.constraints.len())),
+                    (
+                        "requirementCount".to_string(),
+                        json!(case.requirements.len()),
+                    ),
+                    ("simulationCount".to_string(), json!(case.simulations.len())),
+                ]),
+            });
+        }
+
+        if !self.constraint_usages.is_empty() || !self.constraint_definitions.is_empty() {
+            let elements = if self.constraint_usages.is_empty() {
+                self.constraint_definitions.clone()
+            } else {
+                self.constraint_usages.clone()
+            };
+            opportunities.push(AnalysisOpportunity {
+                id: "constraint_evaluation.workspace".to_string(),
+                kind: AnalysisOpportunityKind::ConstraintEvaluation,
+                label: "Evaluate model constraints".to_string(),
+                description: "Constraint definitions or usages are present and can be evaluated against bound model values.".to_string(),
+                runnable: !self.constraint_usages.is_empty(),
+                elements,
+                techniques: vec![AnalysisTechniqueKind::ConstraintEvaluation],
+                capability_id: Some("sysml.constraint.analysis".to_string()),
+                action_id: Some("solve_constraints".to_string()),
+                route_hint: Some("/api/constraints/solve".to_string()),
+                metadata: serde_json::Map::from_iter([
+                    (
+                        "constraintDefinitionCount".to_string(),
+                        json!(self.constraint_definitions.len()),
+                    ),
+                    (
+                        "constraintUsageCount".to_string(),
+                        json!(self.constraint_usages.len()),
+                    ),
+                ]),
+            });
+        }
+
+        let requirement_evaluations = self
+            .requirement_evaluations
+            .iter()
+            .filter(|evaluation| {
+                !evaluation.formal_constraints.is_empty()
+                    || !evaluation.verification_cases.is_empty()
+            })
+            .collect::<Vec<_>>();
+        if !requirement_evaluations.is_empty() {
+            opportunities.push(AnalysisOpportunity {
+                id: "requirement_evaluation.workspace".to_string(),
+                kind: AnalysisOpportunityKind::RequirementEvaluation,
+                label: "Evaluate requirements".to_string(),
+                description: "Requirements have formal constraints or verification cases that can produce satisfaction evidence.".to_string(),
+                runnable: true,
+                elements: requirement_evaluations
+                    .iter()
+                    .map(|evaluation| evaluation.requirement.clone())
+                    .collect(),
+                techniques: vec![AnalysisTechniqueKind::Verification],
+                capability_id: Some("sysml.requirement.analysis".to_string()),
+                action_id: Some("analyze_requirement_coverage".to_string()),
+                route_hint: Some("/api/reasoning/capabilities/sysml.requirement.analysis/run".to_string()),
+                metadata: serde_json::Map::from_iter([(
+                    "requirementCount".to_string(),
+                    json!(requirement_evaluations.len()),
+                )]),
+            });
+        }
+
+        if !self.simulations.is_empty() {
+            opportunities.push(AnalysisOpportunity {
+                id: "simulation.workspace".to_string(),
+                kind: AnalysisOpportunityKind::Simulation,
+                label: "Explore executable behavior".to_string(),
+                description: "State or behavior elements are present and may support dynamic behavior analysis or simulation.".to_string(),
+                runnable: true,
+                elements: self.simulations.clone(),
+                techniques: vec![AnalysisTechniqueKind::Simulation],
+                capability_id: Some("sysml.behavior.dynamic".to_string()),
+                action_id: Some("analyze_state_machine".to_string()),
+                route_hint: Some("/api/reasoning/capabilities/sysml.behavior.dynamic/run".to_string()),
+                metadata: serde_json::Map::from_iter([(
+                    "simulationElementCount".to_string(),
+                    json!(self.simulations.len()),
+                )]),
+            });
+        }
+
+        AnalysisOpportunityReport {
+            schema: "mercurio.analysis.opportunities.v1".to_string(),
+            opportunities,
         }
     }
 }
@@ -660,6 +822,7 @@ mod tests {
         assert_eq!(inventory.verification_cases.len(), 1);
         assert_eq!(inventory.views.len(), 1);
         assert_eq!(inventory.concerns.len(), 1);
+        assert_eq!(inventory.simulations.len(), 1);
 
         let case = &inventory.analysis_cases[0];
         assert_eq!(case.element.element_id, "analysis.StartupSafety");
@@ -733,5 +896,31 @@ mod tests {
                 .techniques
                 .contains(&AnalysisTechniqueKind::Simulation)
         );
+    }
+
+    #[test]
+    fn opportunities_surface_analysis_cases_and_executable_semantics() {
+        let graph = analysis_graph();
+        let inventory = AnalysisInventory::from_graph(&graph);
+        let report = inventory.opportunities();
+
+        assert_eq!(report.schema, "mercurio.analysis.opportunities.v1");
+        assert!(report.opportunities.iter().any(|opportunity| {
+            opportunity.kind == AnalysisOpportunityKind::AnalysisCase
+                && opportunity.action_id.as_deref() == Some("run_analysis_case")
+        }));
+        assert!(report.opportunities.iter().any(|opportunity| {
+            opportunity.kind == AnalysisOpportunityKind::ConstraintEvaluation
+                && opportunity.capability_id.as_deref() == Some("sysml.constraint.analysis")
+        }));
+        assert!(report.opportunities.iter().any(|opportunity| {
+            opportunity.kind == AnalysisOpportunityKind::RequirementEvaluation
+                && opportunity.capability_id.as_deref() == Some("sysml.requirement.analysis")
+        }));
+        assert!(report.opportunities.iter().any(|opportunity| {
+            opportunity.kind == AnalysisOpportunityKind::Simulation
+                && opportunity.capability_id.as_deref() == Some("sysml.behavior.dynamic")
+                && opportunity.elements[0].element_id == "state.StartupSimulation"
+        }));
     }
 }

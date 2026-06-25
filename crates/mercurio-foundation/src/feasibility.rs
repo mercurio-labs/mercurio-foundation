@@ -1,4 +1,4 @@
-﻿use std::collections::BTreeSet;
+use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -11,13 +11,14 @@ use crate::authoring::{
 use crate::datalog::RulePack;
 use crate::mutation::{
     ElementRef, MutationApplicationResult, MutationPlan, MutationProposal, SemanticDiff,
-    SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
+    SemanticElementKind, SemanticMutation, WorkspaceRevision, diff_for_operation, merge_diff,
 };
 use crate::semantic_legality::{
     SemanticLegalityReport, SemanticLegalityService, SemanticLegalityStatus,
 };
 pub use crate::semantic_profile::{
     CapabilityAnswer, ConservativeSemanticCapabilityOracle, SemanticCapabilityOracle,
+    SemanticElementForm,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -151,6 +152,14 @@ where
         }
     }
 
+    pub fn authoring_mutation_for_operation(
+        &self,
+        project: &AuthoringProject,
+        operation: &SemanticMutation,
+    ) -> Option<Mutation> {
+        self.authoring_mutation_for(project, operation)
+    }
+
     pub fn apply_checked_plan(
         &self,
         context: &MutationContext,
@@ -201,6 +210,16 @@ where
             })?;
             changed_files.extend(result.changed_files.iter().cloned());
             changed_declarations.extend(result.changed_declarations.iter().cloned());
+            let (property_files, property_declarations) =
+                apply_add_element_properties(&mut project, operation).map_err(|err| {
+                    FeasibilityIssue {
+                        kind: FeasibilityIssueKind::ValidationFailure,
+                        operation_index: Some(index),
+                        message: err.to_string(),
+                    }
+                })?;
+            changed_files.extend(property_files);
+            changed_declarations.extend(property_declarations);
             merge_diff(
                 &mut semantic_diff,
                 diff_for_operation(operation, Some(&result)),
@@ -255,23 +274,26 @@ where
         let mut project = context.project.clone();
         let mut unsupported_backend = false;
         let mut requires_supporting_changes = false;
+        let mut normalized_operations = Vec::with_capacity(proposal.operations.len());
 
         for (index, operation) in proposal.operations.iter().enumerate() {
+            let operation = self.normalize_operation(operation);
+            normalized_operations.push(operation.clone());
             self.check_references(
                 &project,
-                operation,
+                &operation,
                 index,
                 &mut blocking_reasons,
                 &mut warnings,
                 &mut suggested_supporting_changes,
                 &mut requires_supporting_changes,
             );
-            if operation_requires_supporting_change(&project, operation) {
-                merge_diff(&mut resulting_diff, diff_for_operation(operation, None));
+            if operation_requires_supporting_change(&project, &operation) {
+                merge_diff(&mut resulting_diff, diff_for_operation(&operation, None));
                 continue;
             }
 
-            let result = match operation {
+            let result = match &operation {
                 SemanticMutation::SetAttribute {
                     element,
                     attribute,
@@ -283,14 +305,14 @@ where
                     policy: AttributeWritePolicy::UpsertDirect,
                 }),
                 _ => {
-                    let Some(mutation) = self.authoring_mutation_for(&project, operation) else {
+                    let Some(mutation) = self.authoring_mutation_for(&project, &operation) else {
                         unsupported_backend = true;
                         warnings.push(FeasibilityIssue {
                             kind: FeasibilityIssueKind::UnsupportedByAuthoringBackend,
                             operation_index: Some(index),
                             message: "operation is represented semantically but has no authoring write-back path yet".to_string(),
                         });
-                        merge_diff(&mut resulting_diff, diff_for_operation(operation, None));
+                        merge_diff(&mut resulting_diff, diff_for_operation(&operation, None));
                         continue;
                     };
                     project.apply_mutation(mutation)
@@ -300,9 +322,21 @@ where
             match result {
                 Ok(result) => {
                     changed_files.extend(result.changed_files.iter().cloned());
+                    match apply_add_element_properties(&mut project, &operation) {
+                        Ok((property_files, _)) => {
+                            changed_files.extend(property_files);
+                        }
+                        Err(err) => {
+                            blocking_reasons.push(FeasibilityIssue {
+                                kind: FeasibilityIssueKind::ValidationFailure,
+                                operation_index: Some(index),
+                                message: err.to_string(),
+                            });
+                        }
+                    }
                     merge_diff(
                         &mut resulting_diff,
-                        diff_for_operation(operation, Some(&result)),
+                        diff_for_operation(&operation, Some(&result)),
                     );
                 }
                 Err(err) => {
@@ -357,7 +391,7 @@ where
         ) {
             Some(MutationPlan {
                 proposal_id: proposal_id(proposal),
-                normalized_operations: proposal.operations.clone(),
+                normalized_operations,
                 required_supporting_changes: suggested_supporting_changes.clone(),
                 checked_against: context.workspace_revision.clone(),
             })
@@ -382,10 +416,95 @@ where
     }
 }
 
+fn apply_add_element_properties(
+    project: &mut AuthoringProject,
+    operation: &SemanticMutation,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), crate::authoring::AuthoringError> {
+    let SemanticMutation::AddElement {
+        container,
+        name,
+        properties,
+        ..
+    } = operation
+    else {
+        return Ok((BTreeSet::new(), BTreeSet::new()));
+    };
+    let element = ElementRef::new(format!("{}.{}", container.qualified_name, name));
+    let mut changed_files = BTreeSet::new();
+    let mut changed_declarations = BTreeSet::new();
+    for (attribute, value) in properties
+        .iter()
+        .filter(|(attribute, _)| !is_structural_add_element_property(attribute))
+    {
+        let result = project.apply_semantic_edit(SemanticEdit::SetAttribute {
+            element: element.as_qualified_name(),
+            attribute: attribute.clone(),
+            value: value.clone(),
+            policy: AttributeWritePolicy::UpsertDirect,
+        })?;
+        changed_files.extend(result.changed_files);
+        changed_declarations.extend(result.changed_declarations);
+    }
+    Ok((changed_files, changed_declarations))
+}
+
+fn is_structural_add_element_property(attribute: &str) -> bool {
+    matches!(
+        attribute,
+        "declared_name" | "qualified_name" | "owner" | "type" | "specializes"
+    )
+}
+
 impl<O> CoreMutationFeasibilityService<O>
 where
     O: SemanticCapabilityOracle,
 {
+    fn normalize_operation(&self, operation: &SemanticMutation) -> SemanticMutation {
+        match operation {
+            SemanticMutation::AddDefinition {
+                container,
+                keyword,
+                name,
+                specializes,
+            } => self
+                .legality
+                .semantic_kind_for_definition_keyword(keyword)
+                .map(|metaclass| SemanticMutation::AddElement {
+                    container: container.clone(),
+                    kind: SemanticElementKind::new(metaclass),
+                    name: name.clone(),
+                    ty: None,
+                    specializes: specializes.clone(),
+                    properties: Default::default(),
+                })
+                .unwrap_or_else(|| SemanticMutation::AddDefinition {
+                    container: container.clone(),
+                    keyword: self.legality.normalize_definition_keyword(keyword),
+                    name: name.clone(),
+                    specializes: specializes.clone(),
+                }),
+            SemanticMutation::AddUsage {
+                container,
+                keyword,
+                name,
+                ty,
+                specializes,
+            } => self
+                .legality
+                .semantic_kind_for_usage_keyword(keyword)
+                .map(|metaclass| SemanticMutation::AddElement {
+                    container: container.clone(),
+                    kind: SemanticElementKind::new(metaclass),
+                    name: name.clone(),
+                    ty: ty.clone(),
+                    specializes: specializes.clone(),
+                    properties: Default::default(),
+                })
+                .unwrap_or_else(|| operation.clone()),
+            _ => operation.clone(),
+        }
+    }
+
     fn authoring_mutation_for(
         &self,
         project: &AuthoringProject,
@@ -396,6 +515,37 @@ where
                 target_file: target_file.clone(),
                 package_name: QualifiedName::parse(name),
             }),
+            SemanticMutation::AddElement {
+                container,
+                kind,
+                name,
+                ty,
+                specializes,
+                ..
+            } => {
+                let authoring = self.legality.authoring_for_element_kind(&kind.metaclass)?;
+                match authoring.form {
+                    SemanticElementForm::Definition => Some(Mutation::AddDefinition {
+                        container: container_selector_for(project, container),
+                        keyword: authoring.keyword,
+                        name: name.clone(),
+                        specializes: specializes
+                            .iter()
+                            .map(ElementRef::as_qualified_name)
+                            .collect(),
+                    }),
+                    SemanticElementForm::Usage => Some(Mutation::AddUsage {
+                        container: container_selector_for(project, container),
+                        keyword: authoring.keyword,
+                        name: name.clone(),
+                        ty: ty.as_ref().map(ElementRef::as_qualified_name),
+                        specializes: specializes
+                            .iter()
+                            .map(ElementRef::as_qualified_name)
+                            .collect(),
+                    }),
+                }
+            }
             SemanticMutation::AddDefinition {
                 container,
                 keyword,
@@ -499,6 +649,68 @@ where
     ) {
         match operation {
             SemanticMutation::AddPackage { .. } => {}
+            SemanticMutation::AddElement {
+                container,
+                kind,
+                ty,
+                specializes,
+                ..
+            } => {
+                self.require_existing(project, container, index, "container", blocking_reasons);
+                let container_kind = self
+                    .semantic_declaration_kind_label(project, container)
+                    .unwrap_or_else(|| "container".to_string());
+                let child_kind = kind.metaclass.clone();
+                self.apply_legality_report(
+                    self.legality
+                        .check_containment(&container_kind, &child_kind),
+                    index,
+                    "container capability",
+                    warnings,
+                    blocking_reasons,
+                );
+                if let Some(ty) = ty {
+                    if !exists(project, ty) {
+                        blocking_reasons.push(FeasibilityIssue {
+                            kind: FeasibilityIssueKind::ResolutionFailure,
+                            operation_index: Some(index),
+                            message: format!("missing type: {}", ty.qualified_name),
+                        });
+                    } else {
+                        let definition_kind = self
+                            .semantic_declaration_kind_label(project, ty)
+                            .unwrap_or_else(|| "definition".to_string());
+                        self.apply_legality_report(
+                            self.legality
+                                .check_usage_typing(&child_kind, &definition_kind),
+                            index,
+                            "typing capability",
+                            warnings,
+                            blocking_reasons,
+                        );
+                    }
+                }
+                for target in specializes {
+                    self.require_existing(
+                        project,
+                        target,
+                        index,
+                        "specialization",
+                        blocking_reasons,
+                    );
+                    let target_kind = self
+                        .semantic_declaration_kind_label(project, target)
+                        .unwrap_or_else(|| "specialization".to_string());
+                    self.apply_legality_report(
+                        self.legality
+                            .check_specialization(&child_kind, &target_kind),
+                        index,
+                        "specialization capability",
+                        warnings,
+                        blocking_reasons,
+                    );
+                }
+            }
             SemanticMutation::AddDefinition {
                 container,
                 keyword,
@@ -763,6 +975,26 @@ where
         }
     }
 
+    fn semantic_declaration_kind_label(
+        &self,
+        project: &AuthoringProject,
+        element: &ElementRef,
+    ) -> Option<String> {
+        let label = declaration_kind_label(project, element)?;
+        if label == "package" {
+            return Some("Package".to_string());
+        }
+        if let Some(keyword) = label.strip_suffix(" def") {
+            return self
+                .legality
+                .semantic_kind_for_definition_keyword(keyword)
+                .or(Some(label));
+        }
+        self.legality
+            .semantic_kind_for_usage_keyword(&label)
+            .or(Some(label))
+    }
+
     fn apply_legality_report(
         &self,
         report: SemanticLegalityReport,
@@ -827,7 +1059,8 @@ fn operation_requires_supporting_change(
 ) -> bool {
     matches!(
         operation,
-        SemanticMutation::AddUsage { ty: Some(ty), .. } if !exists(project, ty)
+        SemanticMutation::AddUsage { ty: Some(ty), .. }
+        | SemanticMutation::AddElement { ty: Some(ty), .. } if !exists(project, ty)
     )
 }
 

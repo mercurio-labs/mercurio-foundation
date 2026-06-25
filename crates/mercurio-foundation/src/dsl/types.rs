@@ -1,4 +1,4 @@
-﻿use std::cmp::Ordering;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
@@ -11,7 +11,9 @@ use crate::graph::{Element, Graph, NodeId};
 use crate::identity::workspace_revision_for_kir_document;
 use crate::ir::{KirDocument, KirElement};
 use crate::metamodel::{collect_specialization_ancestors, element_metatype};
-use crate::mutation::{ElementRef, SemanticMutation, WorkspaceRevision, diff_kir_documents};
+use crate::mutation::{
+    ElementRef, SemanticElementKind, SemanticMutation, WorkspaceRevision, diff_kir_documents,
+};
 use crate::transaction::{
     SemanticChangeSet, SemanticTransaction, TransactionArtifact, TransactionOperation,
     TransactionStatus,
@@ -1220,6 +1222,36 @@ impl DslTransactionBuilder {
         self.clone()
     }
 
+    pub fn create_element(&mut self, container: String, metaclass: String, name: String) -> Self {
+        self.pending_actions.push(SemanticMutation::AddElement {
+            container: ElementRef::new(container),
+            kind: SemanticElementKind::new(metaclass),
+            name,
+            ty: None,
+            specializes: Vec::new(),
+            properties: BTreeMap::new(),
+        });
+        self.clone()
+    }
+
+    pub fn create_typed_element(
+        &mut self,
+        container: String,
+        metaclass: String,
+        name: String,
+        ty: String,
+    ) -> Self {
+        self.pending_actions.push(SemanticMutation::AddElement {
+            container: ElementRef::new(container),
+            kind: SemanticElementKind::new(metaclass),
+            name,
+            ty: Some(ElementRef::new(ty)),
+            specializes: Vec::new(),
+            properties: BTreeMap::new(),
+        });
+        self.clone()
+    }
+
     pub fn rename(&mut self, element: String, new_name: String) -> Self {
         self.pending_actions
             .push(SemanticMutation::RenameDeclaration {
@@ -1446,6 +1478,11 @@ pub fn register_types(engine: &mut Engine) {
             "create_definition",
             DslTransactionBuilder::create_definition,
         )
+        .register_fn("create_element", DslTransactionBuilder::create_element)
+        .register_fn(
+            "create_typed_element",
+            DslTransactionBuilder::create_typed_element,
+        )
         .register_fn("rename", DslTransactionBuilder::rename)
         .register_fn("set_attribute", DslTransactionBuilder::set_attribute)
         .register_fn("capability", DslTransactionBuilder::capability)
@@ -1641,6 +1678,22 @@ fn apply_transient_action(
             name,
             specializes,
         } => apply_transient_add_definition(document, container, keyword, name, specializes),
+        SemanticMutation::AddElement {
+            container,
+            kind,
+            name,
+            ty,
+            specializes,
+            properties,
+        } => apply_transient_add_element(
+            document,
+            container,
+            &kind.metaclass,
+            name,
+            ty,
+            specializes,
+            properties,
+        ),
         SemanticMutation::AddUsage {
             container,
             keyword,
@@ -1751,6 +1804,60 @@ fn apply_transient_add_definition(
     document.elements.push(KirElement {
         id: id.clone(),
         kind: definition_kind(keyword),
+        layer: 2,
+        properties,
+    });
+    add_member_reference(document, &container_id, &id)
+}
+
+fn apply_transient_add_element(
+    document: &mut KirDocument,
+    container: &ElementRef,
+    metaclass: &str,
+    name: &str,
+    ty: &Option<ElementRef>,
+    specializes: &[ElementRef],
+    element_properties: &BTreeMap<String, Value>,
+) -> Result<(), String> {
+    let container_id = resolve_element_ref(document, container)?.id.clone();
+    let container_qualified_name =
+        element_qualified_name(resolve_element_ref(document, container)?);
+    let declared_name = normalize_declared_name(name)?;
+    let qualified_name = format!("{container_qualified_name}.{declared_name}");
+    let id = format!(
+        "{}.{}",
+        semantic_element_id_prefix(metaclass),
+        qualified_name
+    );
+    ensure_missing_element(document, &id, &qualified_name)?;
+
+    let mut properties = BTreeMap::from([
+        ("declared_name".to_string(), Value::String(declared_name)),
+        (
+            "qualified_name".to_string(),
+            Value::String(qualified_name.clone()),
+        ),
+        ("owner".to_string(), Value::String(container_id.clone())),
+    ]);
+    if let Some(ty) = ty {
+        properties.insert("type".to_string(), Value::String(ty.qualified_name.clone()));
+    }
+    if !specializes.is_empty() {
+        properties.insert(
+            "specializes".to_string(),
+            Value::Array(
+                specializes
+                    .iter()
+                    .map(|element| Value::String(element.qualified_name.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    properties.extend(element_properties.clone());
+
+    document.elements.push(KirElement {
+        id: id.clone(),
+        kind: metaclass.to_string(),
         layer: 2,
         properties,
     });
@@ -2010,6 +2117,18 @@ fn usage_id_prefix(keyword: &str) -> &'static str {
     }
 }
 
+fn semantic_element_id_prefix(metaclass: &str) -> &'static str {
+    if metaclass.ends_with("Definition") || metaclass == "Classifier" || metaclass == "Type" {
+        "type"
+    } else if metaclass == "Package" {
+        "pkg"
+    } else if metaclass.ends_with("Usage") || metaclass.ends_with("Feature") {
+        "usage"
+    } else {
+        "element"
+    }
+}
+
 fn definition_kind(keyword: &str) -> String {
     match normalized_keyword(keyword).as_str() {
         "part" | "partdef" | "partdefinition" => "PartDefinition".to_string(),
@@ -2062,6 +2181,7 @@ fn pascal_definition_kind(keyword: &str, suffix: &str) -> String {
 fn semantic_mutation_label(action: &SemanticMutation) -> &'static str {
     match action {
         SemanticMutation::AddPackage { .. } => "add_package",
+        SemanticMutation::AddElement { .. } => "add_element",
         SemanticMutation::AddDefinition { .. } => "add_definition",
         SemanticMutation::AddUsage { .. } => "add_usage",
         SemanticMutation::AddRelationship { .. } => "add_relationship",

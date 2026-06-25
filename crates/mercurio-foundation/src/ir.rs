@@ -1,7 +1,7 @@
-﻿pub use mercurio_kir::{
-    KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER, KIR_PROP_SPECIALIZES, KIR_PROP_TYPE,
-    KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, Diagnostic, DiagnosticKind, REPRESENTATIVE_KIR_JSON, Severity,
+pub use mercurio_kir::{
+    Diagnostic, DiagnosticKind, KIR_PROP_MEMBERS, KIR_PROP_NAME, KIR_PROP_OWNER,
+    KIR_PROP_SPECIALIZES, KIR_PROP_TYPE, KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError,
+    KirFieldKind, KirFieldRegistry, KirFieldSpec, REPRESENTATIVE_KIR_JSON, Severity,
 };
 
 use std::path::Path;

@@ -30,8 +30,8 @@ pub use expression::{
 };
 pub use graph::{Edge, Element, ElementProperties, Graph, GraphArtifact, GraphError, NodeId};
 pub use ir::{
-    KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError, KirFieldKind, KirFieldRegistry,
-    KirFieldSpec, Diagnostic, DiagnosticKind, REPRESENTATIVE_KIR_JSON,
+    Diagnostic, DiagnosticKind, KIR_SCHEMA_VERSION, KirDocument, KirElement, KirError,
+    KirFieldKind, KirFieldRegistry, KirFieldSpec, REPRESENTATIVE_KIR_JSON,
 };
 pub use metadata::{
     ElementMetadataView, KirMetadataAnnotation, MetadataView, metadata_annotations,

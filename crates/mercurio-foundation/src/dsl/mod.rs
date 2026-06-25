@@ -1566,6 +1566,29 @@ mod tests {
     }
 
     #[test]
+    fn transient_model_transaction_commits_semantic_add_element() {
+        let engine = RhaiEngine::new();
+        let result = engine
+            .eval_query(
+                sample_graph(),
+                r#"let scratch = app.new_model("Demo");
+                   let report = scratch.transaction("seed scratch")
+                       .create_package("Demo")
+                       .create_element("Demo", "PartDefinition", "Vehicle")
+                       .create_typed_element("Demo.Vehicle", "PartUsage", "engine", "Demo.Engine")
+                       .preview();
+                   #{status: report.status,
+                     applied: report.applied,
+                     added_count: report.semantic_diff.added_elements.len}"#,
+            )
+            .unwrap();
+
+        assert_eq!(first_row_value(&result, "status"), &json!("previewed"));
+        assert_eq!(first_row_value(&result, "applied"), &json!(false));
+        assert_eq!(first_row_value(&result, "added_count"), &json!(3));
+    }
+
+    #[test]
     fn transient_model_transaction_preview_does_not_apply() {
         let engine = RhaiEngine::new();
         let result = engine

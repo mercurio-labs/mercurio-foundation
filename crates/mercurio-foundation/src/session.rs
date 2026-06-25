@@ -1,4 +1,4 @@
-﻿use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, RwLock};
 
@@ -175,12 +175,17 @@ impl ForkOperationLog {
 
     fn is_all_renames(&self) -> bool {
         !self.operations.is_empty()
-            && self.operations.iter().all(|op| matches!(op, ForkOperation::RenameDeclaration { .. }))
+            && self
+                .operations
+                .iter()
+                .all(|op| matches!(op, ForkOperation::RenameDeclaration { .. }))
     }
 
     fn rename_operations(&self) -> impl Iterator<Item = (&ElementRef, &str)> {
         self.operations.iter().filter_map(|op| match op {
-            ForkOperation::RenameDeclaration { element, new_name } => Some((element, new_name.as_str())),
+            ForkOperation::RenameDeclaration { element, new_name } => {
+                Some((element, new_name.as_str()))
+            }
             _ => None,
         })
     }

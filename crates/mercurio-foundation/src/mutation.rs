@@ -1,4 +1,4 @@
-﻿use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,7 +48,7 @@ impl WorkspaceRevision {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MutationProposal {
     pub intent: String,
-        pub operations: Vec<SemanticMutation>,
+    pub operations: Vec<SemanticMutation>,
     pub evidence: Vec<MutationEvidence>,
     pub rationale: Option<String>,
     pub workspace_revision: WorkspaceRevision,
@@ -68,11 +68,44 @@ pub struct MutationPlan {
     pub checked_against: WorkspaceRevision,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticElementKind {
+    pub metaclass: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+impl SemanticElementKind {
+    pub fn new(metaclass: impl Into<String>) -> Self {
+        Self {
+            metaclass: metaclass.into(),
+            profile: None,
+        }
+    }
+
+    pub fn with_profile(metaclass: impl Into<String>, profile: impl Into<String>) -> Self {
+        Self {
+            metaclass: metaclass.into(),
+            profile: Some(profile.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SemanticMutation {
     AddPackage {
         target_file: String,
         name: String,
+    },
+    AddElement {
+        container: ElementRef,
+        kind: SemanticElementKind,
+        name: String,
+        ty: Option<ElementRef>,
+        specializes: Vec<ElementRef>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        properties: BTreeMap<String, Value>,
     },
     AddDefinition {
         container: ElementRef,
@@ -138,6 +171,8 @@ pub struct SemanticMutationCapabilityContext {
     pub supported_operations: Vec<String>,
     #[serde(default)]
     pub variant_capabilities: SemanticVariantCapabilityContext,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub element_kinds: Vec<String>,
     pub definition_keywords: Vec<String>,
     pub usage_keywords: Vec<String>,
     pub relationship_kinds: Vec<String>,
@@ -1016,6 +1051,7 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
         metamodel_version: "language-neutral-mutation-v1".to_string(),
         supported_operations: vec![
             "AddPackage".to_string(),
+            "AddElement".to_string(),
             "AddDefinition".to_string(),
             "AddUsage".to_string(),
             "AddRelationship".to_string(),
@@ -1030,6 +1066,7 @@ pub fn default_semantic_mutation_capability_context() -> SemanticMutationCapabil
             "SetAttribute".to_string(),
         ],
         variant_capabilities: default_semantic_variant_capability_context(),
+        element_kinds: Vec::new(),
         definition_keywords: Vec::new(),
         usage_keywords: Vec::new(),
         relationship_kinds: Vec::new(),
@@ -1371,7 +1408,10 @@ pub(crate) fn diff_for_operation(
             diff.added_elements
                 .push(SemanticDiffElementRef::unresolved(name.clone()));
         }
-        SemanticMutation::AddDefinition {
+        SemanticMutation::AddElement {
+            container, name, ..
+        }
+        | SemanticMutation::AddDefinition {
             container, name, ..
         }
         | SemanticMutation::AddUsage {

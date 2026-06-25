@@ -27,6 +27,7 @@ pub const VIEW_SPEC_VERSION: u8 = 1;
 pub enum DiagramKindDto {
     Structure,
     Activity,
+    StateMachine,
     PackageTree,
     CompositionGraph,
     ReferenceGraph,
@@ -357,6 +358,7 @@ pub fn list_diagram_kinds() -> Vec<DiagramKindDto> {
     vec![
         DiagramKindDto::Structure,
         DiagramKindDto::Activity,
+        DiagramKindDto::StateMachine,
         DiagramKindDto::PackageTree,
         DiagramKindDto::CompositionGraph,
         DiagramKindDto::ReferenceGraph,
@@ -1016,6 +1018,9 @@ pub fn render_diagram(
     match spec.kind {
         DiagramKindDto::Structure => render_structure_diagram(graph, metamodel_registry, spec),
         DiagramKindDto::Activity => render_activity_diagram(graph, metamodel_registry, spec),
+        DiagramKindDto::StateMachine => {
+            render_state_machine_diagram(graph, metamodel_registry, spec)
+        }
         _ => Err(DiagramError::UnsupportedKind(spec.kind)),
     }
 }
@@ -1085,6 +1090,536 @@ fn activity_node_symbol(node: &DiagramNodeDto) -> (String, serde_json::Map<Strin
         properties.insert("streaming".to_string(), Value::Bool(true));
     }
     (role.to_string(), properties)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StateDiagramState {
+    id: String,
+    label: String,
+    owner_id: Option<String>,
+    parent_state_id: Option<String>,
+    is_initial: bool,
+    is_final: bool,
+    is_orthogonal: bool,
+    is_history: bool,
+}
+
+fn render_state_machine_diagram(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    spec: DiagramSpecDto,
+) -> Result<DiagramViewDto, DiagramError> {
+    let mut warnings = Vec::new();
+    let initial_state_ids = graph
+        .elements()
+        .iter()
+        .filter_map(state_diagram_initial_marker_target)
+        .collect::<BTreeSet<_>>();
+    let state_index = graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, &spec.query))
+        .filter(|element| is_state_diagram_state(element))
+        .map(|element| {
+            let id = element.element_id.clone();
+            (
+                id.clone(),
+                StateDiagramState {
+                    id,
+                    label: state_diagram_label(element),
+                    owner_id: state_diagram_owner_id(element),
+                    parent_state_id: state_diagram_parent_state_id(element),
+                    is_initial: initial_state_ids.contains(&element.element_id)
+                        || state_diagram_bool_property(element, &["is_initial", "initial"])
+                        || state_diagram_string_property(
+                            element,
+                            &["purpose", "state_kind", "kind_role"],
+                        )
+                        .is_some_and(|value| value.eq_ignore_ascii_case("initial")),
+                    is_final: state_diagram_bool_property(element, &["is_final", "final"])
+                        || state_diagram_string_property(
+                            element,
+                            &["purpose", "state_kind", "kind_role"],
+                        )
+                        .is_some_and(|value| value.eq_ignore_ascii_case("final")),
+                    is_orthogonal: state_diagram_bool_property(
+                        element,
+                        &["is_orthogonal", "orthogonal"],
+                    ) || state_diagram_string_property(
+                        element,
+                        &["state_kind", "kind_role"],
+                    )
+                    .is_some_and(|value| value.eq_ignore_ascii_case("orthogonal")),
+                    is_history: state_diagram_bool_property(element, &["is_history", "history"])
+                        || state_diagram_string_property(
+                            element,
+                            &["purpose", "state_kind", "kind_role"],
+                        )
+                        .is_some_and(|value| value.eq_ignore_ascii_case("history")),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let root_id = if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty()) {
+        Some(
+            resolve_root(graph, root)
+                .ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?
+                .element_id
+                .clone(),
+        )
+    } else {
+        None
+    };
+
+    let mut selected_ids = state_index
+        .values()
+        .filter(|state| {
+            root_id
+                .as_deref()
+                .map(|root_id| {
+                    state_diagram_state_matches_root(graph, &state_index, state, root_id)
+                })
+                .unwrap_or(true)
+        })
+        .map(|state| state.id.clone())
+        .collect::<Vec<_>>();
+    selected_ids.sort();
+    selected_ids.dedup();
+
+    let max_nodes = effective_max_nodes(&spec.query);
+    let selected_total = selected_ids.len();
+    selected_ids.truncate(max_nodes);
+    if selected_total > selected_ids.len() {
+        warnings.push(format!(
+            "State-machine diagram node limit reached; showing {} of {selected_total} states.",
+            selected_ids.len()
+        ));
+    }
+    let selected_state_ids = selected_ids.into_iter().collect::<BTreeSet<_>>();
+
+    let mut nodes = selected_state_ids
+        .iter()
+        .filter_map(|state_id| {
+            graph
+                .element_by_element_id(state_id)
+                .zip(state_index.get(state_id))
+        })
+        .map(|(element, state)| state_diagram_node(graph, metamodel_registry, element, state))
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+
+    if nodes.is_empty() {
+        warnings.push("No state-machine states matched the requested filters.".to_string());
+    }
+
+    let mut transitions_seen = 0usize;
+    let mut edges = Vec::new();
+    let max_edges = effective_max_edges(&spec.query);
+    for transition in graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, &spec.query))
+        .filter(|element| is_state_diagram_transition(element))
+    {
+        let Some(source_ref) = state_diagram_transition_source(transition) else {
+            continue;
+        };
+        let Some(target_ref) = state_diagram_transition_target(transition) else {
+            continue;
+        };
+        transitions_seen += 1;
+        let Some(source) =
+            resolve_state_diagram_reference(&source_ref, &selected_state_ids, &state_index)
+        else {
+            continue;
+        };
+        let Some(target) =
+            resolve_state_diagram_reference(&target_ref, &selected_state_ids, &state_index)
+        else {
+            continue;
+        };
+        edges.push(DiagramEdgeDto {
+            id: transition.element_id.clone(),
+            symbol: symbol_id_for_transition_edge(&transition.element_id),
+            source,
+            target,
+            relation: "transition".to_string(),
+            label: state_diagram_transition_label(transition),
+        });
+        if edges.len() >= max_edges {
+            warnings.push(format!(
+                "State-machine diagram edge limit reached; showing first {max_edges} transitions."
+            ));
+            break;
+        }
+    }
+    edges.sort_by(|left, right| left.id.cmp(&right.id));
+    edges.dedup_by(|left, right| left.id == right.id);
+    if edges.is_empty() && transitions_seen > 0 && !nodes.is_empty() {
+        warnings.push("No transitions connected the selected state nodes.".to_string());
+    }
+
+    let symbols = nodes
+        .iter()
+        .map(|node| {
+            let mut properties = serde_json::Map::new();
+            if let Some(state) = state_index.get(&node.id) {
+                properties.insert("shape".to_string(), Value::String("state".to_string()));
+                properties.insert("is_initial".to_string(), Value::Bool(state.is_initial));
+                properties.insert("is_final".to_string(), Value::Bool(state.is_final));
+                properties.insert("is_history".to_string(), Value::Bool(state.is_history));
+                if let Some(parent_state_id) = &state.parent_state_id {
+                    properties.insert(
+                        "parent_state_id".to_string(),
+                        Value::String(parent_state_id.clone()),
+                    );
+                }
+            }
+            DiagramSymbolDto {
+                id: node.symbol.clone(),
+                element: node.id.clone(),
+                role: "state".to_string(),
+                source: None,
+                target: None,
+                relation: None,
+                properties,
+            }
+        })
+        .chain(edges.iter().map(|edge| {
+            let transition = graph.element_by_element_id(&edge.id);
+            DiagramSymbolDto {
+                id: edge.symbol.clone(),
+                element: edge.id.clone(),
+                role: "transition".to_string(),
+                source: Some(symbol_id_for_element(&edge.source)),
+                target: Some(symbol_id_for_element(&edge.target)),
+                relation: Some(edge.relation.clone()),
+                properties: transition
+                    .map(state_diagram_transition_symbol_properties)
+                    .unwrap_or_else(|| edge_symbol_properties("transition")),
+            }
+        }))
+        .collect();
+
+    Ok(DiagramViewDto {
+        spec,
+        symbols,
+        nodes,
+        edges,
+        warnings,
+    })
+}
+
+fn state_diagram_node(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    element: &Element,
+    state: &StateDiagramState,
+) -> DiagramNodeDto {
+    let mut node = diagram_node(graph, metamodel_registry, element);
+    node.label = state.label.clone();
+    node.badges = Vec::new();
+    if state.is_initial {
+        node.badges.push("initial".to_string());
+    }
+    if state.is_final {
+        node.badges.push("final".to_string());
+    }
+    if state.is_orthogonal {
+        node.badges.push("orthogonal".to_string());
+    }
+    if state.is_history {
+        node.badges.push("history".to_string());
+    }
+    if node.badges.is_empty() {
+        node.badges.push("state".to_string());
+    }
+    node.properties
+        .insert("is_initial".to_string(), Value::Bool(state.is_initial));
+    node.properties
+        .insert("is_final".to_string(), Value::Bool(state.is_final));
+    node.properties.insert(
+        "is_orthogonal".to_string(),
+        Value::Bool(state.is_orthogonal),
+    );
+    node.properties
+        .insert("is_history".to_string(), Value::Bool(state.is_history));
+    if let Some(owner_id) = &state.owner_id {
+        node.properties.insert(
+            "state_machine_owner".to_string(),
+            Value::String(owner_id.clone()),
+        );
+    }
+    if let Some(parent_state_id) = &state.parent_state_id {
+        node.properties.insert(
+            "parent_state_id".to_string(),
+            Value::String(parent_state_id.clone()),
+        );
+    }
+    node
+}
+
+fn is_state_diagram_state(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    kind.contains("stateusage")
+        || kind.contains("stateaction")
+        || state_diagram_string_property(element, &["type", "definition"])
+            .is_some_and(|value| value.contains("States::StateAction"))
+        || state_diagram_string_property(element, &["metatype"])
+            .is_some_and(|value| value.contains("StateUsage"))
+}
+
+fn is_state_diagram_transition(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    kind.contains("transition")
+        || kind.contains("succession")
+        || (kind.contains("acceptaction") && state_diagram_transition_target(element).is_some())
+        || (state_diagram_string_property(element, &["metatype", "type", "definition"])
+            .is_some_and(|value| {
+                value.contains("AcceptAction") || value.contains("SuccessionFlow")
+            })
+            && state_diagram_transition_target(element).is_some())
+        || element.element_id.starts_with("transition.")
+}
+
+fn state_diagram_initial_marker_target(element: &Element) -> Option<String> {
+    if state_diagram_string_property(element, &["source_is_initial", "sourceIsInitial"])
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+        || state_diagram_bool_property(element, &["source_is_initial", "sourceIsInitial"])
+    {
+        return state_diagram_transition_target(element)
+            .or_else(|| state_diagram_transition_source(element));
+    }
+
+    let kind = element.kind.to_ascii_lowercase();
+    let initial_completion = (kind.contains("succession")
+        || state_diagram_string_property(element, &["metatype", "type", "definition"])
+            .is_some_and(|value| value.contains("SuccessionFlow")))
+        && state_diagram_string_property(element, &["trigger_kind", "triggerKind"])
+            .is_some_and(|value| value.eq_ignore_ascii_case("completion"))
+        && state_diagram_transition_source(element).is_none();
+    if initial_completion {
+        state_diagram_transition_target(element)
+    } else {
+        None
+    }
+}
+
+fn state_diagram_state_matches_root(
+    graph: &Graph,
+    state_index: &BTreeMap<String, StateDiagramState>,
+    state: &StateDiagramState,
+    root_id: &str,
+) -> bool {
+    if state.id == root_id {
+        return true;
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut queue = state_diagram_container_ids(state)
+        .into_iter()
+        .collect::<VecDeque<_>>();
+    while let Some(container_id) = queue.pop_front() {
+        if container_id == root_id {
+            return true;
+        }
+        if !seen.insert(container_id.clone()) {
+            continue;
+        }
+        if let Some(container_state) = state_index.get(&container_id) {
+            queue.extend(state_diagram_container_ids(container_state));
+        }
+        if let Some(container_element) = graph.element_by_element_id(&container_id) {
+            queue.extend(state_diagram_owner_ids(container_element));
+        }
+    }
+
+    false
+}
+
+fn state_diagram_container_ids(state: &StateDiagramState) -> Vec<String> {
+    state
+        .parent_state_id
+        .iter()
+        .chain(state.owner_id.iter())
+        .cloned()
+        .collect()
+}
+
+fn state_diagram_owner_ids(element: &Element) -> Vec<String> {
+    [
+        "owner",
+        "owning_type",
+        "owningType",
+        "owning_definition",
+        "owningDefinition",
+        "owning_namespace",
+        "owningNamespace",
+    ]
+    .iter()
+    .filter_map(|key| state_diagram_string_property(element, &[*key]))
+    .collect()
+}
+
+fn state_diagram_owner_id(element: &Element) -> Option<String> {
+    state_diagram_string_property(
+        element,
+        &[
+            "owner",
+            "owning_type",
+            "owningType",
+            "owning_definition",
+            "owningDefinition",
+            "owning_namespace",
+            "owningNamespace",
+        ],
+    )
+}
+
+fn state_diagram_parent_state_id(element: &Element) -> Option<String> {
+    state_diagram_string_property(
+        element,
+        &[
+            "parent_state",
+            "parentState",
+            "owning_state",
+            "owningState",
+            "enclosing_state",
+            "enclosingState",
+        ],
+    )
+}
+
+fn state_diagram_transition_source(element: &Element) -> Option<String> {
+    state_diagram_string_property(
+        element,
+        &[
+            "source",
+            "source_state",
+            "sourceState",
+            "from",
+            "transition_source",
+            "transitionSource",
+        ],
+    )
+}
+
+fn state_diagram_transition_target(element: &Element) -> Option<String> {
+    state_diagram_string_property(
+        element,
+        &[
+            "target",
+            "target_state",
+            "targetState",
+            "to",
+            "transition_target",
+            "transitionTarget",
+        ],
+    )
+}
+
+fn resolve_state_diagram_reference(
+    reference: &str,
+    selected_state_ids: &BTreeSet<String>,
+    state_index: &BTreeMap<String, StateDiagramState>,
+) -> Option<String> {
+    let reference = reference.trim();
+    if selected_state_ids.contains(reference) {
+        return Some(reference.to_string());
+    }
+    selected_state_ids.iter().find_map(|state_id| {
+        let state = state_index.get(state_id)?;
+        if state.label.eq_ignore_ascii_case(reference)
+            || label_for_id(&state.id).eq_ignore_ascii_case(reference)
+            || state.id.ends_with(&format!(".{reference}"))
+            || state.id.ends_with(&format!("::{reference}"))
+        {
+            Some(state.id.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn state_diagram_transition_label(element: &Element) -> String {
+    state_diagram_string_property(element, &["trigger", "event"])
+        .or_else(|| state_diagram_string_property(element, &["trigger_kind", "triggerKind"]))
+        .or_else(|| {
+            element
+                .properties
+                .get("guard")
+                .map(|guard| format!("[{}]", value_to_text(guard)))
+        })
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or_else(|| label_for_id(&element.element_id))
+}
+
+fn state_diagram_transition_symbol_properties(element: &Element) -> serde_json::Map<String, Value> {
+    let mut properties = edge_symbol_properties("transition");
+    properties.insert("shape".to_string(), Value::String("transition".to_string()));
+    if let Some(trigger) = state_diagram_string_property(element, &["trigger", "event"]) {
+        properties.insert("trigger".to_string(), Value::String(trigger));
+    }
+    if let Some(trigger_kind) =
+        state_diagram_string_property(element, &["trigger_kind", "triggerKind"])
+    {
+        properties.insert("trigger_kind".to_string(), Value::String(trigger_kind));
+    }
+    if let Some(guard) = element.properties.get("guard") {
+        properties.insert("guard".to_string(), guard.clone());
+    }
+    if let Some(effect) =
+        state_diagram_string_property(element, &["effect", "effect_action", "effectAction"])
+    {
+        properties.insert("effect".to_string(), Value::String(effect));
+    }
+    properties
+}
+
+fn state_diagram_label(element: &Element) -> String {
+    state_diagram_string_property(
+        element,
+        &[
+            "declared_name",
+            "declaredName",
+            "name",
+            "qualified_name",
+            "qualifiedName",
+        ],
+    )
+    .map(|label| {
+        label
+            .rsplit(['.', ':'])
+            .find(|part| !part.is_empty())
+            .unwrap_or(&label)
+            .to_string()
+    })
+    .unwrap_or_else(|| label_for_id(&element.element_id))
+}
+
+fn state_diagram_string_property(element: &Element, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        element
+            .properties
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn state_diagram_bool_property(element: &Element, keys: &[&str]) -> bool {
+    keys.iter().any(|key| match element.properties.get(*key) {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::String(value)) => value.eq_ignore_ascii_case("true"),
+        _ => false,
+    })
+}
+
+fn symbol_id_for_transition_edge(id: &str) -> String {
+    format!("symbol.transition.{}", sanitize_symbol_segment(id))
 }
 
 fn render_structure_diagram(
@@ -1780,6 +2315,7 @@ mod tests {
                         ("declared_name".to_string(), json!("Parked")),
                         ("qualified_name".to_string(), json!("Example.Parked")),
                         ("owner".to_string(), json!("state.Example.DriveMode")),
+                        ("is_initial".to_string(), json!(true)),
                     ]),
                 ),
                 element(
@@ -1790,6 +2326,24 @@ mod tests {
                         ("declared_name".to_string(), json!("Driving")),
                         ("qualified_name".to_string(), json!("Example.Driving")),
                         ("owner".to_string(), json!("state.Example.DriveMode")),
+                        ("is_final".to_string(), json!(true)),
+                    ]),
+                ),
+                element(
+                    "transition.Example.DriveMode.ParkedToDriving",
+                    "TransitionUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("ParkedToDriving")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Example.DriveMode.ParkedToDriving"),
+                        ),
+                        ("owner".to_string(), json!("state.Example.DriveMode")),
+                        ("source".to_string(), json!("state.Example.Parked")),
+                        ("target".to_string(), json!("state.Example.Driving")),
+                        ("trigger".to_string(), json!("drive")),
+                        ("trigger_kind".to_string(), json!("event")),
                     ]),
                 ),
                 element(
@@ -2126,6 +2680,145 @@ mod tests {
     }
 
     #[test]
+    fn state_machine_diagram_renders_states_and_transitions() {
+        let view = render_sample(DiagramSpecDto {
+            version: 1,
+            kind: DiagramKindDto::StateMachine,
+            title: "Drive Mode".to_string(),
+            description: None,
+            root: Some("state.Example.DriveMode".to_string()),
+            query: DiagramQueryOptionsDto {
+                relations: Vec::new(),
+                direction: DiagramDirectionDto::Children,
+                depth: 3,
+                include_libraries: false,
+                include_user_model: true,
+                max_nodes: 350,
+                max_edges: 900,
+            },
+            layout: DiagramLayoutOptionsDto::default(),
+            style: DiagramStyleOptionsDto::default(),
+        });
+
+        assert_eq!(view.spec.kind, DiagramKindDto::StateMachine);
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "state.Example.Parked"
+                    && node.label == "Parked"
+                    && node.badges.contains(&"initial".to_string()))
+        );
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "state.Example.Driving"
+                    && node.badges.contains(&"final".to_string()))
+        );
+        let transition = view
+            .edges
+            .iter()
+            .find(|edge| edge.id == "transition.Example.DriveMode.ParkedToDriving")
+            .expect("transition edge should render");
+        assert_eq!(transition.source, "state.Example.Parked");
+        assert_eq!(transition.target, "state.Example.Driving");
+        assert_eq!(transition.relation, "transition");
+        assert_eq!(transition.label, "drive");
+
+        let state_symbol = view
+            .symbols
+            .iter()
+            .find(|symbol| symbol.element == "state.Example.Parked")
+            .expect("state symbol should render");
+        assert_eq!(state_symbol.role, "state");
+        assert_eq!(
+            state_symbol
+                .properties
+                .get("shape")
+                .and_then(|value| value.as_str()),
+            Some("state")
+        );
+        assert_eq!(
+            state_symbol
+                .properties
+                .get("is_initial")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        let transition_symbol = view
+            .symbols
+            .iter()
+            .find(|symbol| symbol.element == "transition.Example.DriveMode.ParkedToDriving")
+            .expect("transition symbol should render");
+        assert_eq!(transition_symbol.role, "transition");
+        assert_eq!(
+            transition_symbol
+                .properties
+                .get("target_decoration")
+                .and_then(|value| value.as_str()),
+            Some("open_arrow")
+        );
+        assert_eq!(
+            transition_symbol
+                .properties
+                .get("trigger_kind")
+                .and_then(|value| value.as_str()),
+            Some("event")
+        );
+    }
+
+    #[test]
+    fn state_machine_diagram_resolves_shorthand_transition_endpoints() {
+        let shorthand = KirElement {
+            id: "transition.Example.DriveMode.Short".to_string(),
+            kind: "TransitionUsage".to_string(),
+            layer: 2,
+            properties: BTreeMap::from([
+                ("declared_name".to_string(), json!("Short")),
+                ("owner".to_string(), json!("state.Example.DriveMode")),
+                ("transitionSource".to_string(), json!("Parked")),
+                ("transitionTarget".to_string(), json!("Driving")),
+                ("trigger".to_string(), json!("short")),
+            ]),
+        };
+        let mut document = view_fixture_document();
+        document.elements.push(shorthand);
+        let graph = Graph::from_document(document).expect("sample graph should rebuild");
+        let registry = MetamodelAttributeRegistry::build(&graph);
+
+        let view = render_diagram(
+            &graph,
+            &registry,
+            DiagramSpecDto {
+                version: 1,
+                kind: DiagramKindDto::StateMachine,
+                title: "Drive Mode".to_string(),
+                description: None,
+                root: Some("state.Example.DriveMode".to_string()),
+                query: DiagramQueryOptionsDto {
+                    relations: Vec::new(),
+                    direction: DiagramDirectionDto::Children,
+                    depth: 3,
+                    include_libraries: false,
+                    include_user_model: true,
+                    max_nodes: 350,
+                    max_edges: 900,
+                },
+                layout: DiagramLayoutOptionsDto::default(),
+                style: DiagramStyleOptionsDto::default(),
+            },
+        )
+        .expect("state-machine diagram should render");
+
+        assert!(view.edges.iter().any(|edge| {
+            edge.id == "transition.Example.DriveMode.Short"
+                && edge.source == "state.Example.Parked"
+                && edge.target == "state.Example.Driving"
+                && edge.label == "short"
+        }));
+    }
+
+    #[test]
     fn requirements_table_renders_requirement_rows() {
         let view = render_table_sample(TableSpecDto {
             version: 1,
@@ -2459,6 +3152,7 @@ fn diagram_kind_name(kind: &DiagramKindDto) -> &'static str {
     match kind {
         DiagramKindDto::Structure => "structure",
         DiagramKindDto::Activity => "activity",
+        DiagramKindDto::StateMachine => "state_machine",
         DiagramKindDto::PackageTree => "package_tree",
         DiagramKindDto::CompositionGraph => "composition_graph",
         DiagramKindDto::ReferenceGraph => "reference_graph",

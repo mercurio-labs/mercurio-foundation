@@ -6,7 +6,7 @@ use crate::datalog::{
 };
 use crate::semantic_profile::{
     AttributePolicyAnswer, CapabilityAnswer, ConservativeSemanticCapabilityOracle,
-    SemanticCapabilityOracle,
+    SemanticCapabilityOracle, SemanticElementAuthoring,
 };
 
 pub const SEMANTIC_LEGALITY_SCHEMA_VERSION: &str = "mercurio.semantic_legality.v1";
@@ -146,6 +146,18 @@ where
 
     pub fn normalize_definition_keyword(&self, keyword: &str) -> String {
         self.oracle.normalize_definition_keyword(keyword)
+    }
+
+    pub fn authoring_for_element_kind(&self, kind: &str) -> Option<SemanticElementAuthoring> {
+        self.oracle.authoring_for_element_kind(kind)
+    }
+
+    pub fn semantic_kind_for_definition_keyword(&self, keyword: &str) -> Option<String> {
+        self.oracle.semantic_kind_for_definition_keyword(keyword)
+    }
+
+    pub fn semantic_kind_for_usage_keyword(&self, keyword: &str) -> Option<String> {
+        self.oracle.semantic_kind_for_usage_keyword(keyword)
     }
 
     fn oracle_answer(&self, operation: &SemanticLegalityOperation) -> CapabilityAnswer {

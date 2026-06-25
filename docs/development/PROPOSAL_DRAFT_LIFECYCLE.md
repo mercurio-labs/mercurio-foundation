@@ -12,12 +12,22 @@ Accepted source changes flow through the source authority.
 
 For normal team projects, that authority is external Git. Mercurio can create overlays, validate them, export patches, create branches or pull requests, and record semantic impact, but provider merges and Git commits remain the acceptance mechanism.
 
+Proposal creation and preview flow through the core semantic mutation services.
+AI, UI, Python, REST, CLI, and notebooks may initiate proposals, but legal
+mutation discovery, vocabulary normalization, feasibility, variant preview,
+source rendering, semantic diff, and apply are shared core capabilities.
+Creation of model elements should use `SemanticMutation::AddElement` with a
+semantic metaclass; keyword-specific `AddDefinition` and `AddUsage` are
+compatibility inputs normalized by the active semantic profile.
+
 ## Concepts
 
 - `Base`: immutable source snapshot, usually a Git commit.
 - `Overlay`: file or semantic changes applied on top of a base without mutating accepted source.
 - `Draft Change Set`: local or interactive overlay that may not yet be reviewable.
 - `Proposal`: Mercurio-owned reviewable overlay with rationale, validation, semantic diff, and submission state.
+- `Checked Mutation Plan`: normalized semantic operations that passed feasibility
+  against a specific base revision and semantic environment.
 - `PR Binding`: link from a Mercurio proposal to an external provider pull request.
 - `Semantic Artifact`: compiled result of `base + overlay` and its semantic environment.
 
@@ -26,6 +36,9 @@ For normal team projects, that authority is external Git. Mercurio can create ov
 ```text
 base source snapshot
   -> draft change set
+  -> rule-backed feasibility check
+  -> checked mutation plan
+  -> variant or overlay preview
   -> virtual compile
   -> diagnostics and semantic diff
   -> proposal
@@ -50,6 +63,8 @@ Drafts may contain:
 
 - file overlays
 - semantic operations, such as rename, move, retype, add relationship, or edit requirement text
+- checked mutation plans when feasibility has been run
+- variant previews produced from normalized semantic operations
 - generated source patches
 - validation results
 - source patch previews
@@ -64,6 +79,9 @@ It should store:
 
 - project or repository id
 - base commit or stable snapshot id
+- semantic environment identity, including profile, stdlib, rulepack, mapping,
+  compiler, and validation policy versions
+- checked mutation plan, when the proposal originated from semantic operations
 - file overlays or generated patch
 - author and rationale
 - validation result
@@ -92,6 +110,21 @@ base source snapshot + overlay -> KIR -> graph -> derived indexes -> diagnostics
 
 The resulting semantic artifact key must include the base source snapshot, overlay digest, compiler/runtime inputs, dependencies, mappings, rule packs, and validation policy. See [Semantic Artifact Keys](SEMANTIC_ARTIFACT_KEYS.md).
 
+For semantic-operation proposals, validation starts before source rendering:
+
+```text
+base semantic snapshot + requested semantic mutations
+  -> legal action and rule checks
+  -> normalized mutation plan
+  -> variant preview
+  -> generated overlay or patch
+  -> virtual compile
+  -> diagnostics and semantic diff
+```
+
+The source overlay is a projection of the checked mutation plan. It is not the
+authority for whether the proposed edit is legal.
+
 ## View And Diagram Edits
 
 Views may support presentation edits and semantic edits.
@@ -103,11 +136,16 @@ Semantic edits must become draft operations or proposal overlay changes. A table
 ```text
 view edit
   -> semantic operation
+  -> core feasibility and normalized plan
   -> draft overlay
   -> validation
   -> source patch preview
   -> apply locally, save proposal, export patch, or submit PR
 ```
+
+The same rule applies to AI. AI may suggest operations and rationale, but it
+must use the shared core pathway for legal action discovery, feasibility,
+variant preview, source rendering, and revision-checked apply.
 
 ## PR Binding
 

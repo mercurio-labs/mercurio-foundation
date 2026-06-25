@@ -28,6 +28,9 @@ pub struct SemanticCapabilityProfile {
     pub doc_id_attribute_aliases: Vec<&'static str>,
     pub supporting_definition_keywords: BTreeMap<String, String>,
     pub definition_keyword_aliases: BTreeMap<String, String>,
+    pub element_kind_authoring: BTreeMap<String, SemanticElementAuthoring>,
+    pub definition_keyword_element_kinds: BTreeMap<String, String>,
+    pub usage_keyword_element_kinds: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,6 +50,20 @@ pub struct RelationshipCapability {
 pub struct AttributePolicyKey {
     pub kind: String,
     pub attribute: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SemanticElementForm {
+    Definition,
+    Usage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticElementAuthoring {
+    pub form: SemanticElementForm,
+    pub keyword: String,
 }
 
 impl SemanticCapabilityProfile {
@@ -116,6 +133,34 @@ impl SemanticCapabilityProfile {
             normalize_capability_token(alias),
             normalize_capability_token(normalized),
         );
+        self
+    }
+
+    pub fn element_kind_authoring(
+        mut self,
+        kind: &str,
+        form: SemanticElementForm,
+        keyword: &str,
+    ) -> Self {
+        self.element_kind_authoring.insert(
+            normalize_capability_token(kind),
+            SemanticElementAuthoring {
+                form,
+                keyword: normalize_capability_token(keyword),
+            },
+        );
+        self
+    }
+
+    pub fn definition_keyword_element_kind(mut self, keyword: &str, kind: &str) -> Self {
+        self.definition_keyword_element_kinds
+            .insert(normalize_capability_token(keyword), kind.trim().to_string());
+        self
+    }
+
+    pub fn usage_keyword_element_kind(mut self, keyword: &str, kind: &str) -> Self {
+        self.usage_keyword_element_kinds
+            .insert(normalize_capability_token(keyword), kind.trim().to_string());
         self
     }
 }
@@ -313,6 +358,28 @@ impl SemanticCapabilityOracle for TableSemanticCapabilityOracle {
             .cloned()
             .unwrap_or(normalized)
     }
+
+    fn authoring_for_element_kind(&self, kind: &str) -> Option<SemanticElementAuthoring> {
+        self.profile
+            .element_kind_authoring
+            .get(&normalize_capability_token(kind))
+            .cloned()
+    }
+
+    fn semantic_kind_for_definition_keyword(&self, keyword: &str) -> Option<String> {
+        let normalized = self.normalize_definition_keyword(keyword);
+        self.profile
+            .definition_keyword_element_kinds
+            .get(&normalized)
+            .cloned()
+    }
+
+    fn semantic_kind_for_usage_keyword(&self, keyword: &str) -> Option<String> {
+        self.profile
+            .usage_keyword_element_kinds
+            .get(&normalize_capability_token(keyword))
+            .cloned()
+    }
 }
 
 pub trait SemanticCapabilityOracle {
@@ -341,6 +408,18 @@ pub trait SemanticCapabilityOracle {
 
     fn normalize_definition_keyword(&self, keyword: &str) -> String {
         keyword.trim().to_string()
+    }
+
+    fn authoring_for_element_kind(&self, _kind: &str) -> Option<SemanticElementAuthoring> {
+        None
+    }
+
+    fn semantic_kind_for_definition_keyword(&self, _keyword: &str) -> Option<String> {
+        None
+    }
+
+    fn semantic_kind_for_usage_keyword(&self, _keyword: &str) -> Option<String> {
+        None
     }
 }
 

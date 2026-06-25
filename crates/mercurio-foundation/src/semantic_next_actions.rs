@@ -121,6 +121,21 @@ where
             },
         );
 
+        for kind in &self.capability_context.element_kinds {
+            self.push_checked_action(
+                &mut candidates,
+                &request,
+                element.clone(),
+                SemanticNextActionOperation::AddElement {
+                    child_kind: kind.clone(),
+                },
+                SemanticLegalityOperation::Containment {
+                    container_kind: request.element_kind.clone(),
+                    child_kind: kind.clone(),
+                },
+            );
+        }
+
         for keyword in &self.capability_context.definition_keywords {
             self.push_checked_action(
                 &mut candidates,
@@ -277,6 +292,7 @@ pub fn enrich_semantic_reasoning_context_with_next_action_affordances<O>(
 fn affordance_from_next_action(action: SemanticNextAction) -> Option<SemanticAffordanceContext> {
     let (operation, child_kind) = match action.operation {
         SemanticNextActionOperation::AddPackage { child_kind } => ("AddPackage", child_kind),
+        SemanticNextActionOperation::AddElement { child_kind } => ("AddElement", child_kind),
         SemanticNextActionOperation::AddDefinition { child_kind } => ("AddDefinition", child_kind),
         SemanticNextActionOperation::AddUsage { child_kind } => ("AddUsage", child_kind),
         _ => return None,
@@ -380,6 +396,10 @@ pub enum SemanticNextActionOperation {
         #[serde(rename = "childKind")]
         child_kind: String,
     },
+    AddElement {
+        #[serde(rename = "childKind")]
+        child_kind: String,
+    },
     AddDefinition {
         #[serde(rename = "childKind")]
         child_kind: String,
@@ -431,8 +451,9 @@ fn next_action_operation_rank(operation: &SemanticNextActionOperation) -> u8 {
         SemanticNextActionOperation::Specialize { .. } => 2,
         SemanticNextActionOperation::TypeUsage { .. } => 3,
         SemanticNextActionOperation::AddPackage { .. } => 4,
-        SemanticNextActionOperation::AddDefinition { .. } => 5,
-        SemanticNextActionOperation::AddUsage { .. } => 6,
+        SemanticNextActionOperation::AddElement { .. } => 5,
+        SemanticNextActionOperation::AddDefinition { .. } => 6,
+        SemanticNextActionOperation::AddUsage { .. } => 7,
     }
 }
 
@@ -481,6 +502,7 @@ mod tests {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
                 variant_capabilities: crate::default_semantic_variant_capability_context(),
+                element_kinds: Vec::new(),
                 definition_keywords: vec!["part".to_string()],
                 usage_keywords: Vec::new(),
                 relationship_kinds: vec!["satisfy".to_string()],
@@ -549,6 +571,7 @@ mod tests {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
                 variant_capabilities: crate::default_semantic_variant_capability_context(),
+                element_kinds: Vec::new(),
                 definition_keywords: vec![
                     "part".to_string(),
                     "requirement".to_string(),
@@ -621,6 +644,7 @@ mod tests {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
                 variant_capabilities: crate::default_semantic_variant_capability_context(),
+                element_kinds: Vec::new(),
                 definition_keywords: Vec::new(),
                 usage_keywords: Vec::new(),
                 relationship_kinds: Vec::new(),
@@ -654,6 +678,7 @@ mod tests {
                 metamodel_version: "test".to_string(),
                 supported_operations: Vec::new(),
                 variant_capabilities: crate::default_semantic_variant_capability_context(),
+                element_kinds: Vec::new(),
                 definition_keywords: vec!["part".to_string()],
                 usage_keywords: Vec::new(),
                 relationship_kinds: Vec::new(),
