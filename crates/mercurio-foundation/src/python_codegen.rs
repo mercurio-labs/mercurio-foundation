@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ir::{KirDocument, KirElement};
-use crate::language::{LanguageProfile, SemanticConcept};
+use crate::language::{Concept, LanguageProfile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonWrapperGeneration {
@@ -650,7 +650,7 @@ fn metadata_name(element: &KirElement) -> Option<&str> {
 }
 
 fn concepts_py(profile: &LanguageProfile) -> String {
-    let package = python_string_literal(concept_anchor(profile, SemanticConcept::Package));
+    let package = python_string_literal(concept_anchor(profile, &Concept::PACKAGE));
     let part_definition = python_string_literal(profile_anchor(profile, "part_definition"));
     let part_usage = python_string_literal(profile_anchor(profile, "part_usage"));
     let attribute_usage = python_string_literal(profile_anchor(profile, "attribute_usage"));
@@ -845,8 +845,8 @@ fn entries_for_owner(document: &KirDocument, owner: &str) -> BTreeMap<String, St
         .collect()
 }
 
-fn concept_anchor(profile: &LanguageProfile, concept: SemanticConcept) -> Option<&str> {
-    profile.canonical_kinds.get(&concept).map(String::as_str)
+fn concept_anchor<'a>(profile: &'a LanguageProfile, concept: &Concept) -> Option<&'a str> {
+    profile.canonical_kinds.get(concept).map(String::as_str)
 }
 
 fn profile_anchor<'a>(profile: &'a LanguageProfile, concept: &str) -> Option<&'a str> {
@@ -972,7 +972,7 @@ fn python_keywords() -> BTreeSet<&'static str> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::{KirDocument, KirElement, LanguageProfile, language::SourceLanguage};
+    use crate::{Concept, KirDocument, KirElement, LanguageId, LanguageProfile};
 
     use super::*;
 
@@ -989,14 +989,14 @@ mod tests {
         };
         let profile = LanguageProfile {
             id: "model-test".to_string(),
-            language: SourceLanguage::Model,
+            language: LanguageId::from("model"),
             language_version: "2.0".to_string(),
             metamodel_version: "2.0".to_string(),
             stdlib_version: "test".to_string(),
             stdlib_path: "stdlib.kir.json".to_string(),
             kir_schema_version: "0.2".to_string(),
             canonical_kinds: BTreeMap::from([(
-                SemanticConcept::Package,
+                Concept::PACKAGE,
                 "Model::Package".to_string(),
             )]),
             semantic_anchors: BTreeMap::new(),
@@ -1075,7 +1075,7 @@ mod tests {
         };
         let profile = LanguageProfile {
             id: "model-test".to_string(),
-            language: SourceLanguage::Model,
+            language: LanguageId::from("model"),
             language_version: "2.0".to_string(),
             metamodel_version: "2.0".to_string(),
             stdlib_version: "test".to_string(),

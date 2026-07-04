@@ -337,24 +337,37 @@ pub struct KirFieldRegistry {
 }
 
 impl KirFieldRegistry {
-    pub fn standard() -> Self {
+    pub fn structural() -> Self {
         let mut registry = Self {
             fields: BTreeMap::new(),
         };
-        for (name, kind) in CORE_FIELD_SPECS {
-            registry.register_field(*name, *kind);
-        }
+        registry.register_fields(STRUCTURAL_FIELD_SPECS.iter().copied());
         registry
     }
 
+    #[deprecated(note = "use structural(); domain fields must be registered by a language layer")]
+    pub fn standard() -> Self {
+        Self::structural()
+    }
+
     pub fn from_document(document: &KirDocument) -> Self {
-        let mut registry = Self::standard();
+        let mut registry = Self::structural();
         registry.extend_from_document(document);
         registry
     }
 
     pub fn register_field(&mut self, name: impl Into<String>, kind: KirFieldKind) {
         self.fields.insert(name.into(), KirFieldSpec { kind });
+    }
+
+    pub fn register_fields<I, N>(&mut self, fields: I)
+    where
+        I: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
+        for (name, kind) in fields {
+            self.register_field(name, kind);
+        }
     }
 
     pub fn extend_from_document(&mut self, document: &KirDocument) {
@@ -458,37 +471,19 @@ impl KirFieldRegistry {
     }
 }
 
-const CORE_FIELD_SPECS: &[(&str, KirFieldKind)] = &[
+pub const STRUCTURAL_FIELD_SPECS: &[(&str, KirFieldKind)] = &[
     ("declared_name", KirFieldKind::Scalar),
     ("declared_short_name", KirFieldKind::Scalar),
     ("name", KirFieldKind::Scalar),
     ("qualified_name", KirFieldKind::Scalar),
     ("short_name", KirFieldKind::Scalar),
+    ("element_id", KirFieldKind::Scalar),
     ("kir_property", KirFieldKind::Scalar),
     ("feature_kind", KirFieldKind::Scalar),
     ("type_label", KirFieldKind::Scalar),
     ("metamodel_language", KirFieldKind::Scalar),
     ("metamodel_layer", KirFieldKind::Scalar),
     ("pilot_library_group", KirFieldKind::Scalar),
-    ("lower", KirFieldKind::Scalar),
-    ("upper", KirFieldKind::Scalar),
-    ("direction", KirFieldKind::Scalar),
-    ("multiplicity", KirFieldKind::Scalar),
-    ("multiplicity_lower", KirFieldKind::Scalar),
-    ("multiplicity_upper", KirFieldKind::Scalar),
-    ("declared_multiplicity", KirFieldKind::Scalar),
-    ("operator", KirFieldKind::Scalar),
-    ("operator_expression", KirFieldKind::Scalar),
-    ("trigger", KirFieldKind::Scalar),
-    ("trigger_kind", KirFieldKind::Scalar),
-    ("is_initial", KirFieldKind::Scalar),
-    ("source_is_initial", KirFieldKind::Scalar),
-    ("effect", KirFieldKind::Scalar),
-    ("text", KirFieldKind::Scalar),
-    ("requirement_id", KirFieldKind::Scalar),
-    ("body", KirFieldKind::Scalar),
-    ("locale", KirFieldKind::Scalar),
-    ("language", KirFieldKind::Scalar),
     ("source_file", KirFieldKind::Scalar),
     ("source_language", KirFieldKind::Scalar),
     ("is_abstract", KirFieldKind::Scalar),
@@ -501,6 +496,16 @@ const CORE_FIELD_SPECS: &[(&str, KirFieldKind)] = &[
     ("is_unique", KirFieldKind::Scalar),
     ("is_library_element", KirFieldKind::Scalar),
     ("is_implied", KirFieldKind::Scalar),
+    ("is_initial", KirFieldKind::Scalar),
+    ("trigger", KirFieldKind::Scalar),
+    ("trigger_kind", KirFieldKind::Scalar),
+    ("source_is_initial", KirFieldKind::Scalar),
+    ("lower", KirFieldKind::Scalar),
+    ("upper", KirFieldKind::Scalar),
+    ("multiplicity", KirFieldKind::Scalar),
+    ("multiplicity_lower", KirFieldKind::Scalar),
+    ("multiplicity_upper", KirFieldKind::Scalar),
+    ("declared_multiplicity", KirFieldKind::Scalar),
     ("owner", KirFieldKind::Reference),
     ("owning_type", KirFieldKind::Reference),
     ("owning_definition", KirFieldKind::Reference),
@@ -508,55 +513,28 @@ const CORE_FIELD_SPECS: &[(&str, KirFieldKind)] = &[
     ("definition", KirFieldKind::Reference),
     ("metatype", KirFieldKind::Reference),
     ("source_feature", KirFieldKind::Reference),
+    ("parent_state", KirFieldKind::Reference),
     ("source", KirFieldKind::Reference),
     ("target", KirFieldKind::Reference),
-    ("allocated", KirFieldKind::Reference),
-    ("allocated_to", KirFieldKind::Reference),
-    ("parent_state", KirFieldKind::Reference),
-    ("payload", KirFieldKind::Reference),
-    ("result", KirFieldKind::Reference),
-    ("original_definition", KirFieldKind::Reference),
-    ("conjugated", KirFieldKind::Reference),
-    ("opposite", KirFieldKind::Reference),
-    ("documentedElement", KirFieldKind::Reference),
-    ("annotatedElement", KirFieldKind::Reference),
-    ("target_ref", KirFieldKind::Reference),
     ("members", KirFieldKind::ReferenceList),
     ("features", KirFieldKind::ReferenceList),
+    ("owned_element", KirFieldKind::ReferenceList),
     ("ownedElement", KirFieldKind::ReferenceList),
-    ("documentation", KirFieldKind::ReferenceList),
     ("owned_features", KirFieldKind::ReferenceList),
-    ("feature_typings", KirFieldKind::ReferenceList),
+    ("owned_feature", KirFieldKind::ReferenceList),
     ("specializes", KirFieldKind::ReferenceList),
     ("subsets", KirFieldKind::ReferenceList),
     ("subsetted_features", KirFieldKind::ReferenceList),
-    ("redefines", KirFieldKind::ReferenceList),
-    ("redefined_features", KirFieldKind::ReferenceList),
-    ("specialized_features", KirFieldKind::ReferenceList),
     ("type", KirFieldKind::ReferenceList),
     ("featuring_type", KirFieldKind::ReferenceList),
     ("chaining_feature", KirFieldKind::ReferenceList),
-    ("imports", KirFieldKind::ReferenceList),
-    ("relationships", KirFieldKind::ReferenceList),
-    ("sources", KirFieldKind::ReferenceList),
-    ("targets", KirFieldKind::ReferenceList),
     ("parts", KirFieldKind::ReferenceList),
     ("items", KirFieldKind::ReferenceList),
-    ("owned_feature", KirFieldKind::ReferenceList),
-    ("verify", KirFieldKind::ReferenceList),
-    ("satisfy", KirFieldKind::ReferenceList),
-    ("related", KirFieldKind::ReferenceList),
-    ("parameters", KirFieldKind::ReferenceList),
-    ("arguments", KirFieldKind::ReferenceList),
-    ("successions", KirFieldKind::ReferenceList),
-    ("dependencies", KirFieldKind::ReferenceList),
     ("expression", KirFieldKind::Scalar),
     ("expression_ir", KirFieldKind::Expression),
     ("metadata", KirFieldKind::Metadata),
     ("source_span", KirFieldKind::Metadata),
     ("doc", KirFieldKind::Metadata),
-    ("do_behavior", KirFieldKind::Metadata),
-    ("element_id", KirFieldKind::Scalar),
 ];
 
 fn metamodel_feature_field_spec(element: &KirElement) -> Option<(String, KirFieldSpec)> {
@@ -598,8 +576,9 @@ fn metamodel_feature_field_kind(element: &KirElement) -> KirFieldKind {
 
 fn reference_kind_from_upper(upper: Option<&Value>) -> KirFieldKind {
     match multiplicity_upper_is_one(upper) {
+        Some(true) => KirFieldKind::Reference,
         Some(false) => KirFieldKind::ReferenceList,
-        _ => KirFieldKind::Reference,
+        None => KirFieldKind::ReferenceList,
     }
 }
 
@@ -677,6 +656,19 @@ impl KirDocument {
         Ok(document)
     }
 
+    pub fn from_str_with_registered_fields<I, N>(
+        input: &str,
+        fields: I,
+    ) -> Result<Self, KirError>
+    where
+        I: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
+        let document: Self = serde_json::from_str(input)?;
+        document.validate_persisted_with_registered_fields(fields)?;
+        Ok(document)
+    }
+
     pub fn from_slice(bytes: &[u8]) -> Result<Self, KirError> {
         let input = std::str::from_utf8(bytes)
             .map_err(|_| KirError::Model("KIR bytes are not valid UTF-8".to_string()))?;
@@ -688,20 +680,38 @@ impl KirDocument {
         Self::from_str(&input)
     }
 
+    pub fn from_path_with_registered_fields<I, N>(
+        path: &Path,
+        fields: I,
+    ) -> Result<Self, KirError>
+    where
+        I: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
+        let input = std::fs::read_to_string(path)?;
+        Self::from_str_with_registered_fields(&input, fields)
+    }
+
     pub fn validate(&self) -> Result<(), KirError> {
-        self.validate_with_options(ValidationOptions {
-            require_schema_version: false,
-            reject_unknown_fields: false,
-            strict_field_shapes: false,
-        })
+        self.validate_with_options(
+            ValidationOptions {
+                require_schema_version: false,
+                reject_unknown_fields: false,
+                strict_field_shapes: false,
+            },
+            KirFieldRegistry::from_document(self),
+        )
     }
 
     pub fn validate_strict_field_contract(&self) -> Result<(), KirError> {
-        self.validate_with_options(ValidationOptions {
-            require_schema_version: false,
-            reject_unknown_fields: true,
-            strict_field_shapes: true,
-        })
+        self.validate_with_options(
+            ValidationOptions {
+                require_schema_version: false,
+                reject_unknown_fields: true,
+                strict_field_shapes: true,
+            },
+            KirFieldRegistry::from_document(self),
+        )
     }
 
     pub fn validate_persisted(&self) -> Result<(), KirError> {
@@ -709,7 +719,27 @@ impl KirDocument {
             require_schema_version: true,
             reject_unknown_fields: true,
             strict_field_shapes: true,
-        })
+        }, KirFieldRegistry::from_document(self))
+    }
+
+    pub fn validate_persisted_with_registered_fields<I, N>(
+        &self,
+        fields: I,
+    ) -> Result<(), KirError>
+    where
+        I: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
+        let mut field_registry = KirFieldRegistry::from_document(self);
+        field_registry.register_fields(fields);
+        self.validate_with_options(
+            ValidationOptions {
+                require_schema_version: true,
+                reject_unknown_fields: true,
+                strict_field_shapes: true,
+            },
+            field_registry,
+        )
     }
 
     pub fn schema_version(&self) -> Option<&str> {
@@ -746,10 +776,13 @@ impl KirDocument {
         );
     }
 
-    fn validate_with_options(&self, options: ValidationOptions) -> Result<(), KirError> {
+    fn validate_with_options(
+        &self,
+        options: ValidationOptions,
+        field_registry: KirFieldRegistry,
+    ) -> Result<(), KirError> {
         let mut diagnostics = Vec::new();
         let mut seen = BTreeSet::new();
-        let field_registry = KirFieldRegistry::from_document(self);
         let current_schema_shapes = options.strict_field_shapes;
 
         if options.require_schema_version {
@@ -1607,6 +1640,33 @@ mod tests {
     }
 
     #[test]
+    fn strict_field_contract_rejects_unregistered_domain_trace_fields() {
+        let document = KirDocument {
+            metadata: Default::default(),
+            elements: vec![KirElement {
+                id: "part.Demo.Vehicle".to_string(),
+                kind: "Model::Systems::PartUsage".to_string(),
+                layer: 2,
+                properties: [
+                    (
+                        "qualified_name".to_string(),
+                        Value::String("Demo.Vehicle".to_string()),
+                    ),
+                    ("satisfy".to_string(), json!(["requirement.Demo.Safe"])),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+        };
+
+        let error = document.validate_strict_field_contract().unwrap_err();
+
+        assert!(
+            matches!(error, KirError::Validation(diagnostics) if diagnostics[0].code == "kir.element.property.unknown")
+        );
+    }
+
+    #[test]
     fn persisted_validation_requires_schema_version() {
         let document = KirDocument {
             metadata: Default::default(),
@@ -1679,7 +1739,13 @@ mod tests {
         }
         .normalized_for_persistence();
 
-        document.validate_persisted().unwrap();
+        document
+            .validate_persisted_with_registered_fields([
+                ("trigger", KirFieldKind::Scalar),
+                ("trigger_kind", KirFieldKind::Scalar),
+                ("source_is_initial", KirFieldKind::Scalar),
+            ])
+            .unwrap();
     }
 
     #[test]
@@ -1714,7 +1780,9 @@ mod tests {
         }
         .normalized_for_persistence();
 
-        document.validate_persisted().unwrap();
+        document
+            .validate_persisted_with_registered_fields([("do_behavior", KirFieldKind::Metadata)])
+            .unwrap();
     }
 
     #[test]

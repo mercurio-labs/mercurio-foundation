@@ -671,11 +671,22 @@ where
                 );
                 if let Some(ty) = ty {
                     if !exists(project, ty) {
-                        blocking_reasons.push(FeasibilityIssue {
-                            kind: FeasibilityIssueKind::ResolutionFailure,
-                            operation_index: Some(index),
-                            message: format!("missing type: {}", ty.qualified_name),
-                        });
+                        if let Some(supporting_change) =
+                            self.supporting_definition_for_missing_usage_type(
+                                container,
+                                &kind.metaclass,
+                                ty,
+                            )
+                        {
+                            *requires_supporting_changes = true;
+                            suggested_supporting_changes.push(supporting_change);
+                        } else {
+                            blocking_reasons.push(FeasibilityIssue {
+                                kind: FeasibilityIssueKind::ResolutionFailure,
+                                operation_index: Some(index),
+                                message: format!("missing type: {}", ty.qualified_name),
+                            });
+                        }
                     } else {
                         let definition_kind = self
                             .semantic_declaration_kind_label(project, ty)
@@ -956,6 +967,48 @@ where
                 self.require_existing(project, element, index, "element", blocking_reasons);
             }
         }
+    }
+
+    fn supporting_definition_for_missing_usage_type(
+        &self,
+        container: &ElementRef,
+        usage_metaclass: &str,
+        ty: &ElementRef,
+    ) -> Option<SemanticMutation> {
+        let authoring = self.legality.authoring_for_element_kind(usage_metaclass)?;
+        if authoring.form != SemanticElementForm::Usage {
+            return None;
+        }
+
+        let definition_keyword = self
+            .legality
+            .supporting_definition_keyword_for_usage(&authoring.keyword)?;
+        let container = parent_ref(ty).unwrap_or_else(|| container.clone());
+        let name = ty
+            .qualified_name
+            .rsplit('.')
+            .next()
+            .unwrap_or(&ty.qualified_name)
+            .to_string();
+
+        Some(
+            self.legality
+                .semantic_kind_for_definition_keyword(&definition_keyword)
+                .map(|metaclass| SemanticMutation::AddElement {
+                    container: container.clone(),
+                    kind: SemanticElementKind::new(metaclass),
+                    name: name.clone(),
+                    ty: None,
+                    specializes: Vec::new(),
+                    properties: Default::default(),
+                })
+                .unwrap_or_else(|| SemanticMutation::AddDefinition {
+                    container,
+                    keyword: definition_keyword,
+                    name,
+                    specializes: Vec::new(),
+                }),
+        )
     }
 
     fn require_existing(

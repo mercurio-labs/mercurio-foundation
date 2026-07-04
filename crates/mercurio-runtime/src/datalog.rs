@@ -181,13 +181,13 @@ impl RulePack {
         std::fs::write(path, content).map_err(|err| DatalogError::Io(err.to_string()))
     }
 
-    pub fn core() -> Self {
+    pub fn structural_core() -> Self {
         Self {
             id: CORE_RULEPACK_ID.to_string(),
             version: CORE_RULEPACK_VERSION.to_string(),
             metadata: BTreeMap::from([(
                 "description".to_string(),
-                Value::String("Core Mercurio derived semantic reasoning rules".to_string()),
+                Value::String("Structural Mercurio derived semantic reasoning rules".to_string()),
             )]),
             facts: Vec::new(),
             rules: vec![
@@ -241,111 +241,18 @@ impl RulePack {
                         atom("owns", [var("Parent"), var("Feature")]),
                     ],
                 ),
-                rule(
-                    "core.requirement.kind",
-                    atom("requirement", [var("Element")]),
-                    [
-                        atom("requirement_kind", [var("Kind")]),
-                        atom("kind", [var("Element"), var("Kind")]),
-                    ],
-                ),
-                rule(
-                    "core.requirement.specialization",
-                    atom("requirement", [var("Element")]),
-                    [
-                        atom("subtype", [var("Element"), var("Parent")]),
-                        atom("requirement", [var("Parent")]),
-                    ],
-                ),
-                rule(
-                    "core.satisfies.direct.satisfy",
-                    atom("satisfies", [var("Source"), var("Requirement")]),
-                    [atom(
-                        "edge",
-                        [var("Source"), constant("satisfy"), var("Requirement")],
-                    )],
-                ),
-                rule(
-                    "core.satisfies.direct.satisfies",
-                    atom("satisfies", [var("Source"), var("Requirement")]),
-                    [atom(
-                        "edge",
-                        [var("Source"), constant("satisfies"), var("Requirement")],
-                    )],
-                ),
-                rule(
-                    "core.satisfies.relationship",
-                    atom("satisfies", [var("Source"), var("Requirement")]),
-                    [
-                        atom("relationship_kind", [var("Rel"), constant("satisfy")]),
-                        atom("kind", [var("Relationship"), var("Rel")]),
-                        atom(
-                            "edge",
-                            [var("Relationship"), constant("source"), var("Source")],
-                        ),
-                        atom(
-                            "edge",
-                            [var("Relationship"), constant("target"), var("Requirement")],
-                        ),
-                    ],
-                ),
-                rule(
-                    "core.verifies.direct.verify",
-                    atom("verifies", [var("Source"), var("Requirement")]),
-                    [atom(
-                        "edge",
-                        [var("Source"), constant("verify"), var("Requirement")],
-                    )],
-                ),
-                rule(
-                    "core.verifies.direct.verifies",
-                    atom("verifies", [var("Source"), var("Requirement")]),
-                    [atom(
-                        "edge",
-                        [var("Source"), constant("verifies"), var("Requirement")],
-                    )],
-                ),
-                rule(
-                    "core.verifies.relationship",
-                    atom("verifies", [var("Source"), var("Requirement")]),
-                    [
-                        atom("relationship_kind", [var("Rel"), constant("verify")]),
-                        atom("kind", [var("Relationship"), var("Rel")]),
-                        atom(
-                            "edge",
-                            [var("Relationship"), constant("source"), var("Source")],
-                        ),
-                        atom(
-                            "edge",
-                            [var("Relationship"), constant("target"), var("Requirement")],
-                        ),
-                    ],
-                ),
             ],
             diagnostics: Vec::new(),
         }
     }
 
-    pub fn metamodel_adapter_from_graph(graph: &Graph) -> Self {
-        let mut facts = BTreeSet::new();
-        for element in graph.elements() {
-            if is_requirement_kind(&element.kind) && !is_trace_relationship_kind(&element.kind) {
-                facts.insert(Fact::new("requirement_kind", [element.kind.to_string()]));
-            }
-            if trace_relationship_role(&element.kind) == Some("satisfy") {
-                facts.insert(Fact::new(
-                    "relationship_kind",
-                    [element.kind.to_string(), "satisfy".to_string()],
-                ));
-            }
-            if trace_relationship_role(&element.kind) == Some("verify") {
-                facts.insert(Fact::new(
-                    "relationship_kind",
-                    [element.kind.to_string(), "verify".to_string()],
-                ));
-            }
-        }
+    #[deprecated(note = "use structural_core(); language trace semantics belong in language rulepacks")]
+    pub fn core() -> Self {
+        Self::structural_core()
+    }
 
+    #[deprecated(note = "language-specific metamodel adapters belong in language crates")]
+    pub fn metamodel_adapter_from_graph(graph: &Graph) -> Self {
         Self {
             id: "mercurio.metamodel.adapter".to_string(),
             version: CORE_RULEPACK_VERSION.to_string(),
@@ -359,7 +266,7 @@ impl RulePack {
                 ),
                 ("elementCount".to_string(), json!(graph.elements().len())),
             ]),
-            facts: facts.into_iter().collect(),
+            facts: Vec::new(),
             rules: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -369,14 +276,14 @@ impl RulePack {
 pub fn load_default_rulepacks() -> Result<Vec<RulePack>, DatalogError> {
     #[cfg(target_arch = "wasm32")]
     {
-        return Ok(vec![RulePack::core()]);
+        return Ok(vec![RulePack::structural_core()]);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = default_stdlib_rulepack_path();
         if !path.exists() {
-            return Ok(vec![RulePack::core()]);
+            return Ok(vec![RulePack::structural_core()]);
         }
 
         Ok(vec![RulePack::from_path(&path)?])
@@ -528,22 +435,6 @@ pub fn extract_graph_facts(graph: &Graph) -> Vec<Fact> {
             [element.element_id.clone(), element.layer.to_string()],
         ));
 
-        if is_requirement_kind(&element.kind) && !is_trace_relationship_kind(&element.kind) {
-            facts.insert(Fact::new("requirement_kind", [element.kind.to_string()]));
-        }
-        if trace_relationship_role(&element.kind) == Some("satisfy") {
-            facts.insert(Fact::new(
-                "relationship_kind",
-                [element.kind.to_string(), "satisfy".to_string()],
-            ));
-        }
-        if trace_relationship_role(&element.kind) == Some("verify") {
-            facts.insert(Fact::new(
-                "relationship_kind",
-                [element.kind.to_string(), "verify".to_string()],
-            ));
-        }
-
         if let Some(metadata) = element.properties.get("metadata") {
             if let Some(file) = metadata.get("source_file").and_then(Value::as_str) {
                 facts.insert(Fact::new(
@@ -609,7 +500,7 @@ pub fn materialize_core_indexes(
     }
 
     let mut facts = extract_graph_facts(graph);
-    let mut packs = vec![RulePack::core()];
+    let mut packs = vec![RulePack::structural_core()];
     packs.extend(rulepacks.iter().cloned());
     for pack in &packs {
         facts.extend(pack.facts.iter().cloned());
@@ -1075,25 +966,6 @@ fn constant(value: &str) -> Term {
     Term::Const(value.to_string())
 }
 
-fn is_requirement_kind(kind: &str) -> bool {
-    kind.contains("Requirement")
-}
-
-fn is_trace_relationship_kind(kind: &str) -> bool {
-    trace_relationship_role(kind).is_some()
-}
-
-fn trace_relationship_role(kind: &str) -> Option<&'static str> {
-    let lower = kind.to_ascii_lowercase();
-    if lower.contains("satisfy") {
-        Some("satisfy")
-    } else if lower.contains("verify") {
-        Some("verify")
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1238,15 +1110,13 @@ mod tests {
                 .inherited_features
                 .contains(&("type.Child".to_string(), "feature.engine".to_string()))
         );
-        assert!(indexes.requirements.contains("req.Braking"));
-        assert_eq!(
-            indexes.verified_by["req.Braking"],
-            ["case.BrakeTest".to_string()].into_iter().collect()
-        );
+        assert!(indexes.requirements.is_empty());
+        assert!(indexes.verified_by.is_empty());
     }
 
     #[test]
-    fn generated_adapter_rulepack_is_deterministic() {
+    #[allow(deprecated)]
+    fn deprecated_generated_adapter_rulepack_is_neutral() {
         let graph = Graph::from_document(KirDocument {
             metadata: Default::default(),
             elements: vec![KirElement {
@@ -1260,13 +1130,7 @@ mod tests {
 
         let rulepack = RulePack::metamodel_adapter_from_graph(&graph);
 
-        assert_eq!(
-            rulepack.facts,
-            vec![Fact::new(
-                "requirement_kind",
-                ["Model::Requirements::RequirementUsage".to_string()]
-            )]
-        );
+        assert!(rulepack.facts.is_empty());
     }
 
     #[test]

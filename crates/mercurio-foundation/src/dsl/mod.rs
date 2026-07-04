@@ -564,7 +564,7 @@ impl RhaiEngine {
             field_names.extend(element.properties.to_btree_map().into_keys());
         }
 
-        let registry = KirFieldRegistry::standard();
+        let registry = KirFieldRegistry::structural();
         let fields = field_names
             .into_iter()
             .map(|name| DslFieldSchema {

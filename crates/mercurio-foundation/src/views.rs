@@ -1152,6 +1152,25 @@ mod tests {
             metadata: BTreeMap::new(),
             elements: vec![
                 KirElement {
+                    id: "metafeature.Model.PartDefinition.related".to_string(),
+                    kind: "MetamodelFeature".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "owner".to_string(),
+                            Value::String("Model::Systems::PartDefinition".to_string()),
+                        ),
+                        (
+                            "kir_property".to_string(),
+                            Value::String("related".to_string()),
+                        ),
+                        (
+                            "feature_kind".to_string(),
+                            Value::String("reference".to_string()),
+                        ),
+                    ]),
+                },
+                KirElement {
                     id: "type.BaseVehicle".to_string(),
                     kind: "Model::Systems::PartDefinition".to_string(),
                     layer: 2,
@@ -1286,6 +1305,25 @@ mod tests {
         let graph = Graph::from_document(KirDocument {
             metadata: BTreeMap::new(),
             elements: vec![
+                KirElement {
+                    id: "metafeature.Model.PartDefinition.related".to_string(),
+                    kind: "MetamodelFeature".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "owner".to_string(),
+                            Value::String("Model::Systems::PartDefinition".to_string()),
+                        ),
+                        (
+                            "kir_property".to_string(),
+                            Value::String("related".to_string()),
+                        ),
+                        (
+                            "feature_kind".to_string(),
+                            Value::String("reference".to_string()),
+                        ),
+                    ]),
+                },
                 KirElement {
                     id: "type.BaseVehicle".to_string(),
                     kind: "Model::Systems::PartDefinition".to_string(),

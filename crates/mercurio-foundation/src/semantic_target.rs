@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 
 use crate::graph::{Graph, NodeId};
-use crate::language::{MetamodelConceptRegistry, SemanticConcept};
+use crate::language::{Concept, MetamodelConceptRegistry};
 use crate::metamodel::element_metatype;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,14 +20,14 @@ pub enum TargetLayers {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticTarget {
-    pub concept: SemanticConcept,
+    pub concept: Concept,
     pub include_subtypes: IncludeSubtypes,
     pub layers: TargetLayers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSemanticTarget {
-    pub concept: SemanticConcept,
+    pub concept: Concept,
     pub anchor_id: String,
     pub matching_metatypes: BTreeSet<String>,
     pub matching_elements: Vec<String>,
@@ -35,7 +35,7 @@ pub struct ResolvedSemanticTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticTargetError {
-    MissingConcept(SemanticConcept),
+    MissingConcept(Concept),
     MissingAnchor(String),
 }
 
@@ -43,7 +43,7 @@ impl fmt::Display for SemanticTargetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingConcept(concept) => {
-                write!(f, "language profile does not define concept {concept:?}")
+                write!(f, "language profile does not define concept {concept}")
             }
             Self::MissingAnchor(anchor) => {
                 write!(f, "semantic anchor not found in graph: {anchor}")
@@ -70,8 +70,8 @@ impl<'a> SemanticTargetResolver<'a> {
     ) -> Result<ResolvedSemanticTarget, SemanticTargetError> {
         let anchor_id = self
             .concepts
-            .canonical_kind(target.concept)
-            .ok_or(SemanticTargetError::MissingConcept(target.concept))?;
+            .canonical_kind(&target.concept)
+            .ok_or_else(|| SemanticTargetError::MissingConcept(target.concept.clone()))?;
         let anchor_node = self
             .graph
             .node_id(anchor_id)
@@ -94,7 +94,7 @@ impl<'a> SemanticTargetResolver<'a> {
             .collect::<Vec<_>>();
 
         Ok(ResolvedSemanticTarget {
-            concept: target.concept,
+            concept: target.concept.clone(),
             anchor_id: anchor_id.to_string(),
             matching_metatypes,
             matching_elements,
@@ -137,8 +137,8 @@ mod tests {
     use serde_json::Value;
 
     use crate::{
-        Graph, KirDocument, KirElement, LanguageProfile, MetamodelConceptRegistry, SemanticConcept,
-        language::SourceLanguage,
+        Concept, Graph, KirDocument, KirElement, LanguageId, LanguageProfile,
+        MetamodelConceptRegistry,
     };
 
     use super::*;
@@ -177,14 +177,14 @@ mod tests {
         let graph = Graph::from_document(document).unwrap();
         let profile = LanguageProfile {
             id: "test".to_string(),
-            language: SourceLanguage::Model,
+            language: LanguageId::from("model"),
             language_version: "2.0".to_string(),
             metamodel_version: "2.0".to_string(),
             stdlib_version: "test".to_string(),
             stdlib_path: "stdlib.kir.json".to_string(),
             kir_schema_version: "0.2".to_string(),
             canonical_kinds: BTreeMap::from([(
-                SemanticConcept::Package,
+                Concept::PACKAGE,
                 "Model::Package".to_string(),
             )]),
             semantic_anchors: BTreeMap::new(),
@@ -193,7 +193,7 @@ mod tests {
         let registry = MetamodelConceptRegistry::from_profile(&profile);
         let resolved = SemanticTargetResolver::new(&graph, &registry)
             .resolve(&SemanticTarget {
-                concept: SemanticConcept::Package,
+                concept: Concept::PACKAGE,
                 include_subtypes: IncludeSubtypes::Yes,
                 layers: TargetLayers::UserModel,
             })

@@ -207,7 +207,7 @@ where
         let mut facts = request.operation.facts();
         facts.extend(request.facts.iter().cloned());
 
-        let mut rulepacks = vec![RulePack::core()];
+        let mut rulepacks = vec![RulePack::structural_core()];
         rulepacks.extend(self.rulepacks.iter().cloned());
         for pack in &rulepacks {
             facts.extend(pack.facts.iter().cloned());

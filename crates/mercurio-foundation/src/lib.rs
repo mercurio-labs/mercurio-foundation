@@ -242,7 +242,7 @@ pub use ir::{
 };
 pub use language::{
     BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
-    LibraryContext, MetamodelConceptRegistry, SemanticConcept, SourceLanguage,
+    Concept, LanguageId, LibraryContext, MetamodelConceptRegistry,
     default_language_profile, default_metamodel_registry, load_language_profile,
 };
 pub use library::{

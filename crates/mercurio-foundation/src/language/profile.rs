@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::ir::KIR_SCHEMA_VERSION;
-use crate::language::concepts::{SemanticConcept, SourceLanguage};
+use crate::language::concepts::{Concept, LanguageId};
 use crate::paths::default_language_profile_path;
 
 pub const CURRENT_DEFAULT_PROFILE_ID: &str = "foundation-core";
@@ -13,14 +13,14 @@ pub const CURRENT_DEFAULT_PROFILE_ID: &str = "foundation-core";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageProfile {
     pub id: String,
-    pub language: SourceLanguage,
+    pub language: LanguageId,
     pub language_version: String,
     pub metamodel_version: String,
     pub stdlib_version: String,
     pub stdlib_path: String,
     pub kir_schema_version: String,
     #[serde(default)]
-    pub canonical_kinds: BTreeMap<SemanticConcept, String>,
+    pub canonical_kinds: BTreeMap<Concept, String>,
     #[serde(default)]
     pub semantic_anchors: BTreeMap<String, String>,
     #[serde(default)]
@@ -119,15 +119,15 @@ pub fn default_language_profile() -> Result<LanguageProfile, LanguageProfileErro
 fn core_language_profile() -> LanguageProfile {
     LanguageProfile {
         id: CURRENT_DEFAULT_PROFILE_ID.to_string(),
-        language: SourceLanguage::Model,
+        language: LanguageId::from("model"),
         language_version: "core".to_string(),
         metamodel_version: "foundation".to_string(),
         stdlib_version: "none".to_string(),
         stdlib_path: "resources/foundation/empty.kir.json".to_string(),
         kir_schema_version: KIR_SCHEMA_VERSION.to_string(),
         canonical_kinds: BTreeMap::from([
-            (SemanticConcept::Package, "model.Package".to_string()),
-            (SemanticConcept::Type, "model.Type".to_string()),
+            (Concept::PACKAGE, "model.Package".to_string()),
+            (Concept::TYPE, "model.Type".to_string()),
         ]),
         semantic_anchors: BTreeMap::new(),
         aliases: BTreeMap::new(),
@@ -143,10 +143,10 @@ mod tests {
         let profile = default_language_profile().unwrap();
 
         assert_eq!(profile.id, CURRENT_DEFAULT_PROFILE_ID);
-        assert_eq!(profile.language, SourceLanguage::Model);
+        assert_eq!(profile.language.as_str(), "model");
         assert_eq!(profile.stdlib_version, "none");
         assert_eq!(
-            profile.canonical_kinds[&SemanticConcept::Package],
+            profile.canonical_kinds[&Concept::PACKAGE],
             "model.Package"
         );
         assert!(!profile.semantic_anchors.contains_key("requirement_usage"));

@@ -1,1 +1,1 @@
-pub use mercurio_language_contracts::{SemanticConcept, SourceLanguage};
+pub use mercurio_language_contracts::{Concept, LanguageId};
