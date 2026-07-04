@@ -9,16 +9,28 @@
 //! modules are hidden from generated documentation so the rustdoc surface
 //! reflects the intended API contract.
 
-pub mod ai_review;
-pub mod analysis;
+pub mod ai_review {
+    pub use mercurio_analysis::ai_review::*;
+}
+pub mod analysis {
+    pub use mercurio_analysis::analysis::*;
+}
 #[doc(hidden)]
-pub mod assessment;
+pub mod assessment {
+    pub use mercurio_analysis::assessment::*;
+}
 #[doc(hidden)]
-pub mod authoring;
+pub mod authoring {
+    pub use mercurio_authoring::authoring::*;
+}
 #[doc(hidden)]
-pub mod capability;
+pub mod capability {
+    pub use mercurio_analysis::capability::*;
+}
 #[doc(hidden)]
-pub mod cognitive;
+pub mod cognitive {
+    pub use mercurio_analysis::cognitive::*;
+}
 #[doc(hidden)]
 pub mod datalog {
     pub use mercurio_runtime::{
@@ -38,8 +50,6 @@ pub mod derived {
     };
 }
 #[doc(hidden)]
-pub mod element_view;
-#[doc(hidden)]
 pub mod expression {
     pub use mercurio_model::{
         BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
@@ -48,13 +58,19 @@ pub mod expression {
     };
 }
 #[doc(hidden)]
-pub mod feasibility;
+pub mod feasibility {
+    pub use mercurio_semantic_services::feasibility::*;
+}
 #[doc(hidden)]
 #[allow(unused_imports)]
-pub mod frontend;
+pub mod frontend {
+    pub use mercurio_authoring::frontend::*;
+}
 #[allow(deprecated)]
 #[doc(hidden)]
-pub mod goal;
+pub mod goal {
+    pub use mercurio_analysis::goal::*;
+}
 #[doc(hidden)]
 pub mod graph {
     pub use mercurio_model::{
@@ -62,13 +78,19 @@ pub mod graph {
     };
 }
 #[doc(hidden)]
-pub mod identity;
+pub mod identity {
+    pub use mercurio_semantic_services::identity::*;
+}
 #[doc(hidden)]
 pub mod ir;
 #[doc(hidden)]
-pub mod language;
+pub mod language {
+    pub use mercurio_codegen::language::*;
+}
 #[doc(hidden)]
-pub mod library;
+pub mod library {
+    pub use mercurio_workspace::library::*;
+}
 #[doc(hidden)]
 pub mod logging;
 #[doc(hidden)]
@@ -90,26 +112,46 @@ pub mod metamodel {
         query_element_attributes, validate_derived_metamodel_semantics,
     };
 }
-pub mod dsl;
-pub mod model_state;
+pub mod dsl {
+    pub use mercurio_query_dsl::dsl::*;
+}
+pub mod model_state {
+    pub use mercurio_workspace::model_state::*;
+}
 #[doc(hidden)]
-pub mod mpack;
+pub mod mpack {
+    pub use mercurio_workspace::mpack::*;
+}
 #[doc(hidden)]
-pub mod mutation;
+pub mod mutation {
+    pub use mercurio_semantic_services::mutation::*;
+}
 #[doc(hidden)]
-pub mod outline;
+pub mod outline {
+    pub use mercurio_authoring::outline::*;
+}
 #[doc(hidden)]
-pub mod paths;
+pub mod paths {
+    pub use mercurio_workspace::paths::*;
+}
 #[doc(hidden)]
-pub mod performance;
+pub mod performance {
+    pub use mercurio_workspace::performance::*;
+}
 #[doc(hidden)]
-pub mod plugin_registry;
+pub mod plugin_registry {
+    pub use mercurio_workspace::plugin_registry::*;
+}
 #[doc(hidden)]
 pub mod proposal;
 #[doc(hidden)]
-pub mod python_codegen;
+pub mod python_codegen {
+    pub use mercurio_codegen::python_codegen::*;
+}
 #[doc(hidden)]
-pub mod query;
+pub mod query {
+    pub use mercurio_query_dsl::query::*;
+}
 #[doc(hidden)]
 pub mod runtime {
     pub use mercurio_runtime::{
@@ -118,31 +160,51 @@ pub mod runtime {
     };
 }
 #[doc(hidden)]
-pub mod semantic_compare;
-pub mod semantic_legality;
-pub mod semantic_next_actions;
+pub mod semantic_compare {
+    pub use mercurio_analysis::semantic_compare::*;
+}
+pub mod semantic_legality {
+    pub use mercurio_semantic_services::semantic_legality::*;
+}
+pub mod semantic_next_actions {
+    pub use mercurio_semantic_services::semantic_next_actions::*;
+}
 #[doc(hidden)]
-pub mod semantic_profile;
+pub mod semantic_profile {
+    pub use mercurio_semantic_services::semantic_profile::*;
+}
 #[doc(hidden)]
 pub mod semantic_target;
 #[doc(hidden)]
-pub mod semantic_validation;
+pub mod semantic_validation {
+    pub use mercurio_semantic_services::semantic_validation::*;
+}
 #[doc(hidden)]
-pub mod session;
+pub mod session {
+    pub use mercurio_session::session::*;
+}
 #[doc(hidden)]
-pub mod source_set;
+pub mod source_set {
+    pub use mercurio_authoring::source_set::*;
+}
 #[doc(hidden)]
-pub mod syntax_compare;
-#[cfg(test)]
-pub(crate) mod test_support;
-pub mod transaction;
-pub mod variant;
+pub mod syntax_compare {
+    pub use mercurio_authoring::syntax_compare::*;
+}
+pub mod transaction {
+    pub use mercurio_session::transaction::*;
+}
+pub mod variant {
+    pub use mercurio_semantic_services::variant::*;
+}
 #[doc(hidden)]
-pub mod views;
+pub mod workspace {
+    pub use mercurio_workspace::workspace::*;
+}
 #[doc(hidden)]
-pub mod workspace;
-#[doc(hidden)]
-pub mod workspace_cache;
+pub mod workspace_cache {
+    pub use mercurio_workspace::workspace_cache::*;
+}
 
 pub use ai_review::{
     AI_MUTATION_REVIEW_SCHEMA_VERSION, SemanticMutationFeedbackSummary,
@@ -177,8 +239,8 @@ pub use capability::{
     EvidenceNode, EvidenceNodeKind, EvidenceRelation, GenericImpactCapability,
     GenericModelInspectionCapability, InsightConfidence, InsightKind, InsightPolarity,
     InsightScope, InsightSeverity, PatchConfidence, SemanticArtifact, SemanticCapability,
-    SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticElementRef, SemanticInsight,
-    SemanticWorkspaceSnapshot, assess_decision_context,
+    SemanticDiagnostic, SemanticDiagnosticSeverity, SemanticInsight, SemanticWorkspaceSnapshot,
+    assess_decision_context,
 };
 pub use cognitive::{
     CognitiveCandidate, CognitiveCitation, CognitiveConfidence, CognitiveContext,
@@ -206,7 +268,6 @@ pub use dsl::{
     DslError, DslExecutionLimits, DslExtensionSpec, DslFieldSchema, DslModelSetFunction,
     DslQueryReport, DslQueryRequest, DslQueryResult, DslSchema, RhaiEngine,
 };
-pub use element_view::ElementView;
 pub use expression::{
     BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
     ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
@@ -241,9 +302,9 @@ pub use ir::{
     load_model_stack, load_model_stack_with_registry,
 };
 pub use language::{
-    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
-    Concept, LanguageId, LibraryContext, MetamodelConceptRegistry,
-    default_language_profile, default_metamodel_registry, load_language_profile,
+    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, Concept, LanguageId, LanguageProfile,
+    LanguageProfileError, LibraryContext, MetamodelConceptRegistry, default_language_profile,
+    default_metamodel_registry, load_language_profile,
 };
 pub use library::{
     BaselineLibraryConfig, KparLocator, KparPackageBuild, KparPackageSource, LibraryCacheMetadata,
@@ -395,15 +456,6 @@ pub use variant::{
     CoreSemanticVariantService, SEMANTIC_VARIANT_SCHEMA_VERSION, SemanticVariantAuthority,
     SemanticVariantCapabilityContext, SemanticVariantPreview, SemanticVariantRequest,
     SemanticVariantService, SemanticVariantStatus, default_semantic_variant_capability_context,
-};
-pub use views::{
-    ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
-    ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
-    InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto, L2ExplorerNodeDto,
-    L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto, MetatypeExplorerGraphDto,
-    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, ModelMetadataDto, SearchResultDto,
-    document_model_metadata_view, element_details, graph_view, l2_explorer_view, library_tree_view,
-    library_tree_view_from_document, metatype_explorer_view, model_metadata_view, search_view,
 };
 pub use workspace::{
     ProjectDescriptor, ProjectExtensionDescriptor, ProjectModelConfig, ResolvedWorkspaceContext,
