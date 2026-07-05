@@ -15,16 +15,16 @@ use mercurio_runtime::{Runtime, RuntimeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GraphScope {
-    L2,
-    L2PlusContext,
+    Model,
+    ModelPlusContext,
     Full,
 }
 
 impl GraphScope {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::L2 => "l2",
-            Self::L2PlusContext => "l2_plus_context",
+            Self::Model => "model",
+            Self::ModelPlusContext => "model_plus_context",
             Self::Full => "full",
         }
     }
@@ -32,13 +32,13 @@ impl GraphScope {
     pub fn from_query(value: Option<&str>) -> Self {
         match value {
             Some("full") => Self::Full,
-            Some("l2_plus_context") => Self::L2PlusContext,
-            Some("l2") | None | Some(_) => Self::L2,
+            Some("model_plus_context") => Self::ModelPlusContext,
+            Some("model") | None | Some(_) => Self::Model,
         }
     }
 
     pub fn all() -> Vec<String> {
-        [Self::L2, Self::L2PlusContext, Self::Full]
+        [Self::Model, Self::ModelPlusContext, Self::Full]
             .into_iter()
             .map(|scope| scope.as_str().to_string())
             .collect()
@@ -92,7 +92,7 @@ pub struct MetatypeExplorerRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct L2ExplorerRequestDto {
+pub struct ModelExplorerRequestDto {
     pub seed_id: String,
     #[serde(default)]
     pub expanded_parents: Vec<String>,
@@ -137,14 +137,14 @@ pub struct MetatypeExplorerEdgeDto {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct L2ExplorerGraphDto {
+pub struct ModelExplorerGraphDto {
     pub seed_id: String,
-    pub nodes: Vec<L2ExplorerNodeDto>,
-    pub edges: Vec<L2ExplorerEdgeDto>,
+    pub nodes: Vec<ModelExplorerNodeDto>,
+    pub edges: Vec<ModelExplorerEdgeDto>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct L2ExplorerNodeDto {
+pub struct ModelExplorerNodeDto {
     pub id: String,
     pub label: String,
     pub kind: String,
@@ -156,7 +156,7 @@ pub struct L2ExplorerNodeDto {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct L2ExplorerEdgeDto {
+pub struct ModelExplorerEdgeDto {
     pub id: String,
     pub source: String,
     pub target: String,
@@ -310,7 +310,7 @@ pub fn model_metadata_view(graph: &Graph, stdlib_document: &KirDocument) -> Mode
         layers,
         relations,
         graph_scopes: GraphScope::all(),
-        default_graph_scope: GraphScope::L2.as_str().to_string(),
+        default_graph_scope: GraphScope::Model.as_str().to_string(),
     }
 }
 
@@ -332,7 +332,7 @@ pub fn document_model_metadata_view(document: &KirDocument) -> ModelMetadataDto 
         layers,
         relations: Vec::new(),
         graph_scopes: GraphScope::all(),
-        default_graph_scope: GraphScope::L2.as_str().to_string(),
+        default_graph_scope: GraphScope::Model.as_str().to_string(),
     }
 }
 
@@ -463,10 +463,10 @@ pub fn metatype_explorer_view(
     })
 }
 
-pub fn l2_explorer_view(
+pub fn model_explorer_view(
     graph: &Graph,
-    request: &L2ExplorerRequestDto,
-) -> Option<L2ExplorerGraphDto> {
+    request: &ModelExplorerRequestDto,
+) -> Option<ModelExplorerGraphDto> {
     let seed = graph.element_by_element_id(&request.seed_id)?;
     if seed.layer != 2 {
         return None;
@@ -532,7 +532,7 @@ pub fn l2_explorer_view(
     let mut nodes = visible_ids
         .iter()
         .filter_map(|node_id| graph.element(*node_id))
-        .map(|element| l2_explorer_node(graph, element, seed.id))
+        .map(|element| model_explorer_node(graph, element, seed.id))
         .collect::<Vec<_>>();
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
 
@@ -560,7 +560,7 @@ pub fn l2_explorer_view(
         for node_id in &visible_ids {
             for edge in graph.outgoing_edges(*node_id) {
                 if !visible_ids.contains(&edge.target)
-                    || !include_l2_reference_relation(&edge.relation)
+                    || !include_model_reference_relation(&edge.relation)
                 {
                     continue;
                 }
@@ -581,7 +581,7 @@ pub fn l2_explorer_view(
 
     let edges = edge_keys
         .into_iter()
-        .map(|(source, target, relation)| L2ExplorerEdgeDto {
+        .map(|(source, target, relation)| ModelExplorerEdgeDto {
             id: format!("{relation}:{source}->{target}"),
             source,
             target,
@@ -589,7 +589,7 @@ pub fn l2_explorer_view(
         })
         .collect();
 
-    Some(L2ExplorerGraphDto {
+    Some(ModelExplorerGraphDto {
         seed_id: seed.element_id.clone(),
         nodes,
         edges,
@@ -736,15 +736,15 @@ fn collect_graph_scope_ids(graph: &Graph, scope: GraphScope) -> BTreeSet<u32> {
         .elements()
         .iter()
         .filter(|element| match scope {
-            GraphScope::L2 | GraphScope::L2PlusContext => element.layer == 2,
+            GraphScope::Model | GraphScope::ModelPlusContext => element.layer == 2,
             GraphScope::Full => true,
         })
         .map(|element| element.id)
         .collect::<BTreeSet<_>>();
 
-    if scope == GraphScope::L2PlusContext {
-        let l2_ids = visible_ids.iter().copied().collect::<Vec<_>>();
-        for node_id in l2_ids {
+    if scope == GraphScope::ModelPlusContext {
+        let model_ids = visible_ids.iter().copied().collect::<Vec<_>>();
+        for node_id in model_ids {
             for edge in graph.outgoing_edges(node_id) {
                 visible_ids.insert(edge.target);
             }
@@ -785,11 +785,11 @@ fn metatype_explorer_node(
     }
 }
 
-fn l2_explorer_node(graph: &Graph, element: &Element, seed_id: u32) -> L2ExplorerNodeDto {
+fn model_explorer_node(graph: &Graph, element: &Element, seed_id: u32) -> ModelExplorerNodeDto {
     let mut attributes = owned_feature_attributes(graph, element);
     attributes.sort_by(|left, right| left.name.cmp(&right.name));
 
-    L2ExplorerNodeDto {
+    ModelExplorerNodeDto {
         id: element.element_id.clone(),
         label: label_for_id(&element.element_id),
         kind: element.kind.to_string(),
@@ -815,7 +815,7 @@ fn l2_explorer_node(graph: &Graph, element: &Element, seed_id: u32) -> L2Explore
     }
 }
 
-fn include_l2_reference_relation(relation: &str) -> bool {
+fn include_model_reference_relation(relation: &str) -> bool {
     !matches!(relation, "specializes" | "owner" | "metatype")
 }
 
@@ -997,13 +997,13 @@ mod tests {
     use mercurio_model::{Graph, MetamodelAttributeRegistry};
 
     use super::{
-        GraphScope, L2ExplorerRequestDto, MetatypeExplorerRequestDto, document_model_metadata_view,
-        element_details, graph_view, l2_explorer_view, library_tree_view, metatype_explorer_view,
-        model_metadata_view, search_view,
+        GraphScope, MetatypeExplorerRequestDto, ModelExplorerRequestDto,
+        document_model_metadata_view, element_details, graph_view, library_tree_view,
+        metatype_explorer_view, model_explorer_view, model_metadata_view, search_view,
     };
 
     #[test]
-    fn graph_view_l2_plus_context_includes_connected_library_nodes() {
+    fn graph_view_model_plus_context_includes_connected_library_nodes() {
         let graph = Graph::from_document(KirDocument {
             metadata: BTreeMap::new(),
             elements: vec![
@@ -1026,13 +1026,13 @@ mod tests {
         })
         .unwrap();
 
-        let l2 = graph_view(&graph, GraphScope::L2);
-        let l2_plus_context = graph_view(&graph, GraphScope::L2PlusContext);
+        let model = graph_view(&graph, GraphScope::Model);
+        let model_plus_context = graph_view(&graph, GraphScope::ModelPlusContext);
 
-        assert_eq!(l2.nodes.len(), 1);
-        assert_eq!(l2_plus_context.nodes.len(), 2);
-        assert_eq!(l2_plus_context.edges.len(), 1);
-        assert_eq!(l2_plus_context.edges[0].relation, "metatype");
+        assert_eq!(model.nodes.len(), 1);
+        assert_eq!(model_plus_context.nodes.len(), 2);
+        assert_eq!(model_plus_context.edges.len(), 1);
+        assert_eq!(model_plus_context.edges[0].relation, "metatype");
     }
 
     #[test]
@@ -1075,7 +1075,7 @@ mod tests {
         assert_eq!(metadata.library_version.as_deref(), Some("test-stdlib"));
         assert_eq!(metadata.layers, vec![1, 2]);
         assert_eq!(metadata.relations, vec!["metatype"]);
-        assert_eq!(metadata.default_graph_scope, GraphScope::L2.as_str());
+        assert_eq!(metadata.default_graph_scope, GraphScope::Model.as_str());
     }
 
     #[test]
@@ -1302,7 +1302,7 @@ mod tests {
     }
 
     #[test]
-    fn l2_explorer_view_includes_owned_feature_attributes_and_reference_edges() {
+    fn model_explorer_view_includes_owned_feature_attributes_and_reference_edges() {
         let graph = Graph::from_document(KirDocument {
             metadata: BTreeMap::new(),
             elements: vec![
@@ -1375,9 +1375,9 @@ mod tests {
         })
         .unwrap();
 
-        let view = l2_explorer_view(
+        let view = model_explorer_view(
             &graph,
-            &L2ExplorerRequestDto {
+            &ModelExplorerRequestDto {
                 seed_id: "type.Vehicle".to_string(),
                 expanded_parents: Vec::new(),
                 expanded_children: vec!["type.Vehicle".to_string()],

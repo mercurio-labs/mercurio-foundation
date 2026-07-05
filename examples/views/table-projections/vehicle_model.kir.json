@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "kir_schema_version": "0.4"
+  },
+  "elements": [
+    {
+      "id": "pkg.VehicleSystem",
+      "kind": "Package",
+      "layer": 2,
+      "properties": {
+        "declared_name": "VehicleSystem",
+        "qualified_name": "VehicleSystem"
+      }
+    },
+    {
+      "id": "part.VehicleSystem.Vehicle",
+      "kind": "PartDefinition",
+      "layer": 2,
+      "properties": {
+        "declared_name": "Vehicle",
+        "qualified_name": "VehicleSystem.Vehicle",
+        "owner": "pkg.VehicleSystem"
+      }
+    },
+    {
+      "id": "feature.VehicleSystem.Vehicle.controller",
+      "kind": "PartUsage",
+      "layer": 2,
+      "properties": {
+        "declared_name": "controller",
+        "qualified_name": "VehicleSystem.Vehicle.controller",
+        "owner": "part.VehicleSystem.Vehicle"
+      }
+    },
+    {
+      "id": "req.VehicleSystem.SafeStart",
+      "kind": "RequirementUsage",
+      "layer": 2,
+      "properties": {
+        "declared_name": "SafeStart",
+        "qualified_name": "VehicleSystem.SafeStart",
+        "owner": "pkg.VehicleSystem",
+        "requirement_id": "REQ-001",
+        "text": "The vehicle shall prevent unsafe starts.",
+        "metadata": {
+          "Review": {
+            "properties": {
+              "status": "approved",
+              "owner": "Systems Team"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "req.VehicleSystem.Braking",
+      "kind": "RequirementUsage",
+      "layer": 2,
+      "properties": {
+        "declared_name": "Braking",
+        "qualified_name": "VehicleSystem.Braking",
+        "owner": "pkg.VehicleSystem",
+        "requirement_id": "REQ-002",
+        "text": "The vehicle shall stop within the required distance.",
+        "metadata": {
+          "Review": {
+            "properties": {
+              "status": "draft",
+              "owner": "Safety Team"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+

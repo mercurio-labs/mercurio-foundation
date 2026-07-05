@@ -1,0 +1,42 @@
+{
+  "schema": "mercurio.view.v1",
+  "version": 1,
+  "kind": "table",
+  "mode": "visualization",
+  "table": {
+    "version": 1,
+    "kind": "model_elements",
+    "title": "Requirements - Row Expressions",
+    "scope": {
+      "kind": "containment_subtree",
+      "root": "pkg.VehicleSystem"
+    },
+    "row_type": {
+      "type": "Requirement",
+      "include_subtypes": true
+    },
+    "columns": [
+      {
+        "key": "name",
+        "label": "Name",
+        "expression": "row.name"
+      },
+      {
+        "key": "parent_name",
+        "label": "Parent",
+        "expression": "row.parent.name"
+      },
+      {
+        "key": "status",
+        "label": "Review Status",
+        "expression": "row.metadata[Review].status"
+      },
+      {
+        "key": "text",
+        "label": "Text",
+        "expression": "row.text"
+      }
+    ]
+  }
+}
+

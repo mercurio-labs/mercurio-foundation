@@ -1,0 +1,42 @@
+{
+  "schema": "mercurio.view.v1",
+  "version": 1,
+  "kind": "table",
+  "mode": "visualization",
+  "table": {
+    "version": 1,
+    "kind": "model_elements",
+    "title": "Requirements - Direct Paths",
+    "scope": {
+      "kind": "containment_subtree",
+      "root": "pkg.VehicleSystem"
+    },
+    "row_type": {
+      "type": "Requirement",
+      "include_subtypes": true
+    },
+    "columns": [
+      {
+        "key": "id",
+        "label": "ID",
+        "path": "requirement_id"
+      },
+      {
+        "key": "name",
+        "label": "Name",
+        "path": "name"
+      },
+      {
+        "key": "parent_name",
+        "label": "Parent",
+        "path": "parent.name"
+      },
+      {
+        "key": "text",
+        "label": "Text",
+        "path": "text"
+      }
+    ]
+  }
+}
+

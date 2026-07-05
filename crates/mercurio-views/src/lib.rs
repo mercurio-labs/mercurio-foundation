@@ -21,11 +21,12 @@ pub use element_view::ElementView;
 pub use model_views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
     ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
-    InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto, L2ExplorerNodeDto,
-    L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto, MetatypeExplorerGraphDto,
-    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, ModelMetadataDto, SearchResultDto,
-    document_model_metadata_view, element_details, graph_view, l2_explorer_view, library_tree_view,
-    library_tree_view_from_document, metatype_explorer_view, model_metadata_view, search_view,
+    InheritedPropertyValueDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto,
+    MetatypeExplorerGraphDto, MetatypeExplorerNodeDto, MetatypeExplorerRequestDto,
+    ModelExplorerEdgeDto, ModelExplorerGraphDto, ModelExplorerNodeDto, ModelExplorerRequestDto,
+    ModelMetadataDto, SearchResultDto, document_model_metadata_view, element_details, graph_view,
+    library_tree_view, library_tree_view_from_document, metatype_explorer_view,
+    model_explorer_view, model_metadata_view, search_view,
 };
 
 const DEFAULT_MAX_DEPTH: usize = 8;
@@ -160,6 +161,39 @@ pub struct DiagramRenderRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ModelViewKindDto {
+    Metadata,
+    Graph,
+    Search,
+    ElementDetails,
+    LibraryTree,
+    ModelExplorer,
+    MetatypeExplorer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelViewSpecDto {
+    pub version: u8,
+    pub kind: ModelViewKindDto,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub expanded_parents: Vec<String>,
+    #[serde(default)]
+    pub expanded_children: Vec<String>,
+    #[serde(default = "default_true")]
+    pub include_reference_edges: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ViewModeDto {
     Visualization,
     Creation,
@@ -171,12 +205,12 @@ pub struct ViewDocumentDto {
     pub version: u8,
     pub kind: String,
     pub mode: ViewModeDto,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub parameters: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagram: Option<DiagramSpecDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<TableSpecDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelViewSpecDto>,
 }
 
 impl ViewDocumentDto {
@@ -186,9 +220,9 @@ impl ViewDocumentDto {
             version: VIEW_SPEC_VERSION,
             kind: format!("diagram.{}", diagram_kind_name(&spec.kind)),
             mode: ViewModeDto::Visualization,
-            parameters: BTreeMap::new(),
             diagram: Some(spec),
             table: None,
+            model: None,
         }
     }
 
@@ -198,9 +232,21 @@ impl ViewDocumentDto {
             version: VIEW_SPEC_VERSION,
             kind: "table".to_string(),
             mode: ViewModeDto::Visualization,
-            parameters: BTreeMap::new(),
             diagram: None,
             table: Some(spec),
+            model: None,
+        }
+    }
+
+    pub fn model(spec: ModelViewSpecDto) -> Self {
+        Self {
+            schema: VIEW_SCHEMA.to_string(),
+            version: VIEW_SPEC_VERSION,
+            kind: model_view_kind_name(&spec.kind).to_string(),
+            mode: ViewModeDto::Visualization,
+            diagram: None,
+            table: None,
+            model: Some(spec),
         }
     }
 }
@@ -208,8 +254,31 @@ impl ViewDocumentDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TableKindDto {
+    ModelElements,
     Elements,
     Requirements,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TableScopeDto {
+    WholeModel,
+    ContainmentSubtree { root: String },
+    ExplicitElements { elements: Vec<String> },
+}
+
+impl Default for TableScopeDto {
+    fn default() -> Self {
+        Self::WholeModel
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableRowTypeDto {
+    #[serde(rename = "type")]
+    pub type_name: String,
+    #[serde(default = "default_true")]
+    pub include_subtypes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -218,6 +287,8 @@ pub struct TableColumnSpecDto {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -231,6 +302,10 @@ pub struct TableSpecDto {
     pub root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_type: Option<String>,
+    #[serde(default)]
+    pub scope: TableScopeDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_type: Option<TableRowTypeDto>,
     #[serde(default)]
     pub query: DiagramQueryOptionsDto,
     #[serde(default)]
@@ -387,7 +462,11 @@ pub fn list_diagram_kinds() -> Vec<DiagramKindDto> {
 }
 
 pub fn list_table_kinds() -> Vec<TableKindDto> {
-    vec![TableKindDto::Elements, TableKindDto::Requirements]
+    vec![
+        TableKindDto::ModelElements,
+        TableKindDto::Elements,
+        TableKindDto::Requirements,
+    ]
 }
 
 pub fn validate_view_document(
@@ -408,8 +487,8 @@ pub fn validate_view_document(
             format!("expected version {VIEW_SPEC_VERSION}"),
         ));
     }
-    match (&document.diagram, &document.table) {
-        (Some(diagram), None) => {
+    match (&document.diagram, &document.table, &document.model) {
+        (Some(diagram), None, None) => {
             let expected = format!("diagram.{}", diagram_kind_name(&diagram.kind));
             if document.kind != expected {
                 diagnostics.push(view_diagnostic(
@@ -420,7 +499,7 @@ pub fn validate_view_document(
             }
             validate_diagram_spec(diagram, "/diagram", &mut diagnostics);
         }
-        (None, Some(table)) => {
+        (None, Some(table), None) => {
             let expected = "table";
             if document.kind != expected {
                 diagnostics.push(view_diagnostic(
@@ -431,19 +510,26 @@ pub fn validate_view_document(
             }
             validate_table_spec(table, "/table", &mut diagnostics);
         }
-        (None, None) => {
-            if document.kind.trim().is_empty() {
+        (None, None, Some(model)) => {
+            let expected = model_view_kind_name(&model.kind);
+            if document.kind != expected {
                 diagnostics.push(view_diagnostic(
                     "view.kind",
                     "/kind",
-                    "view kind is required when no inline payload is provided".to_string(),
+                    format!("expected kind `{expected}` for model view payload"),
                 ));
             }
+            validate_model_view_spec(model, "/model", &mut diagnostics);
         }
-        (Some(_), Some(_)) => diagnostics.push(view_diagnostic(
+        (None, None, None) => diagnostics.push(view_diagnostic(
             "view.payload",
             "/",
-            "view document must not contain multiple payloads".to_string(),
+            "view document must contain exactly one payload".to_string(),
+        )),
+        _ => diagnostics.push(view_diagnostic(
+            "view.payload",
+            "/",
+            "view document must contain exactly one payload".to_string(),
         )),
     }
 
@@ -451,6 +537,61 @@ pub fn validate_view_document(
         Ok(())
     } else {
         Err(diagnostics)
+    }
+}
+
+fn validate_model_view_spec(
+    spec: &ModelViewSpecDto,
+    path: &str,
+    diagnostics: &mut Vec<ViewValidationDiagnostic>,
+) {
+    if spec.version != VIEW_SPEC_VERSION {
+        diagnostics.push(view_diagnostic(
+            "view.spec.version",
+            format!("{path}/version"),
+            format!("expected spec version {VIEW_SPEC_VERSION}"),
+        ));
+    }
+    if spec.title.trim().is_empty() {
+        diagnostics.push(view_diagnostic(
+            "view.spec.title",
+            format!("{path}/title"),
+            "title is required".to_string(),
+        ));
+    }
+    match spec.kind {
+        ModelViewKindDto::Search if spec.query.as_deref().unwrap_or_default().trim().is_empty() => {
+            diagnostics.push(view_diagnostic(
+                "view.model.query",
+                format!("{path}/query"),
+                "search view query is required".to_string(),
+            ));
+        }
+        ModelViewKindDto::ElementDetails
+        | ModelViewKindDto::ModelExplorer
+        | ModelViewKindDto::MetatypeExplorer
+            if spec.root.as_deref().unwrap_or_default().trim().is_empty() =>
+        {
+            diagnostics.push(view_diagnostic(
+                "view.model.root",
+                format!("{path}/root"),
+                "model view root is required".to_string(),
+            ));
+        }
+        _ => {}
+    }
+    if matches!(spec.kind, ModelViewKindDto::Graph) {
+        let scope = spec
+            .graph_scope
+            .as_deref()
+            .unwrap_or(GraphScope::Model.as_str());
+        if !matches!(scope, "model" | "model_plus_context" | "full") {
+            diagnostics.push(view_diagnostic(
+                "view.model.graph_scope",
+                format!("{path}/graph_scope"),
+                "graph scope must be one of model, model_plus_context, full".to_string(),
+            ));
+        }
     }
 }
 
@@ -483,6 +624,24 @@ fn validate_table_spec(
     diagnostics: &mut Vec<ViewValidationDiagnostic>,
 ) {
     validate_common_spec(spec.version, &spec.title, &spec.query, path, diagnostics);
+    if let TableScopeDto::ContainmentSubtree { root } = &spec.scope {
+        if root.trim().is_empty() {
+            diagnostics.push(view_diagnostic(
+                "view.table.scope.root",
+                format!("{path}/scope/root"),
+                "containment subtree scope root is required".to_string(),
+            ));
+        }
+    }
+    if let Some(row_type) = &spec.row_type {
+        if row_type.type_name.trim().is_empty() {
+            diagnostics.push(view_diagnostic(
+                "view.table.row_type.type",
+                format!("{path}/row_type/type"),
+                "row type is required".to_string(),
+            ));
+        }
+    }
     let mut column_keys = BTreeSet::new();
     for (index, column) in spec.columns.iter().enumerate() {
         if column.key.trim().is_empty() {
@@ -512,6 +671,13 @@ fn validate_table_spec(
                 format!("{path}/columns/{index}/path"),
                 diagnostics,
             );
+        }
+        if let Some(expression) = &column.expression {
+            validate_column_expression(
+                expression,
+                format!("{path}/columns/{index}/expression"),
+                diagnostics,
+            );
         } else {
             validate_column_path(
                 &column.key,
@@ -520,6 +686,28 @@ fn validate_table_spec(
             );
         }
     }
+}
+
+fn validate_column_expression(
+    expression: &str,
+    path: String,
+    diagnostics: &mut Vec<ViewValidationDiagnostic>,
+) {
+    let expression = expression.trim();
+    if expression.is_empty() {
+        diagnostics.push(view_diagnostic(
+            "view.table.column.expression",
+            path,
+            "column expression must not be empty".to_string(),
+        ));
+        return;
+    }
+    let navigation = expression
+        .strip_prefix("row.")
+        .or_else(|| expression.strip_prefix("<row_element>."))
+        .or_else(|| expression.strip_prefix("self."))
+        .unwrap_or(expression);
+    validate_column_path(navigation, path, diagnostics);
 }
 
 fn validate_column_path(
@@ -598,7 +786,9 @@ pub fn render_table(
     }
 
     match spec.kind {
-        TableKindDto::Elements => render_elements_table(graph, metamodel_registry, &mut spec),
+        TableKindDto::ModelElements | TableKindDto::Elements => {
+            render_elements_table(graph, metamodel_registry, &mut spec)
+        }
         TableKindDto::Requirements => {
             render_requirements_table(graph, metamodel_registry, &mut spec)
         }
@@ -610,7 +800,7 @@ fn render_elements_table(
     metamodel_registry: &MetamodelAttributeRegistry,
     spec: &mut TableSpecDto,
 ) -> Result<TableViewDto, TableError> {
-    let target_type = normalized_target_type(spec.target_type.as_deref());
+    let target_type = table_row_type_name(spec);
     let available_columns =
         available_table_columns(graph, metamodel_registry, target_type.as_deref());
     let columns = if spec.columns.is_empty() {
@@ -618,21 +808,13 @@ fn render_elements_table(
     } else {
         spec.columns.clone()
     };
-    let visible_ids = if let Some(root) =
-        spec.root.as_deref().filter(|root| !root.trim().is_empty())
-    {
-        let root =
-            resolve_root(graph, root).ok_or_else(|| TableError::RootNotFound(root.to_string()))?;
-        collect_structure_ids(graph, root.id, &spec.query, &default_diagram_relations()).visible_ids
-    } else {
-        graph.elements().iter().map(|element| element.id).collect()
-    };
+    let visible_ids = table_scope_ids(graph, spec, &default_diagram_relations())?;
 
     let mut rows = visible_ids
         .iter()
         .filter_map(|node_id| graph.element(*node_id))
         .filter(|element| include_element(element, &spec.query))
-        .filter(|element| table_target_matches(graph, element, target_type.as_deref()))
+        .filter(|element| table_target_matches(graph, element, spec, target_type.as_deref()))
         .map(|element| table_row(graph, element, &columns))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.id.cmp(&right.id));
@@ -656,8 +838,7 @@ fn render_requirements_table(
     metamodel_registry: &MetamodelAttributeRegistry,
     spec: &mut TableSpecDto,
 ) -> Result<TableViewDto, TableError> {
-    let target_type = normalized_target_type(spec.target_type.as_deref())
-        .or_else(|| Some("Requirement".to_string()));
+    let target_type = table_row_type_name(spec).or_else(|| Some("Requirement".to_string()));
     let available_columns =
         available_table_columns(graph, metamodel_registry, target_type.as_deref());
     let columns = if spec.columns.is_empty() {
@@ -665,30 +846,21 @@ fn render_requirements_table(
     } else {
         spec.columns.clone()
     };
-    let visible_ids =
-        if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty()) {
-            let root = resolve_root(graph, root)
-                .ok_or_else(|| TableError::RootNotFound(root.to_string()))?;
-            collect_structure_ids(
-                graph,
-                root.id,
-                &spec.query,
-                &[
-                    "owner".to_string(),
-                    "satisfy".to_string(),
-                    "verify".to_string(),
-                ],
-            )
-            .visible_ids
-        } else {
-            graph.elements().iter().map(|element| element.id).collect()
-        };
+    let visible_ids = table_scope_ids(
+        graph,
+        spec,
+        &[
+            "owner".to_string(),
+            "satisfy".to_string(),
+            "verify".to_string(),
+        ],
+    )?;
 
     let mut rows = visible_ids
         .iter()
         .filter_map(|node_id| graph.element(*node_id))
         .filter(|element| include_element(element, &spec.query))
-        .filter(|element| table_target_matches(graph, element, target_type.as_deref()))
+        .filter(|element| table_target_matches(graph, element, spec, target_type.as_deref()))
         .map(|element| table_row(graph, element, &columns))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.id.cmp(&right.id));
@@ -720,6 +892,7 @@ fn default_elements_columns() -> Vec<TableColumnSpecDto> {
         key: key.to_string(),
         label: label.to_string(),
         path: None,
+        expression: None,
     })
     .collect()
 }
@@ -737,6 +910,7 @@ fn default_requirements_columns() -> Vec<TableColumnSpecDto> {
         key: key.to_string(),
         label: label.to_string(),
         path: None,
+        expression: None,
     })
     .collect()
 }
@@ -746,6 +920,66 @@ fn normalized_target_type(target_type: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn table_row_type_name(spec: &TableSpecDto) -> Option<String> {
+    spec.row_type
+        .as_ref()
+        .map(|row_type| row_type.type_name.as_str())
+        .and_then(|value| normalized_target_type(Some(value)))
+        .or_else(|| normalized_target_type(spec.target_type.as_deref()))
+}
+
+fn table_row_type_includes_subtypes(spec: &TableSpecDto) -> bool {
+    spec.row_type
+        .as_ref()
+        .map(|row_type| row_type.include_subtypes)
+        .unwrap_or(true)
+}
+
+fn table_scope_ids(
+    graph: &Graph,
+    spec: &TableSpecDto,
+    legacy_root_relations: &[String],
+) -> Result<BTreeSet<u32>, TableError> {
+    match &spec.scope {
+        TableScopeDto::WholeModel => {
+            if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty()) {
+                let root = resolve_root(graph, root)
+                    .ok_or_else(|| TableError::RootNotFound(root.to_string()))?;
+                Ok(
+                    collect_structure_ids(graph, root.id, &spec.query, legacy_root_relations)
+                        .visible_ids,
+                )
+            } else {
+                Ok(graph.elements().iter().map(|element| element.id).collect())
+            }
+        }
+        TableScopeDto::ContainmentSubtree { root } => {
+            let root = resolve_root(graph, root)
+                .ok_or_else(|| TableError::RootNotFound(root.to_string()))?;
+            Ok(collect_containment_subtree_ids(graph, root.id))
+        }
+        TableScopeDto::ExplicitElements { elements } => Ok(elements
+            .iter()
+            .filter_map(|element_id| graph.element_by_element_id(element_id))
+            .map(|element| element.id)
+            .collect()),
+    }
+}
+
+fn collect_containment_subtree_ids(graph: &Graph, root_id: u32) -> BTreeSet<u32> {
+    let mut visible = BTreeSet::new();
+    let mut stack = vec![root_id];
+    while let Some(node_id) = stack.pop() {
+        if !visible.insert(node_id) {
+            continue;
+        }
+        for edge in graph.incoming(node_id, "owner") {
+            stack.push(edge.source);
+        }
+    }
+    visible
 }
 
 fn default_table_columns(available_columns: &[TableColumnSpecDto]) -> Vec<TableColumnSpecDto> {
@@ -789,6 +1023,7 @@ fn available_table_columns(
                         key: declaration.name.clone(),
                         label: title_from_column_key(&declaration.name),
                         path: Some(declaration.name.clone()),
+                        expression: None,
                     });
                 }
             }
@@ -802,6 +1037,7 @@ fn available_table_columns(
                         key: row.name.clone(),
                         label: title_from_column_key(&row.name),
                         path: Some(row.name),
+                        expression: None,
                     });
                 }
             }
@@ -841,7 +1077,12 @@ fn title_from_column_key(key: &str) -> String {
         .join(" ")
 }
 
-fn table_target_matches(graph: &Graph, element: &Element, target_type: Option<&str>) -> bool {
+fn table_target_matches(
+    graph: &Graph,
+    element: &Element,
+    spec: &TableSpecDto,
+    target_type: Option<&str>,
+) -> bool {
     let Some(target_type) = target_type else {
         return true;
     };
@@ -851,9 +1092,10 @@ fn table_target_matches(graph: &Graph, element: &Element, target_type: Option<&s
     table_type_identifier_matches(element, target_type)
         || element_metatype(graph, element.id)
             .is_some_and(|metatype| table_type_identifier_matches(metatype, target_type))
-        || collect_specialization_ancestors(graph, element.id)
-            .into_iter()
-            .any(|ancestor| table_type_identifier_matches(ancestor, target_type))
+        || (table_row_type_includes_subtypes(spec)
+            && collect_specialization_ancestors(graph, element.id)
+                .into_iter()
+                .any(|ancestor| table_type_identifier_matches(ancestor, target_type)))
 }
 
 fn table_type_is_element(target_type: &str) -> bool {
@@ -900,6 +1142,15 @@ fn table_row(graph: &Graph, element: &Element, columns: &[TableColumnSpecDto]) -
 }
 
 fn table_cell_value(graph: &Graph, element: &Element, column: &TableColumnSpecDto) -> String {
+    if let Some(expression) = column
+        .expression
+        .as_deref()
+        .map(str::trim)
+        .filter(|expression| !expression.is_empty())
+    {
+        return resolve_table_expression(graph, element, expression).unwrap_or_default();
+    }
+
     let path = column.path.as_deref().unwrap_or(&column.key);
     if path.starts_with("metadata[") {
         return resolve_metadata_path(element, path).unwrap_or_default();
@@ -923,6 +1174,42 @@ fn table_cell_value(graph: &Graph, element: &Element, column: &TableColumnSpecDt
             .unwrap_or_default(),
         other => effective_property_text(graph, element, other).unwrap_or_default(),
     }
+}
+
+fn resolve_table_expression(graph: &Graph, element: &Element, expression: &str) -> Option<String> {
+    let path = expression
+        .strip_prefix("row.")
+        .or_else(|| expression.strip_prefix("<row_element>."))
+        .or_else(|| expression.strip_prefix("self."))
+        .unwrap_or(expression);
+    if matches!(path, "row" | "<row_element>" | "self") {
+        return Some(element.element_id.clone());
+    }
+    resolve_table_path(graph, element, path)
+}
+
+fn resolve_table_path(graph: &Graph, element: &Element, path: &str) -> Option<String> {
+    if path.starts_with("metadata[") {
+        return resolve_metadata_path(element, path);
+    }
+    if path.contains('.') {
+        return resolve_element_path(graph, element, path);
+    }
+    Some(match path {
+        "id" | "element" => element.element_id.clone(),
+        "kind" => element.kind.to_string(),
+        "owner" | "parent" => effective_property_text(graph, element, "owner")
+            .or_else(|| owner_label(graph, element))
+            .unwrap_or_default(),
+        "name" => effective_property_text(graph, element, "declared_name")
+            .or_else(|| effective_property_text(graph, element, "name"))
+            .unwrap_or_else(|| label_for_id(&element.element_id)),
+        "text" => effective_property_text(graph, element, "text")
+            .or_else(|| effective_property_text(graph, element, "body"))
+            .or_else(|| effective_property_text(graph, element, "doc"))
+            .unwrap_or_default(),
+        other => effective_property_text(graph, element, other).unwrap_or_default(),
+    })
 }
 
 fn resolve_metadata_path(element: &Element, path: &str) -> Option<String> {
@@ -975,6 +1262,12 @@ fn resolve_element_reference<'a>(
 ) -> Option<&'a Element> {
     if key == "self" {
         return Some(element);
+    }
+    if matches!(key, "parent" | "owner") {
+        return graph
+            .outgoing(element.id, "owner")
+            .next()
+            .and_then(|edge| graph.element(edge.target));
     }
     property_text(element, key)
         .and_then(|id| graph.element_by_element_id(&id))
@@ -4002,6 +4295,8 @@ mod tests {
             description: None,
             root: Some("pkg.Example".to_string()),
             target_type: None,
+            scope: TableScopeDto::WholeModel,
+            row_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
                 direction: DiagramDirectionDto::Children,
@@ -4057,11 +4352,14 @@ mod tests {
             description: None,
             root: Some("pkg.Example".to_string()),
             target_type: None,
+            scope: TableScopeDto::WholeModel,
+            row_type: None,
             query: DiagramQueryOptionsDto::default(),
             columns: vec![TableColumnSpecDto {
                 key: "requirement_id".to_string(),
                 label: "ID".to_string(),
                 path: None,
+                expression: None,
             }],
         });
 
@@ -4076,35 +4374,177 @@ mod tests {
     }
 
     #[test]
-    fn view_document_round_trips_parameterized_view() {
-        let mut parameters = BTreeMap::new();
-        parameters.insert(
-            "seedId".to_string(),
-            Value::String("pkg.Example".to_string()),
-        );
-
-        let document = ViewDocumentDto {
-            schema: VIEW_SCHEMA.to_string(),
-            version: VIEW_SPEC_VERSION,
-            kind: "explorer.metatype".to_string(),
-            mode: ViewModeDto::Visualization,
-            parameters,
-            diagram: None,
-            table: None,
-        };
+    fn view_document_round_trips_model_view() {
+        let document = ViewDocumentDto::model(ModelViewSpecDto {
+            version: 1,
+            kind: ModelViewKindDto::MetatypeExplorer,
+            title: "Metatype Explorer".to_string(),
+            description: None,
+            root: Some("pkg.Example".to_string()),
+            graph_scope: None,
+            query: None,
+            expanded_parents: Vec::new(),
+            expanded_children: Vec::new(),
+            include_reference_edges: true,
+        });
 
         validate_view_document(&document).expect("document should validate");
         let decoded: ViewDocumentDto =
             serde_json::from_str(&serde_json::to_string(&document).unwrap()).unwrap();
 
         assert_eq!(decoded.kind, "explorer.metatype");
-        assert_eq!(
-            decoded.parameters.get("seedId"),
-            Some(&Value::String("pkg.Example".to_string()))
-        );
+        assert!(decoded.model.is_some());
         assert!(decoded.diagram.is_none());
         assert!(decoded.table.is_none());
         assert_eq!(decoded, document);
+    }
+
+    #[test]
+    fn view_document_round_trips_every_model_view_kind() {
+        let cases = [
+            (
+                ModelViewKindDto::Metadata,
+                "model.metadata",
+                None,
+                None,
+                None,
+            ),
+            (
+                ModelViewKindDto::Graph,
+                "model.graph",
+                None,
+                Some("model_plus_context".to_string()),
+                None,
+            ),
+            (
+                ModelViewKindDto::Search,
+                "model.search",
+                None,
+                None,
+                Some("vehicle".to_string()),
+            ),
+            (
+                ModelViewKindDto::ElementDetails,
+                "model.element_details",
+                Some("pkg.Vehicle".to_string()),
+                None,
+                None,
+            ),
+            (
+                ModelViewKindDto::LibraryTree,
+                "model.library_tree",
+                None,
+                None,
+                None,
+            ),
+            (
+                ModelViewKindDto::ModelExplorer,
+                "explorer.model",
+                Some("pkg.Vehicle".to_string()),
+                None,
+                None,
+            ),
+            (
+                ModelViewKindDto::MetatypeExplorer,
+                "explorer.metatype",
+                Some("pkg.Vehicle".to_string()),
+                None,
+                None,
+            ),
+        ];
+
+        for (kind, expected_document_kind, root, graph_scope, query) in cases {
+            let document = ViewDocumentDto::model(ModelViewSpecDto {
+                version: 1,
+                kind,
+                title: expected_document_kind.to_string(),
+                description: None,
+                root,
+                graph_scope,
+                query,
+                expanded_parents: Vec::new(),
+                expanded_children: Vec::new(),
+                include_reference_edges: true,
+            });
+
+            validate_view_document(&document).expect("model document should validate");
+            let decoded: ViewDocumentDto =
+                serde_json::from_str(&serde_json::to_string(&document).unwrap()).unwrap();
+
+            assert_eq!(decoded.kind, expected_document_kind);
+            assert_eq!(decoded, document);
+        }
+    }
+
+    #[test]
+    fn view_document_validation_rejects_multiple_primary_payloads() {
+        let mut document =
+            ViewDocumentDto::diagram(structure_spec(Some("pkg.Example"), vec!["owner"]));
+        document.model = Some(ModelViewSpecDto {
+            version: 1,
+            kind: ModelViewKindDto::Metadata,
+            title: "Model Metadata".to_string(),
+            description: None,
+            root: None,
+            graph_scope: None,
+            query: None,
+            expanded_parents: Vec::new(),
+            expanded_children: Vec::new(),
+            include_reference_edges: true,
+        });
+
+        let diagnostics =
+            validate_view_document(&document).expect_err("multiple payloads should fail");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "view.payload")
+        );
+    }
+
+    #[test]
+    fn view_document_validation_rejects_old_model_public_inputs() {
+        let explorer: ViewDocumentDto = serde_json::from_value(json!({
+            "schema": "mercurio.view.v1",
+            "version": 1,
+            "kind": "explorer.l2",
+            "mode": "visualization",
+            "model": {
+                "version": 1,
+                "kind": "model_explorer",
+                "title": "Model Explorer",
+                "root": "pkg.Vehicle"
+            }
+        }))
+        .unwrap();
+        let diagnostics =
+            validate_view_document(&explorer).expect_err("old explorer kind should fail");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "view.kind")
+        );
+
+        let graph: ViewDocumentDto = serde_json::from_value(json!({
+            "schema": "mercurio.view.v1",
+            "version": 1,
+            "kind": "model.graph",
+            "mode": "visualization",
+            "model": {
+                "version": 1,
+                "kind": "graph",
+                "title": "Model Graph",
+                "graph_scope": "l2"
+            }
+        }))
+        .unwrap();
+        let diagnostics = validate_view_document(&graph).expect_err("old graph scope should fail");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "view.model.graph_scope")
+        );
     }
 
     #[test]
@@ -4132,17 +4572,21 @@ mod tests {
             description: None,
             root: None,
             target_type: None,
+            scope: TableScopeDto::WholeModel,
+            row_type: None,
             query: DiagramQueryOptionsDto::default(),
             columns: vec![
                 TableColumnSpecDto {
                     key: "id".to_string(),
                     label: "ID".to_string(),
                     path: None,
+                    expression: None,
                 },
                 TableColumnSpecDto {
                     key: "id".to_string(),
                     label: String::new(),
                     path: None,
+                    expression: None,
                 },
             ],
         });
@@ -4171,6 +4615,8 @@ mod tests {
             description: None,
             root: Some("pkg.Example".to_string()),
             target_type: None,
+            scope: TableScopeDto::WholeModel,
+            row_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
                 direction: DiagramDirectionDto::Children,
@@ -4185,11 +4631,13 @@ mod tests {
                     key: "id".to_string(),
                     label: "ID".to_string(),
                     path: Some("requirement_id".to_string()),
+                    expression: None,
                 },
                 TableColumnSpecDto {
                     key: "owner_name".to_string(),
                     label: "Owner Name".to_string(),
                     path: Some("owner.declared_name".to_string()),
+                    expression: None,
                 },
             ],
         });
@@ -4216,6 +4664,8 @@ mod tests {
             description: None,
             root: Some("pkg.Example".to_string()),
             target_type: None,
+            scope: TableScopeDto::WholeModel,
+            row_type: None,
             query: DiagramQueryOptionsDto {
                 relations: vec!["owner".to_string()],
                 direction: DiagramDirectionDto::Children,
@@ -4230,16 +4680,19 @@ mod tests {
                     key: "status".to_string(),
                     label: "Status".to_string(),
                     path: Some("metadata[Review].status".to_string()),
+                    expression: None,
                 },
                 TableColumnSpecDto {
                     key: "owner".to_string(),
                     label: "Owner".to_string(),
                     path: Some("metadata[Review].owner".to_string()),
+                    expression: None,
                 },
                 TableColumnSpecDto {
                     key: "review_date".to_string(),
                     label: "Review Date".to_string(),
                     path: Some("metadata[Review].reviewDate".to_string()),
+                    expression: None,
                 },
             ],
         });
@@ -4271,22 +4724,27 @@ mod tests {
             description: None,
             root: None,
             target_type: Some("Comment".to_string()),
+            scope: TableScopeDto::WholeModel,
+            row_type: None,
             query: DiagramQueryOptionsDto::default(),
             columns: vec![
                 TableColumnSpecDto {
                     key: "name".to_string(),
                     label: "Name".to_string(),
                     path: None,
+                    expression: None,
                 },
                 TableColumnSpecDto {
                     key: "body".to_string(),
                     label: "Body".to_string(),
                     path: Some("body".to_string()),
+                    expression: None,
                 },
                 TableColumnSpecDto {
                     key: "locale".to_string(),
                     label: "Locale".to_string(),
                     path: Some("locale".to_string()),
+                    expression: None,
                 },
             ],
         });
@@ -4317,6 +4775,163 @@ mod tests {
                 .any(|column| column.key == "locale")
         );
     }
+
+    #[test]
+    fn model_elements_table_scopes_rows_to_containment_subtree() {
+        let view = render_table_sample(TableSpecDto {
+            version: 1,
+            kind: TableKindDto::ModelElements,
+            title: "Vehicle Subtree".to_string(),
+            description: None,
+            root: None,
+            target_type: None,
+            scope: TableScopeDto::ContainmentSubtree {
+                root: "type.Example.Vehicle".to_string(),
+            },
+            row_type: Some(TableRowTypeDto {
+                type_name: "Element".to_string(),
+                include_subtypes: true,
+            }),
+            query: DiagramQueryOptionsDto::default(),
+            columns: vec![
+                TableColumnSpecDto {
+                    key: "name".to_string(),
+                    label: "Name".to_string(),
+                    path: None,
+                    expression: None,
+                },
+                TableColumnSpecDto {
+                    key: "parent_name".to_string(),
+                    label: "Parent".to_string(),
+                    path: Some("parent.name".to_string()),
+                    expression: None,
+                },
+            ],
+        });
+
+        assert_eq!(
+            view.rows
+                .iter()
+                .map(|row| row.element.as_str())
+                .collect::<Vec<_>>(),
+            vec!["feature.Example.Vehicle.controller", "type.Example.Vehicle"]
+        );
+        let controller = view
+            .rows
+            .iter()
+            .find(|row| row.element == "feature.Example.Vehicle.controller")
+            .expect("controller row should render");
+        assert!(
+            controller
+                .cells
+                .iter()
+                .any(|cell| cell.key == "parent_name" && cell.value == "Vehicle")
+        );
+    }
+
+    #[test]
+    fn model_elements_table_supports_direct_navigation_columns() {
+        let view = render_table_sample(TableSpecDto {
+            version: 1,
+            kind: TableKindDto::ModelElements,
+            title: "Requirements Direct".to_string(),
+            description: None,
+            root: None,
+            target_type: None,
+            scope: TableScopeDto::ContainmentSubtree {
+                root: "pkg.Example".to_string(),
+            },
+            row_type: Some(TableRowTypeDto {
+                type_name: "Requirement".to_string(),
+                include_subtypes: true,
+            }),
+            query: DiagramQueryOptionsDto::default(),
+            columns: vec![
+                TableColumnSpecDto {
+                    key: "id".to_string(),
+                    label: "ID".to_string(),
+                    path: Some("requirement_id".to_string()),
+                    expression: None,
+                },
+                TableColumnSpecDto {
+                    key: "parent_name".to_string(),
+                    label: "Parent".to_string(),
+                    path: Some("parent.name".to_string()),
+                    expression: None,
+                },
+            ],
+        });
+
+        let row = view.rows.first().expect("requirement row should render");
+        assert_eq!(row.element, "req.Example.SafeStart");
+        assert!(
+            row.cells
+                .iter()
+                .any(|cell| cell.key == "id" && cell.value == "REQ-001")
+        );
+        assert!(
+            row.cells
+                .iter()
+                .any(|cell| cell.key == "parent_name" && cell.value == "Example")
+        );
+    }
+
+    #[test]
+    fn model_elements_table_supports_dsl_style_row_expressions() {
+        let view = render_table_sample(TableSpecDto {
+            version: 1,
+            kind: TableKindDto::ModelElements,
+            title: "Requirements Expressions".to_string(),
+            description: None,
+            root: None,
+            target_type: None,
+            scope: TableScopeDto::ContainmentSubtree {
+                root: "pkg.Example".to_string(),
+            },
+            row_type: Some(TableRowTypeDto {
+                type_name: "Requirement".to_string(),
+                include_subtypes: true,
+            }),
+            query: DiagramQueryOptionsDto::default(),
+            columns: vec![
+                TableColumnSpecDto {
+                    key: "name".to_string(),
+                    label: "Name".to_string(),
+                    path: None,
+                    expression: Some("row.name".to_string()),
+                },
+                TableColumnSpecDto {
+                    key: "parent_name".to_string(),
+                    label: "Parent".to_string(),
+                    path: None,
+                    expression: Some("row.parent.name".to_string()),
+                },
+                TableColumnSpecDto {
+                    key: "status".to_string(),
+                    label: "Status".to_string(),
+                    path: None,
+                    expression: Some("row.metadata[Review].status".to_string()),
+                },
+            ],
+        });
+
+        let row = view.rows.first().expect("requirement row should render");
+        assert!(
+            row.cells
+                .iter()
+                .any(|cell| cell.key == "name" && cell.value == "SafeStart")
+        );
+        assert!(
+            row.cells
+                .iter()
+                .any(|cell| cell.key == "parent_name" && cell.value == "Example")
+        );
+        assert!(
+            row.cells
+                .iter()
+                .any(|cell| cell.key == "status" && cell.value == "approved")
+        );
+    }
 }
 
 fn default_true() -> bool {
@@ -4337,6 +4952,18 @@ fn diagram_kind_name(kind: &DiagramKindDto) -> &'static str {
         DiagramKindDto::ImpactView => "impact_view",
         DiagramKindDto::PropertyInheritance => "property_inheritance",
         DiagramKindDto::ValidationView => "validation_view",
+    }
+}
+
+fn model_view_kind_name(kind: &ModelViewKindDto) -> &'static str {
+    match kind {
+        ModelViewKindDto::Metadata => "model.metadata",
+        ModelViewKindDto::Graph => "model.graph",
+        ModelViewKindDto::Search => "model.search",
+        ModelViewKindDto::ElementDetails => "model.element_details",
+        ModelViewKindDto::LibraryTree => "model.library_tree",
+        ModelViewKindDto::ModelExplorer => "explorer.model",
+        ModelViewKindDto::MetatypeExplorer => "explorer.metatype",
     }
 }
 
