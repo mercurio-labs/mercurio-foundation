@@ -246,7 +246,9 @@ impl RulePack {
         }
     }
 
-    #[deprecated(note = "use structural_core(); language trace semantics belong in language rulepacks")]
+    #[deprecated(
+        note = "use structural_core(); language trace semantics belong in language rulepacks"
+    )]
     pub fn core() -> Self {
         Self::structural_core()
     }

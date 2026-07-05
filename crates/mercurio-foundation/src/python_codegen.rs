@@ -995,10 +995,7 @@ mod tests {
             stdlib_version: "test".to_string(),
             stdlib_path: "stdlib.kir.json".to_string(),
             kir_schema_version: "0.2".to_string(),
-            canonical_kinds: BTreeMap::from([(
-                Concept::PACKAGE,
-                "Model::Package".to_string(),
-            )]),
+            canonical_kinds: BTreeMap::from([(Concept::PACKAGE, "Model::Package".to_string())]),
             semantic_anchors: BTreeMap::new(),
             aliases: BTreeMap::new(),
         };

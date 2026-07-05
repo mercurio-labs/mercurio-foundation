@@ -671,8 +671,8 @@ where
                 );
                 if let Some(ty) = ty {
                     if !exists(project, ty) {
-                        if let Some(supporting_change) =
-                            self.supporting_definition_for_missing_usage_type(
+                        if let Some(supporting_change) = self
+                            .supporting_definition_for_missing_usage_type(
                                 container,
                                 &kind.metaclass,
                                 ty,

@@ -145,10 +145,7 @@ mod tests {
         assert_eq!(profile.id, CURRENT_DEFAULT_PROFILE_ID);
         assert_eq!(profile.language.as_str(), "model");
         assert_eq!(profile.stdlib_version, "none");
-        assert_eq!(
-            profile.canonical_kinds[&Concept::PACKAGE],
-            "model.Package"
-        );
+        assert_eq!(profile.canonical_kinds[&Concept::PACKAGE], "model.Package");
         assert!(!profile.semantic_anchors.contains_key("requirement_usage"));
     }
 }

@@ -656,10 +656,7 @@ impl KirDocument {
         Ok(document)
     }
 
-    pub fn from_str_with_registered_fields<I, N>(
-        input: &str,
-        fields: I,
-    ) -> Result<Self, KirError>
+    pub fn from_str_with_registered_fields<I, N>(input: &str, fields: I) -> Result<Self, KirError>
     where
         I: IntoIterator<Item = (N, KirFieldKind)>,
         N: Into<String>,
@@ -680,10 +677,7 @@ impl KirDocument {
         Self::from_str(&input)
     }
 
-    pub fn from_path_with_registered_fields<I, N>(
-        path: &Path,
-        fields: I,
-    ) -> Result<Self, KirError>
+    pub fn from_path_with_registered_fields<I, N>(path: &Path, fields: I) -> Result<Self, KirError>
     where
         I: IntoIterator<Item = (N, KirFieldKind)>,
         N: Into<String>,
@@ -715,17 +709,17 @@ impl KirDocument {
     }
 
     pub fn validate_persisted(&self) -> Result<(), KirError> {
-        self.validate_with_options(ValidationOptions {
-            require_schema_version: true,
-            reject_unknown_fields: true,
-            strict_field_shapes: true,
-        }, KirFieldRegistry::from_document(self))
+        self.validate_with_options(
+            ValidationOptions {
+                require_schema_version: true,
+                reject_unknown_fields: true,
+                strict_field_shapes: true,
+            },
+            KirFieldRegistry::from_document(self),
+        )
     }
 
-    pub fn validate_persisted_with_registered_fields<I, N>(
-        &self,
-        fields: I,
-    ) -> Result<(), KirError>
+    pub fn validate_persisted_with_registered_fields<I, N>(&self, fields: I) -> Result<(), KirError>
     where
         I: IntoIterator<Item = (N, KirFieldKind)>,
         N: Into<String>,

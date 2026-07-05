@@ -241,9 +241,9 @@ pub use ir::{
     load_model_stack, load_model_stack_with_registry,
 };
 pub use language::{
-    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, LanguageProfile, LanguageProfileError,
-    Concept, LanguageId, LibraryContext, MetamodelConceptRegistry,
-    default_language_profile, default_metamodel_registry, load_language_profile,
+    BaselineLibrary, CURRENT_DEFAULT_PROFILE_ID, Concept, LanguageId, LanguageProfile,
+    LanguageProfileError, LibraryContext, MetamodelConceptRegistry, default_language_profile,
+    default_metamodel_registry, load_language_profile,
 };
 pub use library::{
     BaselineLibraryConfig, KparLocator, KparPackageBuild, KparPackageSource, LibraryCacheMetadata,

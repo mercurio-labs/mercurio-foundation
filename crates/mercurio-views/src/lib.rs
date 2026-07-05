@@ -2171,6 +2171,543 @@ fn default_layout_direction() -> String {
     "LR".to_string()
 }
 
+/// Render a diagram view DTO to a deterministic, lossless SVG artifact.
+///
+/// This is intentionally a small built-in renderer for harnesses, exports, and
+/// smoke tests. Product surfaces can still apply richer interactive layout, but
+/// they should start from the same `DiagramViewDto`.
+pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
+    let node_width = 230usize;
+    let node_height = 74usize;
+    let gap_x = 86usize;
+    let gap_y = 62usize;
+    let margin = 34usize;
+    let title_height = 54usize;
+    let auto_layout = svg_auto_layout_positions(
+        view,
+        node_width,
+        node_height,
+        gap_x,
+        gap_y,
+        margin,
+        title_height,
+    );
+    let title_width = view.spec.title.chars().count() * 9 + margin * 2;
+    let width = auto_layout.width.max(title_width);
+    let height = auto_layout.height;
+    let positions = auto_layout.positions;
+    let symbols_by_id = view
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.id.as_str(), symbol))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="{}">
+<rect width="100%" height="100%" fill="#f8fafc"/>
+<text x="{margin}" y="34" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="700" fill="#0f172a">{}</text>
+"##,
+        svg_escape(&view.spec.title),
+        svg_escape(&view.spec.title)
+    );
+
+    let mut rendered_edges = Vec::new();
+    for (edge_index, edge) in view.edges.iter().enumerate() {
+        let Some((source_x, source_y)) = positions.get(edge.source.as_str()) else {
+            continue;
+        };
+        let Some((target_x, target_y)) = positions.get(edge.target.as_str()) else {
+            continue;
+        };
+        let source_center = (source_x + node_width / 2, source_y + node_height / 2);
+        let target_center = (target_x + node_width / 2, target_y + node_height / 2);
+        let (x1, y1) = svg_rectangle_boundary_point(
+            source_center,
+            target_center,
+            node_width / 2,
+            node_height / 2,
+        );
+        let (x2, y2) = svg_rectangle_boundary_point(
+            target_center,
+            source_center,
+            node_width / 2,
+            node_height / 2,
+        );
+        let symbol = symbols_by_id.get(edge.symbol.as_str()).copied();
+        let route = svg_symbol_property(symbol, "route")
+            .unwrap_or_else(|| default_route(edge.relation.as_str()).to_string());
+        let path = svg_routed_path(&route, x1, y1, x2, y2);
+        rendered_edges.push((edge.relation.clone(), edge.symbol.clone(), x1, y1, x2, y2));
+        svg.push_str(&format!(
+            r##"<path d="{}" fill="none" stroke="#334155" stroke-width="1.8"/>
+<text x="{}" y="{}" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600" fill="#334155">{}</text>
+"##,
+            path,
+            (x1 + x2) / 2 + 8,
+            (y1 + y2) / 2 - 14 + ((edge_index % 4) as isize * 12),
+            svg_escape(&edge.label)
+        ));
+    }
+
+    for node in &view.nodes {
+        let Some((x, y)) = positions.get(node.id.as_str()) else {
+            continue;
+        };
+        let symbol = symbols_by_id.get(node.symbol.as_str()).copied();
+        let role = symbol
+            .map(|symbol| symbol.role.as_str())
+            .unwrap_or("element");
+        let shape = svg_symbol_property(symbol, "shape").unwrap_or_else(|| "node".to_string());
+        svg.push_str(&svg_node_shape(
+            role,
+            &shape,
+            *x,
+            *y,
+            node_width,
+            node_height,
+        ));
+        svg.push_str(&format!(
+            r##"<text x="{}" y="{}" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a">{}</text>
+<text x="{}" y="{}" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#475569">{}</text>
+<text x="{}" y="{}" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#64748b">{}</text>
+"##,
+            x + 14,
+            y + 26,
+            svg_truncate(&node.label, 25),
+            x + 14,
+            y + 48,
+            svg_truncate(&node.kind, 31),
+            x + 14,
+            y + 64,
+            svg_escape(&node.badges.join(" "))
+        ));
+    }
+
+    for (relation, symbol_id, x1, y1, x2, y2) in rendered_edges {
+        let symbol = symbols_by_id.get(symbol_id.as_str()).copied();
+        let target_decoration = svg_symbol_property(symbol, "target_decoration")
+            .unwrap_or_else(|| default_target_decoration(relation.as_str()).to_string());
+        let source_decoration = svg_symbol_property(symbol, "source_decoration")
+            .unwrap_or_else(|| default_source_decoration(relation.as_str()).to_string());
+        svg.push_str(&svg_target_decoration(&target_decoration, x1, y1, x2, y2));
+        svg.push_str(&svg_source_decoration(&source_decoration, x1, y1, x2, y2));
+    }
+
+    svg.push_str("</svg>\n");
+    svg
+}
+
+struct SvgAutoLayout {
+    positions: BTreeMap<String, (usize, usize)>,
+    width: usize,
+    height: usize,
+}
+
+fn svg_auto_layout_positions(
+    view: &DiagramViewDto,
+    node_width: usize,
+    node_height: usize,
+    gap_x: usize,
+    gap_y: usize,
+    margin: usize,
+    title_height: usize,
+) -> SvgAutoLayout {
+    if matches!(view.spec.kind, DiagramKindDto::StateMachine) && !view.nodes.is_empty() {
+        return svg_state_machine_layout_positions(
+            view,
+            node_width,
+            node_height,
+            gap_x,
+            gap_y,
+            margin,
+            title_height,
+        );
+    }
+
+    let levels = svg_layout_levels(view);
+    let mut by_level = BTreeMap::<usize, Vec<String>>::new();
+    for node in &view.nodes {
+        by_level
+            .entry(*levels.get(&node.id).unwrap_or(&0))
+            .or_default()
+            .push(node.id.clone());
+    }
+    for ids in by_level.values_mut() {
+        ids.sort_by_key(|id| {
+            view.nodes
+                .iter()
+                .find(|node| node.id == *id)
+                .map(|node| (node.kind.clone(), node.label.clone(), node.id.clone()))
+        });
+    }
+
+    let direction = view.spec.layout.direction.to_ascii_uppercase();
+    let horizontal = direction != "TB" && direction != "BT";
+    let max_lanes = by_level.values().map(Vec::len).max().unwrap_or(1);
+    let level_count = by_level.len().max(1);
+    let mut positions = BTreeMap::new();
+
+    for (level, ids) in &by_level {
+        for (lane, id) in ids.iter().enumerate() {
+            let logical_level = if direction == "BT" || direction == "RL" {
+                level_count.saturating_sub(1).saturating_sub(*level)
+            } else {
+                *level
+            };
+            let (x, y) = if horizontal {
+                (
+                    margin + logical_level * (node_width + gap_x),
+                    title_height + margin + lane * (node_height + gap_y),
+                )
+            } else {
+                (
+                    margin + lane * (node_width + gap_x),
+                    title_height + margin + logical_level * (node_height + gap_y),
+                )
+            };
+            positions.insert(id.clone(), (x, y));
+        }
+    }
+
+    let width = if horizontal {
+        margin * 2 + level_count * node_width + level_count.saturating_sub(1) * gap_x
+    } else {
+        margin * 2 + max_lanes * node_width + max_lanes.saturating_sub(1) * gap_x
+    };
+    let height = if horizontal {
+        title_height + margin * 2 + max_lanes * node_height + max_lanes.saturating_sub(1) * gap_y
+    } else {
+        title_height
+            + margin * 2
+            + level_count * node_height
+            + level_count.saturating_sub(1) * gap_y
+    };
+
+    SvgAutoLayout {
+        positions,
+        width,
+        height,
+    }
+}
+
+fn svg_state_machine_layout_positions(
+    view: &DiagramViewDto,
+    node_width: usize,
+    node_height: usize,
+    gap_x: usize,
+    gap_y: usize,
+    margin: usize,
+    title_height: usize,
+) -> SvgAutoLayout {
+    let ordered_ids = svg_state_machine_node_order(view);
+    let node_count = ordered_ids.len().max(1);
+    let columns = if node_count == 1 {
+        1
+    } else {
+        node_count.min(3)
+    };
+    let rows = node_count.div_ceil(columns);
+    let mut positions = BTreeMap::new();
+
+    for (index, id) in ordered_ids.into_iter().enumerate() {
+        let row = index / columns;
+        let column = index % columns;
+        positions.insert(
+            id,
+            (
+                margin + column * (node_width + gap_x),
+                title_height + margin + row * (node_height + gap_y),
+            ),
+        );
+    }
+
+    SvgAutoLayout {
+        positions,
+        width: margin * 2 + columns * node_width + columns.saturating_sub(1) * gap_x,
+        height: title_height + margin * 2 + rows * node_height + rows.saturating_sub(1) * gap_y,
+    }
+}
+
+fn svg_state_machine_node_order(view: &DiagramViewDto) -> Vec<String> {
+    let node_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+    let node_sort_key = |id: &String| {
+        view.nodes
+            .iter()
+            .find(|node| node.id == *id)
+            .map(|node| (node.label.clone(), node.id.clone()))
+            .unwrap_or_else(|| (id.clone(), id.clone()))
+    };
+    let mut outgoing = BTreeMap::<String, Vec<String>>::new();
+    for edge in &view.edges {
+        if node_ids.contains(&edge.source) && node_ids.contains(&edge.target) {
+            outgoing
+                .entry(edge.source.clone())
+                .or_default()
+                .push(edge.target.clone());
+        }
+    }
+    for targets in outgoing.values_mut() {
+        targets.sort_by_key(&node_sort_key);
+    }
+
+    let mut starts = view
+        .nodes
+        .iter()
+        .filter(|node| node.badges.iter().any(|badge| badge == "initial"))
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    if starts.is_empty() {
+        starts = node_ids.iter().cloned().collect();
+    }
+    starts.sort_by_key(&node_sort_key);
+
+    let mut ordered = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut queue = VecDeque::from(starts);
+    while let Some(id) = queue.pop_front() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        ordered.push(id.clone());
+        for target in outgoing.get(&id).into_iter().flatten() {
+            if !seen.contains(target) {
+                queue.push_back(target.clone());
+            }
+        }
+    }
+
+    let mut remaining = node_ids
+        .into_iter()
+        .filter(|id| !seen.contains(id))
+        .collect::<Vec<_>>();
+    remaining.sort_by_key(&node_sort_key);
+    ordered.extend(remaining);
+    ordered
+}
+
+fn svg_layout_levels(view: &DiagramViewDto) -> BTreeMap<String, usize> {
+    let node_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut children_by_parent = BTreeMap::<String, Vec<String>>::new();
+    let mut child_ids = BTreeSet::new();
+
+    for edge in &view.edges {
+        if !node_ids.contains(&edge.source) || !node_ids.contains(&edge.target) {
+            continue;
+        }
+        children_by_parent
+            .entry(edge.source.clone())
+            .or_default()
+            .push(edge.target.clone());
+        child_ids.insert(edge.target.clone());
+    }
+
+    let mut roots = node_ids
+        .difference(&child_ids)
+        .cloned()
+        .collect::<Vec<String>>();
+    if roots.is_empty() {
+        roots = node_ids.iter().cloned().collect();
+    }
+    roots.sort();
+
+    let mut levels = BTreeMap::new();
+    let mut queue = VecDeque::new();
+    for root in roots {
+        levels.insert(root.clone(), 0);
+        queue.push_back(root);
+    }
+
+    while let Some(parent) = queue.pop_front() {
+        let parent_level = *levels.get(&parent).unwrap_or(&0);
+        for child in children_by_parent.get(&parent).into_iter().flatten() {
+            if !levels.contains_key(child) {
+                levels.insert(child.clone(), parent_level + 1);
+                queue.push_back(child.clone());
+            }
+        }
+    }
+
+    for id in node_ids {
+        levels.entry(id).or_insert(0);
+    }
+    levels
+}
+
+fn svg_node_shape(
+    role: &str,
+    shape: &str,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> String {
+    let (fill, stroke, radius) = match (role, shape) {
+        ("state", _) => ("#ecfeff", "#0e7490", 12),
+        ("action", _) => ("#fff7ed", "#c2410c", 12),
+        (_, "object") => ("#eff6ff", "#1d4ed8", 4),
+        (_, _) => ("#ffffff", "#334155", 8),
+    };
+    format!(
+        r##"<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="{radius}" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>
+"##
+    )
+}
+
+fn svg_routed_path(route: &str, x1: isize, y1: isize, x2: isize, y2: isize) -> String {
+    if route == "orthogonal" || route == "elbow" {
+        let mid_x = (x1 + x2) / 2;
+        format!("M {x1} {y1} L {mid_x} {y1} L {mid_x} {y2} L {x2} {y2}")
+    } else {
+        format!("M {x1} {y1} L {x2} {y2}")
+    }
+}
+
+fn svg_rectangle_boundary_point(
+    center: (usize, usize),
+    toward: (usize, usize),
+    half_width: usize,
+    half_height: usize,
+) -> (isize, isize) {
+    let dx = toward.0 as f64 - center.0 as f64;
+    let dy = toward.1 as f64 - center.1 as f64;
+    if dx.abs() < f64::EPSILON && dy.abs() < f64::EPSILON {
+        return (center.0 as isize, center.1 as isize);
+    }
+
+    let scale_x = if dx.abs() < f64::EPSILON {
+        f64::INFINITY
+    } else {
+        half_width as f64 / dx.abs()
+    };
+    let scale_y = if dy.abs() < f64::EPSILON {
+        f64::INFINITY
+    } else {
+        half_height as f64 / dy.abs()
+    };
+    let scale = scale_x.min(scale_y);
+
+    (
+        (center.0 as f64 + dx * scale).round() as isize,
+        (center.1 as f64 + dy * scale).round() as isize,
+    )
+}
+
+fn svg_target_decoration(decoration: &str, x1: isize, y1: isize, x2: isize, y2: isize) -> String {
+    if decoration == "none" {
+        return String::new();
+    }
+
+    let dx = x2 as f64 - x1 as f64;
+    let dy = y2 as f64 - y1 as f64;
+    let length = (dx * dx + dy * dy).sqrt();
+    if length < f64::EPSILON {
+        return String::new();
+    }
+
+    let ux = dx / length;
+    let uy = dy / length;
+    let px = -uy;
+    let py = ux;
+    let size = if decoration == "hollow_triangle" {
+        20.0
+    } else {
+        14.0
+    };
+    let spread = if decoration == "hollow_triangle" {
+        12.0
+    } else {
+        7.0
+    };
+    let tip_x = x2 as f64;
+    let tip_y = y2 as f64;
+    let left_x = tip_x - ux * size + px * spread;
+    let left_y = tip_y - uy * size + py * spread;
+    let right_x = tip_x - ux * size - px * spread;
+    let right_y = tip_y - uy * size - py * spread;
+
+    if decoration == "hollow_triangle" {
+        return format!(
+            r##"<path d="M {:.1} {:.1} L {:.1} {:.1} L {:.1} {:.1} Z" fill="#f8fafc" stroke="#0f172a" stroke-width="3" stroke-linejoin="miter"/>
+"##,
+            tip_x, tip_y, left_x, left_y, right_x, right_y
+        );
+    }
+
+    format!(
+        r##"<path d="M {:.1} {:.1} L {:.1} {:.1} L {:.1} {:.1}" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+"##,
+        left_x, left_y, tip_x, tip_y, right_x, right_y
+    )
+}
+
+fn svg_source_decoration(decoration: &str, x1: isize, y1: isize, x2: isize, y2: isize) -> String {
+    if decoration != "filled_diamond" {
+        return String::new();
+    }
+
+    let dx = x2 as f64 - x1 as f64;
+    let dy = y2 as f64 - y1 as f64;
+    let length = (dx * dx + dy * dy).sqrt();
+    if length < f64::EPSILON {
+        return String::new();
+    }
+
+    let ux = dx / length;
+    let uy = dy / length;
+    let px = -uy;
+    let py = ux;
+    let size = 10.0;
+    let half_width = 5.5;
+    let tip_x = x1 as f64;
+    let tip_y = y1 as f64;
+    let center_x = tip_x + ux * size;
+    let center_y = tip_y + uy * size;
+    let tail_x = tip_x + ux * size * 2.0;
+    let tail_y = tip_y + uy * size * 2.0;
+    let side_a_x = center_x + px * half_width;
+    let side_a_y = center_y + py * half_width;
+    let side_b_x = center_x - px * half_width;
+    let side_b_y = center_y - py * half_width;
+
+    format!(
+        r##"<path d="M {:.1} {:.1} L {:.1} {:.1} L {:.1} {:.1} L {:.1} {:.1} Z" fill="#0f172a" stroke="#0f172a" stroke-width="1"/>
+"##,
+        tip_x, tip_y, side_a_x, side_a_y, tail_x, tail_y, side_b_x, side_b_y
+    )
+}
+
+fn svg_symbol_property(symbol: Option<&DiagramSymbolDto>, key: &str) -> Option<String> {
+    symbol?
+        .properties
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn svg_truncate(value: &str, max_chars: usize) -> String {
+    let mut output = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        output.push_str("...");
+    }
+    svg_escape(&output)
+}
+
+fn svg_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
