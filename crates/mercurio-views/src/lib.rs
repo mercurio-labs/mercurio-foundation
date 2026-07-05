@@ -1053,8 +1053,200 @@ fn render_activity_diagram(
     }
 
     let mut view = render_structure_diagram(graph, metamodel_registry, spec)?;
+    add_derived_activity_flow_edges(graph, &mut view);
+    if view
+        .edges
+        .iter()
+        .any(|edge| is_activity_flow_relation(&edge.relation))
+    {
+        view.edges.retain(|edge| edge.relation != "owner");
+    }
     apply_activity_symbol_defaults(&mut view);
+    sync_diagram_symbols(&mut view);
     Ok(view)
+}
+
+fn add_derived_activity_flow_edges(graph: &Graph, view: &mut DiagramViewDto) {
+    let retained_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut existing_edge_ids = view
+        .edges
+        .iter()
+        .map(|edge| edge.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    for flow in graph.elements().iter().filter(|element| {
+        is_activity_succession_flow(element) || is_activity_flow_with_explicit_ends(element)
+    }) {
+        let Some((source, target)) = activity_flow_endpoints(graph, flow) else {
+            continue;
+        };
+        if !retained_ids.contains(source.as_str()) || !retained_ids.contains(target.as_str()) {
+            continue;
+        }
+        let relation = activity_flow_relation(flow);
+        let edge_id = format!("{}:{}:{}:{}", flow.element_id, relation, source, target);
+        if !existing_edge_ids.insert(edge_id.clone()) {
+            continue;
+        }
+        view.edges.push(DiagramEdgeDto {
+            id: edge_id,
+            symbol: symbol_id_for_transition_edge(&flow.element_id),
+            source,
+            target,
+            relation: relation.to_string(),
+            label: activity_flow_label(flow),
+        });
+    }
+
+    view.edges.sort_by(|left, right| left.id.cmp(&right.id));
+}
+
+fn sync_diagram_symbols(view: &mut DiagramViewDto) {
+    let node_symbols = view.nodes.iter().map(|node| {
+        let (role, properties) = if matches!(view.spec.kind, DiagramKindDto::Activity) {
+            activity_node_symbol(node)
+        } else {
+            ("element".to_string(), serde_json::Map::new())
+        };
+        DiagramSymbolDto {
+            id: node.symbol.clone(),
+            element: node.id.clone(),
+            role,
+            source: None,
+            target: None,
+            relation: None,
+            properties,
+        }
+    });
+    let edge_symbols = view.edges.iter().map(|edge| DiagramSymbolDto {
+        id: edge.symbol.clone(),
+        element: edge.id.clone(),
+        role: if edge.relation == "transition" {
+            "transition".to_string()
+        } else {
+            "edge".to_string()
+        },
+        source: Some(symbol_id_for_element(&edge.source)),
+        target: Some(symbol_id_for_element(&edge.target)),
+        relation: Some(edge.relation.to_string()),
+        properties: edge_symbol_properties(edge.relation.as_str()),
+    });
+    view.symbols = node_symbols.chain(edge_symbols).collect();
+}
+
+fn is_activity_flow_relation(relation: &str) -> bool {
+    matches!(
+        relation,
+        "control_flow" | "object_flow" | "source" | "target" | "transition"
+    )
+}
+
+fn is_activity_succession_flow(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    kind.contains("succession")
+        || state_diagram_string_property(element, &["metatype", "type", "definition"])
+            .is_some_and(|value| value.to_ascii_lowercase().contains("succession"))
+}
+
+fn is_activity_flow_with_explicit_ends(element: &Element) -> bool {
+    let kind = element.kind.to_ascii_lowercase();
+    kind.contains("flow")
+        && state_diagram_string_property(element, &["source", "from"]).is_some()
+        && state_diagram_string_property(element, &["target", "to"]).is_some()
+}
+
+fn activity_flow_endpoints(graph: &Graph, flow: &Element) -> Option<(String, String)> {
+    if let Some(source) = state_diagram_string_property(flow, &["source", "from"]) {
+        let target = state_diagram_string_property(flow, &["target", "to"])?;
+        return Some((
+            resolve_activity_endpoint(graph, flow, &source)?,
+            resolve_activity_endpoint(graph, flow, &target)?,
+        ));
+    }
+
+    let mut source = None;
+    let mut target = None;
+    for endpoint in graph
+        .elements()
+        .iter()
+        .filter(|element| state_diagram_owner_id(element).as_deref() == Some(&flow.element_id))
+    {
+        let redefined = endpoint
+            .properties
+            .get("redefined_features")
+            .or_else(|| endpoint.properties.get("redefinedFeatures"))
+            .and_then(Value::as_array)?;
+        let local_name = redefined
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|value| !value.contains("::"))?;
+        if redefined
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|value| value.ends_with("sourceOutput"))
+        {
+            source = resolve_activity_endpoint(graph, flow, local_name);
+        } else if redefined
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|value| value.ends_with("targetInput"))
+        {
+            target = resolve_activity_endpoint(graph, flow, local_name);
+        }
+    }
+
+    source.zip(target)
+}
+
+fn resolve_activity_endpoint(graph: &Graph, flow: &Element, endpoint: &str) -> Option<String> {
+    let owner = state_diagram_owner_id(flow)?;
+    let endpoint = endpoint
+        .split('.')
+        .next()
+        .unwrap_or(endpoint)
+        .trim()
+        .to_string();
+    graph
+        .elements()
+        .iter()
+        .filter(|element| state_diagram_owner_id(element).as_deref() == Some(owner.as_str()))
+        .find(|element| {
+            state_diagram_label(element).eq_ignore_ascii_case(&endpoint)
+                || label_for_id(&element.element_id).eq_ignore_ascii_case(&endpoint)
+                || element.element_id.ends_with(&format!(".{endpoint}"))
+        })
+        .map(|element| element.element_id.clone())
+}
+
+fn activity_flow_relation(flow: &Element) -> &'static str {
+    let kind = flow.kind.to_ascii_lowercase();
+    if kind.contains("object")
+        || state_diagram_string_property(flow, &["metatype", "type", "definition"])
+            .is_some_and(|value| value.to_ascii_lowercase().contains("object"))
+    {
+        "object_flow"
+    } else {
+        "control_flow"
+    }
+}
+
+fn activity_flow_label(flow: &Element) -> String {
+    state_diagram_string_property(flow, &["declared_name", "name"])
+        .or_else(|| {
+            let parts = flow.element_id.split('.').collect::<Vec<_>>();
+            parts
+                .iter()
+                .rev()
+                .skip_while(|part| part.chars().all(|ch| ch.is_ascii_digit() || ch == '_'))
+                .find(|part| !part.is_empty())
+                .map(|part| (*part).to_string())
+        })
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or_else(|| "flow".to_string())
 }
 
 fn apply_activity_symbol_defaults(view: &mut DiagramViewDto) {
