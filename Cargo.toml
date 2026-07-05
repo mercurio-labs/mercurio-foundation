@@ -11,7 +11,7 @@ members = [
     "crates/mercurio-query-dsl",
     "crates/mercurio-codegen",
     "crates/mercurio-session",
-    "crates/mercurio-foundation",
+    "crates/mercurio-core",
     "crates/mercurio-simulation-core",
     "crates/mercurio-views",
 ]

@@ -5,7 +5,7 @@ Foundation includes an explicit KIR performance harness for large-model timing a
 Run the default size ladder:
 
 ```powershell
-cargo run --release -p mercurio-foundation --bin kir_performance -- --output-dir target/kir-performance --keep-files
+cargo run --release -p mercurio-core --bin kir_performance -- --output-dir target/kir-performance --keep-files
 ```
 
 The default ladder is:
@@ -19,13 +19,13 @@ The default ladder is:
 For a smaller smoke run:
 
 ```powershell
-cargo run -p mercurio-foundation --bin kir_performance -- --sizes 100,1000 --edits 10 --output-dir target/kir-performance-smoke
+cargo run -p mercurio-core --bin kir_performance -- --sizes 100,1000 --edits 10 --output-dir target/kir-performance-smoke
 ```
 
 Measure warm-load cache layers:
 
 ```powershell
-cargo run --release -p mercurio-foundation --bin cache_performance -- --sizes 1000,10000,100000 --output-dir target/cache-performance --keep-files
+cargo run --release -p mercurio-core --bin cache_performance -- --sizes 1000,10000,100000 --output-dir target/cache-performance --keep-files
 ```
 
 This reports cold document-to-runtime timing plus warm-load paths for text KIR, pretty runtime JSON, and `runtime.mruntime`.
@@ -53,7 +53,7 @@ The JSON report includes:
 Foundation does not vendor EMF. To compare against EMF, pass an external benchmark command:
 
 ```powershell
-cargo run --release -p mercurio-foundation --bin kir_performance -- `
+cargo run --release -p mercurio-core --bin kir_performance -- `
   --output-dir target/kir-performance `
   --emf-command "java -jar path\to\emf-benchmark.jar"
 ```

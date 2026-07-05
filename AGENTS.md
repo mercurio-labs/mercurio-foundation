@@ -12,7 +12,7 @@ Source-language-neutral KIR substrate, graph, runtime, and simulation core. This
 | `mercurio-language-contracts` | Language-service contracts, diagnostics, `LanguageService` / `LanguageRegistry` traits, expression IR |
 | `mercurio-model` | Source-language-neutral model structures, graph projection, metamodel views |
 | `mercurio-runtime` | **Deterministic** runtime: index construction, semantic queries, expression evaluation — no I/O |
-| `mercurio-foundation` | Public substrate façade: workspace config, package descriptors, plugin registry, semantic views, query parsing, simulation interfaces |
+| `mercurio-core` | Public compatibility facade: reexports the focused foundation crates under the `mercurio_core` Rust library target |
 | `mercurio-simulation-core` | Simulation execution primitives shared by all execution back-ends |
 | `mercurio-views` | UI-oriented view DTOs and rendering helpers |
 

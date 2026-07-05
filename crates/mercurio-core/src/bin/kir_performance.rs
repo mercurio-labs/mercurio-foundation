@@ -89,6 +89,6 @@ fn parse_args() -> Result<KirPerformanceConfig, Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run -p mercurio-foundation --bin kir_performance -- [--sizes 100,1000,10000,100000,1000000] [--edits 100] [--output-dir target/kir-performance] [--keep-files] [--max-runtime-size 100000] [--max-diff-size 100000] [--emf-command \"java -jar emf-benchmark.jar\"]"
+        "Usage: cargo run -p mercurio-core --bin kir_performance -- [--sizes 100,1000,10000,100000,1000000] [--edits 100] [--output-dir target/kir-performance] [--keep-files] [--max-runtime-size 100000] [--max-diff-size 100000] [--emf-command \"java -jar emf-benchmark.jar\"]"
     );
 }

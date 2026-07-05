@@ -1,6 +1,6 @@
 {
   "allowed_core_crates": [
-    "mercurio-foundation",
+    "mercurio-core",
     "mercurio-kir",
     "mercurio-language-contracts",
     "mercurio-model",
@@ -19,7 +19,7 @@
   ],
   "known_migration_crates": [],
   "forbidden_dependencies": {
-    "mercurio-foundation": [
+    "mercurio-core": [
       "mercurio-adapter",
       "mercurio-ai",
       "mercurio-console-api",

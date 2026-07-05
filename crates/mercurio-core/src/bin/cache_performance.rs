@@ -55,6 +55,6 @@ fn parse_args() -> Result<CachePerformanceConfig, Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run -p mercurio-foundation --bin cache_performance -- [--sizes 1000,10000,100000] [--output-dir target/cache-performance] [--keep-files]"
+        "Usage: cargo run -p mercurio-core --bin cache_performance -- [--sizes 1000,10000,100000] [--output-dir target/cache-performance] [--keep-files]"
     );
 }

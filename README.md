@@ -36,11 +36,26 @@ See [KIR](docs/kir.md), [Language Services](docs/language-services.md), and the 
 
 ## Crates
 
-- `mercurio-kir`: KIR schema, validation, merge, and IO.
-- `mercurio-language-contracts`: diagnostics, reports, expression IR, and language-service contracts.
-- `mercurio-model`: graph, metamodel, metadata, expression, and derived-model primitives.
-- `mercurio-runtime`: deterministic runtime queries, derived indexes, expression evaluation, and rulepacks.
-- `mercurio-foundation`: public substrate facade plus package, workspace, session, mutation, and view APIs built on KIR.
+This repository is a Cargo workspace. The crates are split by responsibility so the
+source-language-neutral core stays small and the higher-level semantic services can
+evolve without turning the facade into a catch-all crate.
+
+| Crate | Role |
+|-------|------|
+| `mercurio-kir` | KIR schema, validation, merge, field registry metadata, and IO. |
+| `mercurio-language-contracts` | Diagnostics, reports, expression IR, and language-service contracts. |
+| `mercurio-model` | Graph projection, metamodel metadata, derived-model primitives, and expression evaluation support. |
+| `mercurio-runtime` | Deterministic graph runtime, derived indexes, expression evaluation, rulepacks, and runtime artifacts. |
+| `mercurio-authoring` | Source sets, language registry integration, source-preserving authoring operations, outlines, and frontend helpers. |
+| `mercurio-semantic-services` | Semantic identity, mutation planning, feasibility, legality, validation, next actions, and variant previews. |
+| `mercurio-workspace` | Repository paths, package libraries, workspace descriptors, model state, compile cache, plugin registry helpers, and performance harnesses. |
+| `mercurio-analysis` | AI review contracts, semantic assessment, model inspection and impact capabilities, cognitive context, goals, and semantic comparison. |
+| `mercurio-query-dsl` | Query parsing, query execution, Rhai DSL bindings, and capability-backed DSL reports. |
+| `mercurio-codegen` | Language profiles, metamodel concept registry, library context, and Python wrapper/code generation. |
+| `mercurio-session` | Session overlays, forks, host-authorized commits, and transaction reports. |
+| `mercurio-simulation-core` | Source-neutral deterministic simulation primitives over KIR-projected behavior facts. |
+| `mercurio-views` | View DTOs, element/model views, diagrams, tables, and deterministic view rendering helpers. |
+| `mercurio-core` | Compatibility facade crate. Its Cargo package is `mercurio-core`, and its library target remains `mercurio_core` for existing consumers. |
 
 See [Crates](docs/crates.md).
 

@@ -110,7 +110,7 @@ Later renderers:
 
 The first concrete non-diagram view is the requirements table projection:
 
-- implementation: `mercurio-foundation/src/views.rs`
+- implementation: `crates/mercurio-views/src/model_views.rs`
 - example KIR: `test_files/examples/requirements_table_model.json`
 - exported API: `requirements_table_view(graph)`
 - persisted view kind: `table`, with the specific preset in `table.kind` such as `requirements`

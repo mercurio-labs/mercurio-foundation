@@ -202,7 +202,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mercurio-foundation"
+name = "mercurio-core"
 version = "0.1.0"
 dependencies = [
  "mercurio-analysis",

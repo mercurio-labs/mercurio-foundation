@@ -73,6 +73,6 @@ fn parse_args() -> Result<CoreScalabilityMetricConfig, Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run -p mercurio-foundation --bin core_scalability_metric -- [--sizes 100,1000,10000] [--edits 100] [--strategy session-overlay|mutators] [--file scalability.model] [--package Scalability]"
+        "Usage: cargo run -p mercurio-core --bin core_scalability_metric -- [--sizes 100,1000,10000] [--edits 100] [--strategy session-overlay|mutators] [--file scalability.model] [--package Scalability]"
     );
 }

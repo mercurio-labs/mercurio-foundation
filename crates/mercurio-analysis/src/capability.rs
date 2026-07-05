@@ -2214,7 +2214,7 @@ pub enum PatchConfidence {
 
 /// Output of a mutate-effect capability run.
 /// Apply by passing `proposal` to CoreMutationFeasibilityService::apply_checked_plan()
-/// then write_back_mutation() in mercurio-foundation/src/authoring.rs.
+/// then write_back_mutation() in mercurio-authoring/src/authoring.rs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityModelPatch {
     pub capability_id: String,

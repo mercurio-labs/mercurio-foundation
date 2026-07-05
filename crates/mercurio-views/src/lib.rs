@@ -40,6 +40,7 @@ pub const VIEW_SPEC_VERSION: u8 = 1;
 #[serde(rename_all = "snake_case")]
 pub enum DiagramKindDto {
     Structure,
+    Bdd,
     Activity,
     StateMachine,
     PackageTree,
@@ -371,6 +372,7 @@ impl std::error::Error for DiagramError {}
 pub fn list_diagram_kinds() -> Vec<DiagramKindDto> {
     vec![
         DiagramKindDto::Structure,
+        DiagramKindDto::Bdd,
         DiagramKindDto::Activity,
         DiagramKindDto::StateMachine,
         DiagramKindDto::PackageTree,
@@ -1031,12 +1033,354 @@ pub fn render_diagram(
 
     match spec.kind {
         DiagramKindDto::Structure => render_structure_diagram(graph, metamodel_registry, spec),
+        DiagramKindDto::Bdd => render_bdd_diagram(graph, metamodel_registry, spec),
         DiagramKindDto::Activity => render_activity_diagram(graph, metamodel_registry, spec),
         DiagramKindDto::StateMachine => {
             render_state_machine_diagram(graph, metamodel_registry, spec)
         }
         _ => Err(DiagramError::UnsupportedKind(spec.kind)),
     }
+}
+
+fn render_bdd_diagram(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    mut spec: DiagramSpecDto,
+) -> Result<DiagramViewDto, DiagramError> {
+    if spec.query.relations.is_empty() {
+        spec.query.relations = vec![
+            "owner".to_string(),
+            "part".to_string(),
+            "specializes".to_string(),
+        ];
+    }
+
+    let mut view = render_structure_diagram(graph, metamodel_registry, spec)?;
+    add_bdd_block_nodes(graph, metamodel_registry, &mut view);
+    add_derived_bdd_edges(graph, &mut view);
+    retain_bdd_display_nodes(&mut view);
+    normalize_bdd_edges(&mut view);
+    sync_diagram_symbols(&mut view);
+    Ok(view)
+}
+
+fn add_bdd_block_nodes(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    view: &mut DiagramViewDto,
+) {
+    let root_id = view.spec.root.as_deref();
+    let root_element = root_id.and_then(|id| graph.element_by_element_id(id));
+    let mut block_ids = view
+        .nodes
+        .iter()
+        .filter(|node| bdd_node_symbol(node).0 == "block")
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+
+    if root_element.is_some_and(is_bdd_block_definition) {
+        if let Some(root_id) = root_id {
+            block_ids.insert(root_id.to_string());
+        }
+    }
+
+    if let Some(root_id) = root_id.filter(|_| root_element.is_some_and(is_bdd_package)) {
+        block_ids.extend(
+            graph
+                .elements()
+                .iter()
+                .filter(|element| is_bdd_block_definition(element))
+                .filter(|element| state_diagram_owner_id(element).as_deref() == Some(root_id))
+                .map(|element| element.element_id.clone()),
+        );
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for element in graph.elements() {
+            if block_ids.contains(&element.element_id) {
+                for target_id in diagram_string_property_values(
+                    element,
+                    &["specializes", "specialization", "generalizes"],
+                ) {
+                    if graph
+                        .element_by_element_id(&target_id)
+                        .is_some_and(is_bdd_block_definition)
+                        && block_ids.insert(target_id)
+                    {
+                        changed = true;
+                    }
+                }
+            }
+
+            if !is_bdd_part_usage(element)
+                || !state_diagram_owner_id(element)
+                    .is_some_and(|owner_id| block_ids.contains(&owner_id))
+            {
+                continue;
+            }
+            for target_id in bdd_usage_definition_ids(element) {
+                if graph
+                    .element_by_element_id(&target_id)
+                    .is_some_and(is_bdd_block_definition)
+                    && block_ids.insert(target_id)
+                {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    let mut existing_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+    for block_id in block_ids {
+        if !existing_ids.insert(block_id.clone()) {
+            continue;
+        }
+        if let Some(element) = graph.element_by_element_id(&block_id) {
+            view.nodes
+                .push(diagram_node(graph, metamodel_registry, element));
+        }
+    }
+    view.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+}
+
+fn add_derived_bdd_edges(graph: &Graph, view: &mut DiagramViewDto) {
+    let retained_ids = view
+        .nodes
+        .iter()
+        .filter(|node| bdd_node_symbol(node).0 == "block")
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut existing_edge_ids = view
+        .edges
+        .iter()
+        .map(|edge| edge.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut existing_semantic_edges = view
+        .edges
+        .iter()
+        .map(|edge| {
+            (
+                edge.relation.clone(),
+                edge.source.clone(),
+                edge.target.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+
+    for source_id in &retained_ids {
+        let Some(source_element) = graph.element_by_element_id(source_id) else {
+            continue;
+        };
+        for target_id in diagram_string_property_values(
+            source_element,
+            &["specializes", "specialization", "generalizes"],
+        ) {
+            if !retained_ids.contains(&target_id) {
+                continue;
+            }
+            let edge_id = format!("{source_id}:specializes:{target_id}");
+            if existing_edge_ids.insert(edge_id.clone())
+                && existing_semantic_edges.insert((
+                    "specializes".to_string(),
+                    source_id.clone(),
+                    target_id.clone(),
+                ))
+            {
+                view.edges.push(DiagramEdgeDto {
+                    id: edge_id,
+                    symbol: symbol_id_for_edge("specializes", source_id, &target_id),
+                    source: source_id.clone(),
+                    target: target_id,
+                    relation: "specializes".to_string(),
+                    label: ":>".to_string(),
+                });
+            }
+        }
+    }
+
+    for part in graph
+        .elements()
+        .iter()
+        .filter(|element| is_bdd_part_usage(element))
+    {
+        let Some(source_id) =
+            state_diagram_owner_id(part).filter(|owner_id| retained_ids.contains(owner_id))
+        else {
+            continue;
+        };
+        for target_id in bdd_usage_definition_ids(part) {
+            if !retained_ids.contains(&target_id) {
+                continue;
+            }
+            let edge_id = format!("{}:part:{}:{}", part.element_id, source_id, target_id);
+            if !existing_edge_ids.insert(edge_id.clone())
+                || !existing_semantic_edges.insert((
+                    "part".to_string(),
+                    source_id.clone(),
+                    target_id.clone(),
+                ))
+            {
+                continue;
+            }
+            view.edges.push(DiagramEdgeDto {
+                id: edge_id,
+                symbol: symbol_id_for_edge("part", &source_id, &target_id),
+                source: source_id.clone(),
+                target: target_id,
+                relation: "part".to_string(),
+                label: state_diagram_label(part),
+            });
+        }
+    }
+    view.edges.sort_by(|left, right| left.id.cmp(&right.id));
+}
+
+fn retain_bdd_display_nodes(view: &mut DiagramViewDto) {
+    view.nodes.retain(|node| bdd_node_symbol(node).0 == "block");
+    let retained_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    view.edges.retain(|edge| {
+        matches!(edge.relation.as_str(), "part" | "specializes")
+            && retained_ids.contains(edge.source.as_str())
+            && retained_ids.contains(edge.target.as_str())
+    });
+}
+
+fn normalize_bdd_edges(view: &mut DiagramViewDto) {
+    for edge in &mut view.edges {
+        if edge.relation == "specializes" {
+            edge.label = ":>".to_string();
+        }
+    }
+    view.edges.sort_by(|left, right| {
+        (
+            left.relation.as_str(),
+            left.source.as_str(),
+            left.target.as_str(),
+            left.label.as_str(),
+        )
+            .cmp(&(
+                right.relation.as_str(),
+                right.source.as_str(),
+                right.target.as_str(),
+                right.label.as_str(),
+            ))
+    });
+    view.edges.dedup_by(|left, right| {
+        left.relation == right.relation
+            && left.source == right.source
+            && left.target == right.target
+    });
+}
+
+fn is_bdd_package(element: &Element) -> bool {
+    element_semantic_text(element).contains("package")
+}
+
+fn is_bdd_block_definition(element: &Element) -> bool {
+    let text = element_semantic_text(element);
+    text.contains("partdefinition") || text.contains("blockdefinition")
+}
+
+fn is_bdd_part_usage(element: &Element) -> bool {
+    let text = element_semantic_text(element);
+    text.contains("partusage") || element.element_id.starts_with("part.")
+}
+
+fn bdd_usage_definition_ids(element: &Element) -> Vec<String> {
+    diagram_string_property_values(element, &["definition", "type", "typed_by", "typedBy"])
+}
+
+fn bdd_node_symbol(node: &DiagramNodeDto) -> (String, serde_json::Map<String, Value>) {
+    let text = node_semantic_text(node);
+    let mut properties = serde_json::Map::new();
+    let (role, shape) = if text.contains("partdefinition") || text.contains("blockdefinition") {
+        ("block", "block")
+    } else {
+        ("element", "node")
+    };
+    properties.insert("shape".to_string(), Value::String(shape.to_string()));
+    (role.to_string(), properties)
+}
+
+fn element_semantic_text(element: &Element) -> String {
+    let mut text = element.kind.to_ascii_lowercase();
+    let mut values = Vec::new();
+    if let Some(value) = state_diagram_string_property(element, &["metatype"]) {
+        values.push(value);
+    }
+    for value in [
+        element
+            .properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("lowering"))
+            .and_then(|lowering| lowering.get("construct"))
+            .and_then(Value::as_str),
+        element
+            .properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("lowering"))
+            .and_then(|lowering| lowering.get("metaclass"))
+            .and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        values.push(value.to_string());
+    }
+    for value in values {
+        text.push(' ');
+        text.push_str(&value.to_ascii_lowercase());
+    }
+    text
+}
+
+fn node_semantic_text(node: &DiagramNodeDto) -> String {
+    let mut text = node.kind.to_ascii_lowercase();
+    for value in [
+        node.properties.get("metatype").and_then(Value::as_str),
+        node.properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("lowering"))
+            .and_then(|lowering| lowering.get("construct"))
+            .and_then(Value::as_str),
+        node.properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("lowering"))
+            .and_then(|lowering| lowering.get("metaclass"))
+            .and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        text.push(' ');
+        text.push_str(&value.to_ascii_lowercase());
+    }
+    text
+}
+
+fn diagram_string_property_values(element: &Element, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| element.properties.get(*key))
+        .flat_map(|value| match value {
+            Value::String(value) => vec![value.clone()],
+            Value::Array(values) => values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 fn render_activity_diagram(
@@ -1053,7 +1397,9 @@ fn render_activity_diagram(
     }
 
     let mut view = render_structure_diagram(graph, metamodel_registry, spec)?;
+    add_owned_activity_nodes(graph, metamodel_registry, &mut view);
     add_derived_activity_flow_edges(graph, &mut view);
+    retain_activity_display_nodes(&mut view);
     if view
         .edges
         .iter()
@@ -1064,6 +1410,63 @@ fn render_activity_diagram(
     apply_activity_symbol_defaults(&mut view);
     sync_diagram_symbols(&mut view);
     Ok(view)
+}
+
+fn add_owned_activity_nodes(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    view: &mut DiagramViewDto,
+) {
+    let mut existing_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<BTreeSet<_>>();
+    let activity_owner_ids = view
+        .nodes
+        .iter()
+        .filter(|node| activity_node_symbol(node).0 == "frame")
+        .map(|node| node.id.clone())
+        .chain(view.spec.root.iter().cloned())
+        .collect::<BTreeSet<_>>();
+
+    for element in graph.elements().iter().filter(|element| {
+        activity_owner_ids.contains(&state_diagram_owner_id(element).unwrap_or_default())
+            || activity_owner_ids.contains(
+                &state_diagram_string_property(element, &["owning_type", "owningType"])
+                    .unwrap_or_default(),
+            )
+            || activity_owner_ids.contains(
+                &state_diagram_string_property(element, &["owning_definition", "owningDefinition"])
+                    .unwrap_or_default(),
+            )
+    }) {
+        if existing_ids.contains(&element.element_id) {
+            continue;
+        }
+        let node = diagram_node(graph, metamodel_registry, element);
+        let role = activity_node_symbol(&node).0;
+        if role == "element" || role == "frame" {
+            continue;
+        }
+        existing_ids.insert(node.id.clone());
+        view.nodes.push(node);
+    }
+    view.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+}
+
+fn retain_activity_display_nodes(view: &mut DiagramViewDto) {
+    view.nodes.retain(|node| {
+        activity_node_symbol(node).0 != "element" || Some(&node.id) == view.spec.root.as_ref()
+    });
+    let retained_ids = view
+        .nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect::<BTreeSet<_>>();
+    view.edges.retain(|edge| {
+        retained_ids.contains(edge.source.as_str()) && retained_ids.contains(edge.target.as_str())
+    });
 }
 
 fn add_derived_activity_flow_edges(graph: &Graph, view: &mut DiagramViewDto) {
@@ -1107,10 +1510,10 @@ fn add_derived_activity_flow_edges(graph: &Graph, view: &mut DiagramViewDto) {
 
 fn sync_diagram_symbols(view: &mut DiagramViewDto) {
     let node_symbols = view.nodes.iter().map(|node| {
-        let (role, properties) = if matches!(view.spec.kind, DiagramKindDto::Activity) {
-            activity_node_symbol(node)
-        } else {
-            ("element".to_string(), serde_json::Map::new())
+        let (role, properties) = match view.spec.kind {
+            DiagramKindDto::Activity => activity_node_symbol(node),
+            DiagramKindDto::Bdd => bdd_node_symbol(node),
+            _ => ("element".to_string(), serde_json::Map::new()),
         };
         DiagramSymbolDto {
             id: node.symbol.clone(),
@@ -1204,20 +1607,30 @@ fn activity_flow_endpoints(graph: &Graph, flow: &Element) -> Option<(String, Str
 
 fn resolve_activity_endpoint(graph: &Graph, flow: &Element, endpoint: &str) -> Option<String> {
     let owner = state_diagram_owner_id(flow)?;
-    let endpoint = endpoint
-        .split('.')
-        .next()
-        .unwrap_or(endpoint)
-        .trim()
-        .to_string();
+    let endpoint = endpoint.trim();
+    if endpoint == owner {
+        return Some(owner);
+    }
+    if let Some(element) = graph.elements().iter().find(|element| {
+        element.element_id == endpoint
+            || state_diagram_string_property(element, &["qualified_name", "qualifiedName"])
+                .is_some_and(|qualified_name| qualified_name.eq_ignore_ascii_case(endpoint))
+    }) {
+        return Some(element.element_id.clone());
+    }
+    let local_endpoint = endpoint.split('.').next().unwrap_or(endpoint).trim();
     graph
         .elements()
         .iter()
         .filter(|element| state_diagram_owner_id(element).as_deref() == Some(owner.as_str()))
         .find(|element| {
-            state_diagram_label(element).eq_ignore_ascii_case(&endpoint)
-                || label_for_id(&element.element_id).eq_ignore_ascii_case(&endpoint)
-                || element.element_id.ends_with(&format!(".{endpoint}"))
+            state_diagram_label(element).eq_ignore_ascii_case(local_endpoint)
+                || state_diagram_string_property(element, &["qualified_name", "qualifiedName"])
+                    .is_some_and(|qualified_name| {
+                        qualified_name.eq_ignore_ascii_case(local_endpoint)
+                    })
+                || label_for_id(&element.element_id).eq_ignore_ascii_case(local_endpoint)
+                || element.element_id.ends_with(&format!(".{local_endpoint}"))
         })
         .map(|element| element.element_id.clone())
 }
@@ -1270,9 +1683,28 @@ fn apply_activity_symbol_defaults(view: &mut DiagramViewDto) {
 }
 
 fn activity_node_symbol(node: &DiagramNodeDto) -> (String, serde_json::Map<String, Value>) {
-    let kind = node.kind.to_ascii_lowercase();
+    let mut kind = node.kind.to_ascii_lowercase();
+    for value in [
+        node.properties.get("metatype").and_then(Value::as_str),
+        node.properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("lowering"))
+            .and_then(|lowering| lowering.get("construct"))
+            .and_then(Value::as_str),
+        node.properties
+            .get("metadata")
+            .and_then(|metadata| metadata.get("lowering"))
+            .and_then(|lowering| lowering.get("metaclass"))
+            .and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        kind.push(' ');
+        kind.push_str(&value.to_ascii_lowercase());
+    }
     let mut properties = serde_json::Map::new();
-    let (role, shape) = if kind.contains("activity") {
+    let (role, shape) = if kind.contains("activity") || kind.contains("actiondefinition") {
         ("frame", "activity_frame")
     } else if kind.contains("object") {
         ("object_node", "object_node")
@@ -2757,6 +3189,7 @@ fn svg_node_shape(
     let (fill, stroke, radius) = match (role, shape) {
         ("state", _) => ("#ecfeff", "#0e7490", 12),
         ("action", _) => ("#fff7ed", "#c2410c", 12),
+        ("block", _) => ("#f0fdf4", "#15803d", 6),
         (_, "object") => ("#eff6ff", "#1d4ed8", 4),
         (_, _) => ("#ffffff", "#334155", 8),
     };
@@ -3404,14 +3837,14 @@ mod tests {
         let flow = view
             .symbols
             .iter()
-            .find(|symbol| symbol.relation.as_deref() == Some("source"))
-            .expect("activity source flow should have a symbol");
+            .find(|symbol| symbol.relation.as_deref() == Some("control_flow"))
+            .expect("activity control flow should have a symbol");
         assert_eq!(flow.role, "edge");
         assert_eq!(
             flow.properties
                 .get("route")
                 .and_then(|value| value.as_str()),
-            Some("straight")
+            Some("orthogonal")
         );
         assert_eq!(
             flow.properties
@@ -3893,6 +4326,7 @@ fn default_true() -> bool {
 fn diagram_kind_name(kind: &DiagramKindDto) -> &'static str {
     match kind {
         DiagramKindDto::Structure => "structure",
+        DiagramKindDto::Bdd => "bdd",
         DiagramKindDto::Activity => "activity",
         DiagramKindDto::StateMachine => "state_machine",
         DiagramKindDto::PackageTree => "package_tree",

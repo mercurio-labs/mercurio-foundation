@@ -25,6 +25,6 @@ fn parse_args() -> Result<PathBuf, Box<dyn Error>> {
 
 fn print_help() {
     println!(
-        "Usage: cargo run --release -p mercurio-foundation --bin runtime_profile -- path/to/model.kir.json"
+        "Usage: cargo run --release -p mercurio-core --bin runtime_profile -- path/to/model.kir.json"
     );
 }
