@@ -9,9 +9,23 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use mercurio_core::{
+use mercurio_model::{
     Element, Graph, MetamodelAttributeRegistry, NodeId, collect_specialization_ancestors,
     effective_properties, element_metatype, metadata_annotations_named, query_element_attributes,
+};
+
+pub mod element_view;
+pub mod model_views;
+
+pub use element_view::ElementView;
+pub use model_views::{
+    ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
+    ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
+    InheritedPropertyValueDto, L2ExplorerEdgeDto, L2ExplorerGraphDto, L2ExplorerNodeDto,
+    L2ExplorerRequestDto, LibraryTreeNodeDto, MetatypeExplorerEdgeDto, MetatypeExplorerGraphDto,
+    MetatypeExplorerNodeDto, MetatypeExplorerRequestDto, ModelMetadataDto, SearchResultDto,
+    document_model_metadata_view, element_details, graph_view, l2_explorer_view, library_tree_view,
+    library_tree_view_from_document, metatype_explorer_view, model_metadata_view, search_view,
 };
 
 const DEFAULT_MAX_DEPTH: usize = 8;
@@ -2017,19 +2031,18 @@ fn diagram_node(
     metamodel_registry: &MetamodelAttributeRegistry,
     element: &Element,
 ) -> DiagramNodeDto {
-    let attributes =
-        mercurio_core::query_element_attributes(graph, metamodel_registry, element.id, None)
-            .map(|query| query.rows)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|attribute| DiagramAttributeDto {
-                name: attribute.name,
-                type_label: attribute
-                    .effective_value
-                    .as_ref()
-                    .map(|value| value_type_label(value).to_string()),
-            })
-            .collect();
+    let attributes = query_element_attributes(graph, metamodel_registry, element.id, None)
+        .map(|query| query.rows)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|attribute| DiagramAttributeDto {
+            name: attribute.name,
+            type_label: attribute
+                .effective_value
+                .as_ref()
+                .map(|value| value_type_label(value).to_string()),
+        })
+        .collect();
 
     DiagramNodeDto {
         id: element.element_id.clone(),
@@ -2711,7 +2724,7 @@ fn svg_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mercurio_core::{KirDocument, KirElement};
+    use mercurio_kir::{KirDocument, KirElement};
     use serde_json::json;
     use std::collections::BTreeMap;
 

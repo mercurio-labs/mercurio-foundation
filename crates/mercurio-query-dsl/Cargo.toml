@@ -1,5 +1,5 @@
 [package]
-name = "mercurio-views"
+name = "mercurio-query-dsl"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,8 +7,13 @@ description.workspace = true
 repository.workspace = true
 
 [dependencies]
+mercurio-analysis = { path = "../mercurio-analysis", version = "0.1.0" }
 mercurio-kir = { path = "../mercurio-kir", version = "0.1.0" }
 mercurio-model = { path = "../mercurio-model", version = "0.1.0" }
 mercurio-runtime = { path = "../mercurio-runtime", version = "0.1.0" }
+mercurio-semantic-services = { path = "../mercurio-semantic-services", version = "0.1.0" }
+mercurio-session = { path = "../mercurio-session", version = "0.1.0" }
+mercurio-workspace = { path = "../mercurio-workspace", version = "0.1.0" }
+rhai.workspace = true
 serde.workspace = true
 serde_json.workspace = true
