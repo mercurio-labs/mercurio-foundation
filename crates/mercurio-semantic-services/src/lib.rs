@@ -30,8 +30,8 @@ pub use mutation::{
     default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
     enrich_semantic_reasoning_context_with_child_affordances_for_capability,
-    enrich_semantic_reasoning_context_with_graph,
-    semantic_reasoning_context_from_authoring_project,
+    enrich_semantic_reasoning_context_with_graph, mutation_application_digest,
+    mutation_proposal_digest, semantic_reasoning_context_from_authoring_project,
     semantic_reasoning_context_from_authoring_project_with_oracle,
 };
 pub use semantic_legality::{

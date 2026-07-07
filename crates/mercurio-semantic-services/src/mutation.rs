@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::identity::SemanticAnchor;
+use crate::identity::{SemanticAnchor, stable_digest};
 use crate::semantic_profile::SemanticCapabilityOracle;
 use crate::variant::{
     SemanticVariantCapabilityContext, default_semantic_variant_capability_context,
@@ -1185,6 +1185,18 @@ pub struct MutationApplicationResult {
     pub edited_files: BTreeMap<String, String>,
     pub changed_declarations: BTreeSet<String>,
     pub semantic_diff: SemanticDiff,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -1246,6 +1258,36 @@ pub struct RelationshipChange {
 }
 
 pub type SemanticDiffElementRef = SemanticElementRef;
+
+pub fn mutation_proposal_digest(proposal: &MutationProposal) -> String {
+    stable_json_digest("semantic-mutation-proposal", proposal)
+}
+
+pub fn mutation_application_digest(application: &MutationApplicationResult) -> String {
+    let payload = serde_json::json!({
+        "changed_files": &application.changed_files,
+        "edited_files": &application.edited_files,
+        "changed_declarations": &application.changed_declarations,
+        "semantic_diff": &application.semantic_diff,
+    });
+    stable_json_digest("semantic-mutation-application", &payload)
+}
+
+fn stable_json_digest<T>(tag: &'static str, value: &T) -> String
+where
+    T: Serialize,
+{
+    match serde_json::to_vec(value) {
+        Ok(bytes) => stable_digest([(tag.as_bytes(), bytes.as_slice())]),
+        Err(err) => {
+            let message = err.to_string();
+            stable_digest([
+                (tag.as_bytes(), "serialization-error".as_bytes()),
+                ("message".as_bytes(), message.as_bytes()),
+            ])
+        }
+    }
+}
 
 pub fn diff_kir_documents(before: &KirDocument, after: &KirDocument) -> SemanticDiff {
     let mut diff = SemanticDiff::default();
@@ -1725,10 +1767,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ElementRef, WorkspaceRevision, default_semantic_mutation_capability_context,
-        diff_kir_documents, enrich_semantic_reasoning_context_with_child_affordances,
-        enrich_semantic_reasoning_context_with_graph,
-        semantic_reasoning_context_from_authoring_project,
+        ElementRef, MutationApplicationResult, MutationProposal, WorkspaceRevision,
+        default_semantic_mutation_capability_context, diff_kir_documents,
+        enrich_semantic_reasoning_context_with_child_affordances,
+        enrich_semantic_reasoning_context_with_graph, mutation_application_digest,
+        mutation_proposal_digest, semantic_reasoning_context_from_authoring_project,
     };
     use mercurio_authoring::authoring::AuthoringProject;
     use mercurio_kir::{KirDocument, KirElement};
@@ -1763,6 +1806,55 @@ mod tests {
                 .iter()
                 .any(|item| item.contains("language-specific mutation profile"))
         );
+    }
+
+    #[test]
+    fn mutation_application_telemetry_is_additive() {
+        let legacy = serde_json::json!({
+            "changed_files": ["model.sysml"],
+            "edited_files": {"model.sysml": "package Demo;"},
+            "changed_declarations": ["Demo"],
+            "semantic_diff": {
+                "added_elements": [],
+                "removed_elements": [],
+                "renamed_elements": [],
+                "moved_elements": [],
+                "retyped_usages": [],
+                "changed_specializations": [],
+                "changed_attributes": [],
+                "added_relationships": [],
+                "removed_relationships": []
+            }
+        });
+        let application: MutationApplicationResult =
+            serde_json::from_value(legacy).expect("legacy application result should deserialize");
+
+        assert_eq!(application.proposed_digest, None);
+        assert_eq!(application.applied_digest, None);
+        assert_eq!(application.decided_at, None);
+
+        let proposal = MutationProposal {
+            intent: "Add demo package".to_string(),
+            operations: Vec::new(),
+            evidence: Vec::new(),
+            rationale: None,
+            workspace_revision: WorkspaceRevision::unchecked(),
+        };
+        let proposed_digest = mutation_proposal_digest(&proposal);
+        assert_eq!(proposed_digest, mutation_proposal_digest(&proposal));
+
+        let mut stamped = application.clone();
+        stamped.proposed_digest = Some(proposed_digest);
+        stamped.applied_digest = Some(mutation_application_digest(&application));
+        stamped.decided_at = Some(42);
+        stamped.supersedes = Some("proposal:previous".to_string());
+        stamped.actor = Some("human".to_string());
+
+        let value = serde_json::to_value(&stamped).expect("application result should serialize");
+        assert_eq!(value["decided_at"], 42);
+        assert_eq!(value["supersedes"], "proposal:previous");
+        assert_eq!(value["actor"], "human");
+        assert_ne!(value["proposed_digest"], value["applied_digest"]);
     }
 
     #[test]
