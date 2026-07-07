@@ -254,6 +254,8 @@ pub enum CapabilityReadinessStatus {
 pub struct CapabilityRunReport {
     pub run_id: String,
     pub capability_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_version: Option<String>,
     pub status: CapabilityRunStatus,
     pub target: CapabilityTarget,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -267,6 +269,8 @@ pub struct CapabilityRunReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<String>,
 }
+
+pub const FOUNDATION_CAPABILITY_VERSION: &str = "0.1.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1088,6 +1092,7 @@ impl SemanticCapability for GenericModelInspectionCapability {
             return Ok(CapabilityRunReport {
                 run_id: request.run_id,
                 capability_id: request.capability_id,
+                capability_version: Some(FOUNDATION_CAPABILITY_VERSION.to_string()),
                 status: match readiness.status {
                     CapabilityReadinessStatus::NotApplicable => CapabilityRunStatus::NotApplicable,
                     _ => CapabilityRunStatus::Error,
@@ -1136,6 +1141,7 @@ impl SemanticCapability for GenericModelInspectionCapability {
         Ok(CapabilityRunReport {
             run_id: request.run_id,
             capability_id: request.capability_id,
+            capability_version: Some(FOUNDATION_CAPABILITY_VERSION.to_string()),
             status: CapabilityRunStatus::Passed,
             target: request.target,
             insights,
@@ -1262,6 +1268,7 @@ impl SemanticCapability for GenericAnalysisOpportunityCapability {
         Ok(CapabilityRunReport {
             run_id: request.run_id,
             capability_id: request.capability_id,
+            capability_version: Some(FOUNDATION_CAPABILITY_VERSION.to_string()),
             status: match readiness.status {
                 CapabilityReadinessStatus::NotApplicable => CapabilityRunStatus::NotApplicable,
                 CapabilityReadinessStatus::Blocked | CapabilityReadinessStatus::Error => {
@@ -1349,6 +1356,7 @@ impl SemanticCapability for GenericImpactCapability {
             return Ok(CapabilityRunReport {
                 run_id: request.run_id,
                 capability_id: request.capability_id,
+                capability_version: Some(FOUNDATION_CAPABILITY_VERSION.to_string()),
                 status: match readiness.status {
                     CapabilityReadinessStatus::NotApplicable => CapabilityRunStatus::NotApplicable,
                     _ => CapabilityRunStatus::Error,
@@ -1388,6 +1396,7 @@ impl SemanticCapability for GenericImpactCapability {
         Ok(CapabilityRunReport {
             run_id: request.run_id,
             capability_id: request.capability_id,
+            capability_version: Some(FOUNDATION_CAPABILITY_VERSION.to_string()),
             status: if insights.is_empty() {
                 CapabilityRunStatus::Inconclusive
             } else {
@@ -2716,6 +2725,7 @@ mod tests {
         let report = CapabilityRunReport {
             run_id: "run.requirements".to_string(),
             capability_id: "sysml.requirement.analysis".to_string(),
+            capability_version: Some("test".to_string()),
             status: CapabilityRunStatus::Passed,
             target: CapabilityTarget::Workspace,
             insights: vec![test_insight(
@@ -2742,10 +2752,45 @@ mod tests {
     }
 
     #[test]
+    fn capability_run_report_versions_are_additive() {
+        let legacy: CapabilityRunReport = serde_json::from_str(
+            r#"{
+                "run_id": "run.legacy",
+                "capability_id": "foundation.inspect.model",
+                "status": "passed",
+                "target": { "kind": "workspace" }
+            }"#,
+        )
+        .expect("legacy report without capability_version should deserialize");
+
+        assert_eq!(legacy.capability_version, None);
+
+        let encoded = serde_json::to_value(CapabilityRunReport {
+            run_id: "run.current".to_string(),
+            capability_id: "foundation.inspect.model".to_string(),
+            capability_version: Some(FOUNDATION_CAPABILITY_VERSION.to_string()),
+            status: CapabilityRunStatus::Passed,
+            target: CapabilityTarget::Workspace,
+            insights: Vec::new(),
+            artifacts: Vec::new(),
+            evidence: EvidenceGraph::default(),
+            diagnostics: Vec::new(),
+            limitations: Vec::new(),
+        })
+        .expect("report should serialize");
+
+        assert_eq!(
+            encoded["capability_version"],
+            serde_json::json!(FOUNDATION_CAPABILITY_VERSION)
+        );
+    }
+
+    #[test]
     fn decision_composition_fails_on_critical_weakening_evidence() {
         let report = CapabilityRunReport {
             run_id: "run.behavior".to_string(),
             capability_id: "sysml.behavior.dynamic".to_string(),
+            capability_version: Some("test".to_string()),
             status: CapabilityRunStatus::Passed,
             target: CapabilityTarget::Workspace,
             insights: vec![test_insight(
@@ -2775,6 +2820,7 @@ mod tests {
         let report = CapabilityRunReport {
             run_id: "run.mixed".to_string(),
             capability_id: "centaur.mixed".to_string(),
+            capability_version: Some("test".to_string()),
             status: CapabilityRunStatus::Passed,
             target: CapabilityTarget::Workspace,
             insights: vec![

@@ -25,6 +25,7 @@ pub use types::{DslEdge, DslElement, ElementSet};
 pub const DSL_QUERY_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/query-report";
 pub const DSL_ANALYSIS_RUN_ARTIFACT_KIND: &str = "mercurio.artifact.dsl/analysis-run-report";
 pub const DSL_QUERY_CAPABILITY_ID: &str = "mercurio.dsl.query";
+pub const DSL_CAPABILITY_VERSION: &str = "0.1.0";
 pub const DSL_QUERY_RESULT_SCHEMA: &str = "mercurio.dsl.query_result.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,6 +242,7 @@ impl DslQueryReport {
         Ok(CapabilityRunReport {
             run_id: run_id.into(),
             capability_id: DSL_QUERY_CAPABILITY_ID.to_string(),
+            capability_version: Some(DSL_CAPABILITY_VERSION.to_string()),
             status: CapabilityRunStatus::Passed,
             target: CapabilityTarget::Workspace,
             insights: Vec::new(),
@@ -684,6 +686,7 @@ fn query_result_to_analysis_report(
     CapabilityRunReport {
         run_id: spec.run_id,
         capability_id: spec.capability_id,
+        capability_version: Some(DSL_CAPABILITY_VERSION.to_string()),
         status,
         target,
         insights: insight.into_iter().collect(),
