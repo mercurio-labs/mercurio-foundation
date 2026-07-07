@@ -242,6 +242,12 @@ where
             edited_files: write_back.edited_files,
             changed_declarations,
             semantic_diff,
+            proposed_digest: None,
+            applied_digest: None,
+            decided_at: None,
+            supersedes: None,
+            reverts: None,
+            actor: None,
         })
     }
 }

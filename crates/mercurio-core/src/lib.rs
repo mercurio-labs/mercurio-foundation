@@ -214,9 +214,12 @@ pub use ai_review::{
     semantic_mutation_feedback_summary,
 };
 pub use analysis::{
-    AnalysisCaseModel, AnalysisElementRef, AnalysisInventory, AnalysisOpportunity,
-    AnalysisOpportunityKind, AnalysisOpportunityReport, AnalysisTechniqueKind, AnalysisWorkflow,
-    AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
+    AnalysisCapabilityDescriptor, AnalysisCapabilityEffect, AnalysisCapabilityProviderKind,
+    AnalysisCapabilitySelector, AnalysisCaseModel, AnalysisElementRef, AnalysisInventory,
+    AnalysisOpportunity, AnalysisOpportunityKind, AnalysisOpportunityReadiness,
+    AnalysisOpportunityReport, AnalysisStructuralPredicate, AnalysisTechniqueKind,
+    AnalysisWorkflow, AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
+    builtin_analysis_capability_descriptors,
 };
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,
@@ -353,8 +356,8 @@ pub use mutation::{
     default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
     enrich_semantic_reasoning_context_with_child_affordances_for_capability,
-    enrich_semantic_reasoning_context_with_graph,
-    semantic_reasoning_context_from_authoring_project,
+    enrich_semantic_reasoning_context_with_graph, mutation_application_digest,
+    mutation_proposal_digest, semantic_reasoning_context_from_authoring_project,
     semantic_reasoning_context_from_authoring_project_with_oracle,
 };
 pub use outline::{
