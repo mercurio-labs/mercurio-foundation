@@ -241,6 +241,8 @@ pub struct SourceSpanRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticKind {
+    /// Source syntax or parser finding.
+    Syntax,
     /// KIR/schema or semantic validation finding.
     Validation,
     /// Rulepack or legality finding.
