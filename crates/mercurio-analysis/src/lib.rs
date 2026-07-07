@@ -14,9 +14,12 @@ pub use ai_review::{
     semantic_mutation_feedback_summary,
 };
 pub use analysis::{
-    AnalysisCaseModel, AnalysisElementRef, AnalysisInventory, AnalysisOpportunity,
-    AnalysisOpportunityKind, AnalysisOpportunityReport, AnalysisTechniqueKind, AnalysisWorkflow,
-    AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
+    AnalysisCapabilityDescriptor, AnalysisCapabilityEffect, AnalysisCapabilityProviderKind,
+    AnalysisCapabilitySelector, AnalysisCaseModel, AnalysisElementRef, AnalysisInventory,
+    AnalysisOpportunity, AnalysisOpportunityKind, AnalysisOpportunityReadiness,
+    AnalysisOpportunityReport, AnalysisStructuralPredicate, AnalysisTechniqueKind,
+    AnalysisWorkflow, AnalysisWorkflowStep, AnalysisWorkflowStepKind, RequirementEvaluationModel,
+    builtin_analysis_capability_descriptors,
 };
 pub use assessment::{
     AssessmentAssertion, AssessmentAssertionReport, AssessmentError, AssessmentExpectation,

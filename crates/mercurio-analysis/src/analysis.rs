@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::capability::SemanticElementRef;
+use mercurio_kir::{Diagnostic, DiagnosticKind, Severity};
 use mercurio_model::{Element, Graph};
 
 pub type AnalysisElementRef = SemanticElementRef;
@@ -88,6 +89,8 @@ pub struct RequirementEvaluationModel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisInventory {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authored_elements: Vec<AnalysisElementRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_cases: Vec<AnalysisCaseModel>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calculation_definitions: Vec<AnalysisElementRef>,
@@ -118,6 +121,67 @@ pub enum AnalysisOpportunityKind {
     Simulation,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisCapabilityProviderKind {
+    Builtin,
+    Plugin,
+    External,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnalysisCapabilityDescriptor {
+    pub id: String,
+    #[serde(default)]
+    pub selector: AnalysisCapabilitySelector,
+    pub effect: AnalysisCapabilityEffect,
+    pub provider_kind: AnalysisCapabilityProviderKind,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnalysisCapabilitySelector {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub types: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub predicates: Vec<AnalysisStructuralPredicate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisStructuralPredicate {
+    AnalysisCase,
+    ConstraintEvaluation,
+    RequirementEvaluation,
+    Simulation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnalysisCapabilityEffect {
+    pub kind: AnalysisOpportunityKind,
+    pub label: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub techniques: Vec<AnalysisTechniqueKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AnalysisOpportunityReadiness {
+    Runnable,
+    Blocked { diagnostic: Diagnostic },
+}
+
+impl Default for AnalysisOpportunityReadiness {
+    fn default() -> Self {
+        Self::Runnable
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnalysisOpportunity {
     pub id: String,
@@ -125,6 +189,8 @@ pub struct AnalysisOpportunity {
     pub label: String,
     pub description: String,
     pub runnable: bool,
+    #[serde(default)]
+    pub readiness: AnalysisOpportunityReadiness,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub elements: Vec<AnalysisElementRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -148,6 +214,12 @@ pub struct AnalysisOpportunityReport {
 
 impl AnalysisInventory {
     pub fn from_graph(graph: &Graph) -> Self {
+        let authored_elements = graph
+            .elements()
+            .iter()
+            .filter(|element| is_authored_model_element(element))
+            .map(element_ref)
+            .collect();
         let calculation_definitions =
             collect_by_kind(graph, |kind| kind_contains(kind, "calculationdefinition"));
         let calculation_usages =
@@ -177,6 +249,7 @@ impl AnalysisInventory {
             .collect();
 
         Self {
+            authored_elements,
             analysis_cases,
             calculation_definitions,
             calculation_usages,
@@ -191,71 +264,193 @@ impl AnalysisInventory {
     }
 
     pub fn opportunities(&self) -> AnalysisOpportunityReport {
+        self.opportunities_for_descriptors(&builtin_analysis_capability_descriptors())
+    }
+
+    pub fn opportunities_for_descriptors(
+        &self,
+        descriptors: &[AnalysisCapabilityDescriptor],
+    ) -> AnalysisOpportunityReport {
         let mut opportunities = Vec::new();
 
-        for case in &self.analysis_cases {
-            opportunities.push(AnalysisOpportunity {
-                id: format!("analysis_case.{}", case.element.element_id),
-                kind: AnalysisOpportunityKind::AnalysisCase,
-                label: format!(
+        for descriptor in descriptors {
+            opportunities.extend(self.opportunities_for_descriptor(descriptor));
+        }
+
+        AnalysisOpportunityReport {
+            schema: "mercurio.analysis.opportunities.v1".to_string(),
+            opportunities,
+        }
+    }
+
+    fn opportunities_for_descriptor(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+    ) -> Vec<AnalysisOpportunity> {
+        if descriptor.selector.predicates.is_empty() {
+            return self
+                .type_selected_opportunity(descriptor)
+                .into_iter()
+                .collect();
+        }
+
+        let mut opportunities = Vec::new();
+        for predicate in &descriptor.selector.predicates {
+            opportunities.extend(self.structural_opportunities(descriptor, predicate));
+        }
+        opportunities
+    }
+
+    fn type_selected_opportunity(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+    ) -> Option<AnalysisOpportunity> {
+        if descriptor.selector.types.is_empty() {
+            return None;
+        }
+        let selected_types = descriptor
+            .selector
+            .types
+            .iter()
+            .map(|kind| canonical_kind(kind))
+            .collect::<BTreeSet<_>>();
+        let elements = self
+            .authored_elements
+            .iter()
+            .filter(|element| {
+                element
+                    .kind
+                    .as_deref()
+                    .is_some_and(|kind| selected_types.contains(&canonical_kind(kind)))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if elements.is_empty() {
+            return None;
+        }
+
+        let mut metadata = descriptor_metadata(descriptor);
+        metadata.insert("matchedTypeCount".to_string(), json!(selected_types.len()));
+        metadata.insert("subjectCount".to_string(), json!(elements.len()));
+
+        Some(opportunity_from_descriptor(
+            descriptor,
+            format!("{}.workspace", descriptor.id),
+            elements,
+            AnalysisOpportunityReadiness::Runnable,
+            metadata,
+        ))
+    }
+
+    fn structural_opportunities(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+        predicate: &AnalysisStructuralPredicate,
+    ) -> Vec<AnalysisOpportunity> {
+        match predicate {
+            AnalysisStructuralPredicate::AnalysisCase => {
+                self.analysis_case_opportunities(descriptor)
+            }
+            AnalysisStructuralPredicate::ConstraintEvaluation => self
+                .constraint_evaluation_opportunity(descriptor)
+                .into_iter()
+                .collect(),
+            AnalysisStructuralPredicate::RequirementEvaluation => self
+                .requirement_evaluation_opportunity(descriptor)
+                .into_iter()
+                .collect(),
+            AnalysisStructuralPredicate::Simulation => self
+                .simulation_opportunity(descriptor)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn analysis_case_opportunities(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+    ) -> Vec<AnalysisOpportunity> {
+        self.analysis_cases
+            .iter()
+            .map(|case| {
+                let mut metadata = descriptor_metadata(descriptor);
+                metadata.insert("caseId".to_string(), json!(case.element.element_id));
+                metadata.insert("workflow".to_string(), json!(case.workflow()));
+                metadata.insert("subjectCount".to_string(), json!(case.subjects.len()));
+                metadata.insert("constraintCount".to_string(), json!(case.constraints.len()));
+                metadata.insert(
+                    "requirementCount".to_string(),
+                    json!(case.requirements.len()),
+                );
+                metadata.insert("simulationCount".to_string(), json!(case.simulations.len()));
+                let label = format!(
                     "Run analysis case {}",
                     case.element
                         .label
                         .as_deref()
                         .unwrap_or(case.element.element_id.as_str())
+                );
+                let mut opportunity = opportunity_from_descriptor_with_label(
+                    descriptor,
+                    format!("analysis_case.{}", case.element.element_id),
+                    label,
+                    vec![case.element.clone()],
+                    AnalysisOpportunityReadiness::Runnable,
+                    metadata,
+                );
+                opportunity.techniques = case.techniques.clone();
+                opportunity
+            })
+            .collect()
+    }
+
+    fn constraint_evaluation_opportunity(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+    ) -> Option<AnalysisOpportunity> {
+        if self.constraint_usages.is_empty() && self.constraint_definitions.is_empty() {
+            return None;
+        }
+        let elements = if self.constraint_usages.is_empty() {
+            self.constraint_definitions.clone()
+        } else {
+            self.constraint_usages.clone()
+        };
+        let readiness = if self.constraint_usages.is_empty() {
+            AnalysisOpportunityReadiness::Blocked {
+                diagnostic: readiness_diagnostic(
+                    "analysis.constraint.unbound",
+                    "constraint definitions are present but no constraint usages are bound",
+                    self.constraint_definitions
+                        .iter()
+                        .map(|element| element.element_id.clone()),
                 ),
-                description: "Authored analysis case with a semantic execution workflow."
-                    .to_string(),
-                runnable: true,
-                elements: vec![case.element.clone()],
-                techniques: case.techniques.clone(),
-                capability_id: Some("sysml.analysis.case".to_string()),
-                action_id: Some("run_analysis_case".to_string()),
-                route_hint: Some("/api/analysis/cases/run".to_string()),
-                metadata: serde_json::Map::from_iter([
-                    ("caseId".to_string(), json!(case.element.element_id)),
-                    ("workflow".to_string(), json!(case.workflow())),
-                    ("subjectCount".to_string(), json!(case.subjects.len())),
-                    ("constraintCount".to_string(), json!(case.constraints.len())),
-                    (
-                        "requirementCount".to_string(),
-                        json!(case.requirements.len()),
-                    ),
-                    ("simulationCount".to_string(), json!(case.simulations.len())),
-                ]),
-            });
-        }
+            }
+        } else {
+            AnalysisOpportunityReadiness::Runnable
+        };
+        let mut metadata = descriptor_metadata(descriptor);
+        metadata.insert(
+            "constraintDefinitionCount".to_string(),
+            json!(self.constraint_definitions.len()),
+        );
+        metadata.insert(
+            "constraintUsageCount".to_string(),
+            json!(self.constraint_usages.len()),
+        );
+        Some(opportunity_from_descriptor(
+            descriptor,
+            "constraint_evaluation.workspace".to_string(),
+            elements,
+            readiness,
+            metadata,
+        ))
+    }
 
-        if !self.constraint_usages.is_empty() || !self.constraint_definitions.is_empty() {
-            let elements = if self.constraint_usages.is_empty() {
-                self.constraint_definitions.clone()
-            } else {
-                self.constraint_usages.clone()
-            };
-            opportunities.push(AnalysisOpportunity {
-                id: "constraint_evaluation.workspace".to_string(),
-                kind: AnalysisOpportunityKind::ConstraintEvaluation,
-                label: "Evaluate model constraints".to_string(),
-                description: "Constraint definitions or usages are present and can be evaluated against bound model values.".to_string(),
-                runnable: !self.constraint_usages.is_empty(),
-                elements,
-                techniques: vec![AnalysisTechniqueKind::ConstraintEvaluation],
-                capability_id: Some("sysml.constraint.analysis".to_string()),
-                action_id: Some("solve_constraints".to_string()),
-                route_hint: Some("/api/constraints/solve".to_string()),
-                metadata: serde_json::Map::from_iter([
-                    (
-                        "constraintDefinitionCount".to_string(),
-                        json!(self.constraint_definitions.len()),
-                    ),
-                    (
-                        "constraintUsageCount".to_string(),
-                        json!(self.constraint_usages.len()),
-                    ),
-                ]),
-            });
-        }
-
+    fn requirement_evaluation_opportunity(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+    ) -> Option<AnalysisOpportunity> {
         let requirement_evaluations = self
             .requirement_evaluations
             .iter()
@@ -264,52 +459,186 @@ impl AnalysisInventory {
                     || !evaluation.verification_cases.is_empty()
             })
             .collect::<Vec<_>>();
-        if !requirement_evaluations.is_empty() {
-            opportunities.push(AnalysisOpportunity {
-                id: "requirement_evaluation.workspace".to_string(),
+        if requirement_evaluations.is_empty() {
+            return None;
+        }
+        let mut metadata = descriptor_metadata(descriptor);
+        metadata.insert(
+            "requirementCount".to_string(),
+            json!(requirement_evaluations.len()),
+        );
+        Some(opportunity_from_descriptor(
+            descriptor,
+            "requirement_evaluation.workspace".to_string(),
+            requirement_evaluations
+                .iter()
+                .map(|evaluation| evaluation.requirement.clone())
+                .collect(),
+            AnalysisOpportunityReadiness::Runnable,
+            metadata,
+        ))
+    }
+
+    fn simulation_opportunity(
+        &self,
+        descriptor: &AnalysisCapabilityDescriptor,
+    ) -> Option<AnalysisOpportunity> {
+        if self.simulations.is_empty() {
+            return None;
+        }
+        let mut metadata = descriptor_metadata(descriptor);
+        metadata.insert(
+            "simulationElementCount".to_string(),
+            json!(self.simulations.len()),
+        );
+        Some(opportunity_from_descriptor(
+            descriptor,
+            "simulation.workspace".to_string(),
+            self.simulations.clone(),
+            AnalysisOpportunityReadiness::Runnable,
+            metadata,
+        ))
+    }
+}
+
+pub fn builtin_analysis_capability_descriptors() -> Vec<AnalysisCapabilityDescriptor> {
+    vec![
+        AnalysisCapabilityDescriptor {
+            id: "sysml.analysis.case".to_string(),
+            selector: AnalysisCapabilitySelector {
+                types: Vec::new(),
+                predicates: vec![AnalysisStructuralPredicate::AnalysisCase],
+            },
+            effect: AnalysisCapabilityEffect {
+                kind: AnalysisOpportunityKind::AnalysisCase,
+                label: "Run analysis case".to_string(),
+                description: "Authored analysis case with a semantic execution workflow."
+                    .to_string(),
+                techniques: Vec::new(),
+                action_id: Some("run_analysis_case".to_string()),
+                route_hint: Some("/api/analysis/cases/run".to_string()),
+            },
+            provider_kind: AnalysisCapabilityProviderKind::Builtin,
+            version: "1".to_string(),
+        },
+        AnalysisCapabilityDescriptor {
+            id: "sysml.constraint.analysis".to_string(),
+            selector: AnalysisCapabilitySelector {
+                types: Vec::new(),
+                predicates: vec![AnalysisStructuralPredicate::ConstraintEvaluation],
+            },
+            effect: AnalysisCapabilityEffect {
+                kind: AnalysisOpportunityKind::ConstraintEvaluation,
+                label: "Evaluate model constraints".to_string(),
+                description: "Constraint definitions or usages are present and can be evaluated against bound model values.".to_string(),
+                techniques: vec![AnalysisTechniqueKind::ConstraintEvaluation],
+                action_id: Some("solve_constraints".to_string()),
+                route_hint: Some("/api/constraints/solve".to_string()),
+            },
+            provider_kind: AnalysisCapabilityProviderKind::Builtin,
+            version: "1".to_string(),
+        },
+        AnalysisCapabilityDescriptor {
+            id: "sysml.requirement.analysis".to_string(),
+            selector: AnalysisCapabilitySelector {
+                types: Vec::new(),
+                predicates: vec![AnalysisStructuralPredicate::RequirementEvaluation],
+            },
+            effect: AnalysisCapabilityEffect {
                 kind: AnalysisOpportunityKind::RequirementEvaluation,
                 label: "Evaluate requirements".to_string(),
                 description: "Requirements have formal constraints or verification cases that can produce satisfaction evidence.".to_string(),
-                runnable: true,
-                elements: requirement_evaluations
-                    .iter()
-                    .map(|evaluation| evaluation.requirement.clone())
-                    .collect(),
                 techniques: vec![AnalysisTechniqueKind::Verification],
-                capability_id: Some("sysml.requirement.analysis".to_string()),
                 action_id: Some("analyze_requirement_coverage".to_string()),
-                route_hint: Some("/api/reasoning/capabilities/sysml.requirement.analysis/run".to_string()),
-                metadata: serde_json::Map::from_iter([(
-                    "requirementCount".to_string(),
-                    json!(requirement_evaluations.len()),
-                )]),
-            });
-        }
-
-        if !self.simulations.is_empty() {
-            opportunities.push(AnalysisOpportunity {
-                id: "simulation.workspace".to_string(),
+                route_hint: Some(
+                    "/api/reasoning/capabilities/sysml.requirement.analysis/run".to_string(),
+                ),
+            },
+            provider_kind: AnalysisCapabilityProviderKind::Builtin,
+            version: "1".to_string(),
+        },
+        AnalysisCapabilityDescriptor {
+            id: "sysml.behavior.dynamic".to_string(),
+            selector: AnalysisCapabilitySelector {
+                types: Vec::new(),
+                predicates: vec![AnalysisStructuralPredicate::Simulation],
+            },
+            effect: AnalysisCapabilityEffect {
                 kind: AnalysisOpportunityKind::Simulation,
                 label: "Explore executable behavior".to_string(),
                 description: "State or behavior elements are present and may support dynamic behavior analysis or simulation.".to_string(),
-                runnable: true,
-                elements: self.simulations.clone(),
                 techniques: vec![AnalysisTechniqueKind::Simulation],
-                capability_id: Some("sysml.behavior.dynamic".to_string()),
                 action_id: Some("analyze_state_machine".to_string()),
-                route_hint: Some("/api/reasoning/capabilities/sysml.behavior.dynamic/run".to_string()),
-                metadata: serde_json::Map::from_iter([(
-                    "simulationElementCount".to_string(),
-                    json!(self.simulations.len()),
-                )]),
-            });
-        }
+                route_hint: Some(
+                    "/api/reasoning/capabilities/sysml.behavior.dynamic/run".to_string(),
+                ),
+            },
+            provider_kind: AnalysisCapabilityProviderKind::Builtin,
+            version: "1".to_string(),
+        },
+    ]
+}
 
-        AnalysisOpportunityReport {
-            schema: "mercurio.analysis.opportunities.v1".to_string(),
-            opportunities,
-        }
+fn opportunity_from_descriptor(
+    descriptor: &AnalysisCapabilityDescriptor,
+    id: String,
+    elements: Vec<AnalysisElementRef>,
+    readiness: AnalysisOpportunityReadiness,
+    metadata: serde_json::Map<String, Value>,
+) -> AnalysisOpportunity {
+    opportunity_from_descriptor_with_label(
+        descriptor,
+        id,
+        descriptor.effect.label.clone(),
+        elements,
+        readiness,
+        metadata,
+    )
+}
+
+fn opportunity_from_descriptor_with_label(
+    descriptor: &AnalysisCapabilityDescriptor,
+    id: String,
+    label: String,
+    elements: Vec<AnalysisElementRef>,
+    readiness: AnalysisOpportunityReadiness,
+    metadata: serde_json::Map<String, Value>,
+) -> AnalysisOpportunity {
+    let runnable = matches!(readiness, AnalysisOpportunityReadiness::Runnable);
+    AnalysisOpportunity {
+        id,
+        kind: descriptor.effect.kind,
+        label,
+        description: descriptor.effect.description.clone(),
+        runnable,
+        readiness,
+        elements,
+        techniques: descriptor.effect.techniques.clone(),
+        capability_id: Some(descriptor.id.clone()),
+        action_id: descriptor.effect.action_id.clone(),
+        route_hint: descriptor.effect.route_hint.clone(),
+        metadata,
     }
+}
+
+fn descriptor_metadata(
+    descriptor: &AnalysisCapabilityDescriptor,
+) -> serde_json::Map<String, Value> {
+    serde_json::Map::from_iter([
+        ("providerKind".to_string(), json!(descriptor.provider_kind)),
+        ("capabilityVersion".to_string(), json!(descriptor.version)),
+    ])
+}
+
+fn readiness_diagnostic(
+    code: impl Into<String>,
+    message: impl Into<String>,
+    subjects: impl IntoIterator<Item = String>,
+) -> Diagnostic {
+    let mut diagnostic =
+        Diagnostic::new(DiagnosticKind::Readiness, Severity::Warning, code, message);
+    diagnostic.subjects = subjects.into_iter().collect();
+    diagnostic
 }
 
 impl AnalysisCaseModel {
@@ -788,6 +1117,18 @@ mod tests {
         .expect("analysis fixture should build a graph")
     }
 
+    fn constraint_definition_only_graph() -> Graph {
+        Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![element(
+                "constraintdef.SafeStart",
+                "ConstraintDefinition",
+                BTreeMap::from([("declared_name".to_string(), json!("SafeStart"))]),
+            )],
+        })
+        .expect("constraint definition fixture should build a graph")
+    }
+
     #[test]
     fn inventory_extracts_sysml_analysis_nouns() {
         let graph = analysis_graph();
@@ -803,6 +1144,7 @@ mod tests {
         assert_eq!(inventory.views.len(), 1);
         assert_eq!(inventory.concerns.len(), 1);
         assert_eq!(inventory.simulations.len(), 1);
+        assert!(inventory.authored_elements.len() >= 14);
 
         let case = &inventory.analysis_cases[0];
         assert_eq!(case.element.element_id, "analysis.StartupSafety");
@@ -902,5 +1244,78 @@ mod tests {
                 && opportunity.capability_id.as_deref() == Some("sysml.behavior.dynamic")
                 && opportunity.elements[0].element_id == "state.StartupSimulation"
         }));
+    }
+
+    #[test]
+    fn descriptor_type_join_surfaces_plugin_capability_opportunities() {
+        let graph = analysis_graph();
+        let inventory = AnalysisInventory::from_graph(&graph);
+        let descriptor = AnalysisCapabilityDescriptor {
+            id: "plugin.state.review".to_string(),
+            selector: AnalysisCapabilitySelector {
+                types: vec!["StateDefinition".to_string(), "StateUsage".to_string()],
+                predicates: Vec::new(),
+            },
+            effect: AnalysisCapabilityEffect {
+                kind: AnalysisOpportunityKind::Simulation,
+                label: "Review state behavior".to_string(),
+                description: "Plugin-provided state behavior review.".to_string(),
+                techniques: vec![AnalysisTechniqueKind::Simulation],
+                action_id: Some("run_plugin_capability".to_string()),
+                route_hint: Some("/api/reasoning/capabilities/plugin.state.review/run".to_string()),
+            },
+            provider_kind: AnalysisCapabilityProviderKind::Plugin,
+            version: "2026.7".to_string(),
+        };
+
+        let report = inventory.opportunities_for_descriptors(&[descriptor]);
+
+        assert_eq!(report.opportunities.len(), 1);
+        let opportunity = &report.opportunities[0];
+        assert_eq!(
+            opportunity.capability_id.as_deref(),
+            Some("plugin.state.review")
+        );
+        assert!(opportunity.runnable);
+        assert_eq!(
+            opportunity.readiness,
+            AnalysisOpportunityReadiness::Runnable
+        );
+        assert_eq!(
+            opportunity.elements[0].element_id,
+            "state.StartupSimulation"
+        );
+        assert_eq!(
+            opportunity.metadata.get("providerKind"),
+            Some(&json!("plugin"))
+        );
+        assert_eq!(
+            opportunity.metadata.get("capabilityVersion"),
+            Some(&json!("2026.7"))
+        );
+    }
+
+    #[test]
+    fn constraint_definitions_without_usages_surface_blocked_readiness() {
+        let graph = constraint_definition_only_graph();
+        let inventory = AnalysisInventory::from_graph(&graph);
+        let report = inventory.opportunities();
+        let opportunity = report
+            .opportunities
+            .iter()
+            .find(|opportunity| opportunity.kind == AnalysisOpportunityKind::ConstraintEvaluation)
+            .expect("constraint definitions should surface a readiness-blocked opportunity");
+
+        assert!(!opportunity.runnable);
+        match &opportunity.readiness {
+            AnalysisOpportunityReadiness::Blocked { diagnostic } => {
+                assert_eq!(diagnostic.kind, DiagnosticKind::Readiness);
+                assert_eq!(diagnostic.code, "analysis.constraint.unbound");
+                assert_eq!(diagnostic.subjects, vec!["constraintdef.SafeStart"]);
+            }
+            AnalysisOpportunityReadiness::Runnable => {
+                panic!("constraint definition without usage should be blocked")
+            }
+        }
     }
 }
