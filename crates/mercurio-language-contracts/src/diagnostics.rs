@@ -8,6 +8,8 @@ use crate::ast::SourceSpan;
 pub struct Diagnostic {
     pub message: String,
     pub span: Option<SourceSpan>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<String>,
 }
 
 impl Diagnostic {
@@ -15,7 +17,13 @@ impl Diagnostic {
         Self {
             message: message.into(),
             span,
+            subjects: Vec::new(),
         }
+    }
+
+    pub fn with_subject(mut self, subject: impl Into<String>) -> Self {
+        self.subjects.push(subject.into());
+        self
     }
 }
 
