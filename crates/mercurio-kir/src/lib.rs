@@ -905,6 +905,24 @@ impl KirDocument {
     where
         I: IntoIterator<Item = KirDocument>,
     {
+        Self::merge_with_validation(documents, None::<std::iter::Empty<(&str, KirFieldKind)>>)
+    }
+
+    pub fn merge_with_registered_fields<I, F, N>(documents: I, fields: F) -> Result<Self, KirError>
+    where
+        I: IntoIterator<Item = KirDocument>,
+        F: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
+        Self::merge_with_validation(documents, Some(fields))
+    }
+
+    fn merge_with_validation<I, F, N>(documents: I, fields: Option<F>) -> Result<Self, KirError>
+    where
+        I: IntoIterator<Item = KirDocument>,
+        F: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
         let mut seen = BTreeSet::new();
         let mut elements = Vec::new();
         let mut source_metadata = Vec::new();
@@ -931,7 +949,11 @@ impl KirDocument {
         }
 
         let merged = Self { metadata, elements }.normalized_for_persistence();
-        merged.validate_persisted()?;
+        if let Some(fields) = fields {
+            merged.validate_persisted_with_registered_fields(fields)?;
+        } else {
+            merged.validate_persisted()?;
+        }
         Ok(merged)
     }
 
