@@ -39,9 +39,73 @@ pub const VIEW_SPEC_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ViewFamilyDto {
+    Diagram,
+    Table,
+    Model,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewRootRequirementDto {
+    Required,
+    Optional,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewScopeDto {
+    WholeModel,
+    Subtree,
+    Explicit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewKindDescriptor {
+    pub id: String,
+    pub family: ViewFamilyDto,
+    pub title: String,
+    pub summary: String,
+    pub root: ViewRootRequirementDto,
+    #[serde(default)]
+    pub root_metatypes: Vec<String>,
+    #[serde(default)]
+    pub scopes: Vec<ViewScopeDto>,
+    pub animatable: bool,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewCatalogReport {
+    pub entries: Vec<ViewCatalogEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewCatalogEntry {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    pub label: String,
+    pub spec: ViewDocumentDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewAffordanceDto {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    pub label: String,
+    pub spec: ViewDocumentDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum DiagramKindDto {
     Structure,
     Bdd,
+    InternalBlock,
+    Requirement,
     Activity,
     StateMachine,
     PackageTree,
@@ -125,6 +189,8 @@ pub struct DiagramStyleOptionsDto {
     pub show_edge_labels: bool,
     #[serde(default)]
     pub group_by_layer: bool,
+    #[serde(default, alias = "showAffordances")]
+    pub show_affordances: bool,
 }
 
 impl Default for DiagramStyleOptionsDto {
@@ -133,6 +199,7 @@ impl Default for DiagramStyleOptionsDto {
             show_attributes: true,
             show_edge_labels: true,
             group_by_layer: false,
+            show_affordances: false,
         }
     }
 }
@@ -310,6 +377,8 @@ pub struct TableSpecDto {
     pub query: DiagramQueryOptionsDto,
     #[serde(default)]
     pub columns: Vec<TableColumnSpecDto>,
+    #[serde(default, alias = "showAffordances")]
+    pub show_affordances: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -332,6 +401,8 @@ pub struct TableRowDto {
     pub id: String,
     pub element: String,
     pub cells: Vec<TableCellDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affordances: Vec<ViewAffordanceDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -354,6 +425,59 @@ pub struct DiagramViewDto {
     pub nodes: Vec<DiagramNodeDto>,
     pub edges: Vec<DiagramEdgeDto>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ViewOverlayDto {
+    pub version: u8,
+    #[serde(default)]
+    pub frames: Vec<ViewOverlayFrameDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ViewOverlayFrameDto {
+    pub index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_s: Option<f64>,
+    #[serde(default)]
+    pub node_marks: Vec<ViewNodeMarkDto>,
+    #[serde(default)]
+    pub edge_marks: Vec<ViewEdgeMarkDto>,
+    #[serde(default)]
+    pub node_values: Vec<ViewNodeValueDto>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewNodeMarkDto {
+    pub element: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub properties: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ViewEdgeMarkDto {
+    pub element: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub properties: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ViewNodeValueDto {
+    pub element: String,
+    pub key: String,
+    pub value: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -381,6 +505,8 @@ pub struct DiagramNodeDto {
     pub badges: Vec<String>,
     pub attributes: Vec<DiagramAttributeDto>,
     pub properties: serde_json::Map<String, Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affordances: Vec<ViewAffordanceDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -448,6 +574,8 @@ pub fn list_diagram_kinds() -> Vec<DiagramKindDto> {
     vec![
         DiagramKindDto::Structure,
         DiagramKindDto::Bdd,
+        DiagramKindDto::InternalBlock,
+        DiagramKindDto::Requirement,
         DiagramKindDto::Activity,
         DiagramKindDto::StateMachine,
         DiagramKindDto::PackageTree,
@@ -467,6 +595,756 @@ pub fn list_table_kinds() -> Vec<TableKindDto> {
         TableKindDto::Elements,
         TableKindDto::Requirements,
     ]
+}
+
+pub fn list_view_kinds() -> Vec<ViewKindDescriptor> {
+    let mut descriptors = Vec::new();
+    descriptors.extend(
+        list_diagram_kinds()
+            .into_iter()
+            .map(diagram_kind_descriptor),
+    );
+    descriptors.extend(list_table_kinds().into_iter().map(table_kind_descriptor));
+    descriptors.extend(
+        [
+            ModelViewKindDto::Metadata,
+            ModelViewKindDto::Graph,
+            ModelViewKindDto::Search,
+            ModelViewKindDto::ElementDetails,
+            ModelViewKindDto::LibraryTree,
+            ModelViewKindDto::ModelExplorer,
+            ModelViewKindDto::MetatypeExplorer,
+        ]
+        .into_iter()
+        .map(model_view_kind_descriptor),
+    );
+    descriptors
+}
+
+pub fn view_catalog(graph: &Graph) -> ViewCatalogReport {
+    let mut entries = Vec::new();
+
+    entries.push(ViewCatalogEntry {
+        kind: "model.metadata".to_string(),
+        subject: None,
+        label: "Model Metadata".to_string(),
+        spec: ViewDocumentDto::model(model_view_spec(
+            ModelViewKindDto::Metadata,
+            "Model Metadata",
+            None,
+        )),
+    });
+    entries.push(ViewCatalogEntry {
+        kind: "model.graph".to_string(),
+        subject: None,
+        label: "Model Graph".to_string(),
+        spec: ViewDocumentDto::model(ModelViewSpecDto {
+            version: VIEW_SPEC_VERSION,
+            kind: ModelViewKindDto::Graph,
+            title: "Model Graph".to_string(),
+            description: Some("Whole-model graph view.".to_string()),
+            root: None,
+            graph_scope: Some(GraphScope::ModelPlusContext.as_str().to_string()),
+            query: None,
+            expanded_parents: Vec::new(),
+            expanded_children: Vec::new(),
+            include_reference_edges: true,
+        }),
+    });
+    entries.push(ViewCatalogEntry {
+        kind: "model.library_tree".to_string(),
+        subject: None,
+        label: "Library Tree".to_string(),
+        spec: ViewDocumentDto::model(model_view_spec(
+            ModelViewKindDto::LibraryTree,
+            "Library Tree",
+            None,
+        )),
+    });
+
+    if graph.elements().iter().any(|element| element.layer >= 2) {
+        entries.push(ViewCatalogEntry {
+            kind: "diagram.structure".to_string(),
+            subject: None,
+            label: "Structure: Whole Model".to_string(),
+            spec: ViewDocumentDto::diagram(diagram_spec(
+                DiagramKindDto::Structure,
+                "Whole Model Structure",
+                None,
+                default_catalog_relations(),
+            )),
+        });
+        entries.push(ViewCatalogEntry {
+            kind: "table.model_elements".to_string(),
+            subject: None,
+            label: "Table: Model Elements".to_string(),
+            spec: ViewDocumentDto::table(TableSpecDto {
+                version: VIEW_SPEC_VERSION,
+                kind: TableKindDto::ModelElements,
+                title: "Model Elements".to_string(),
+                description: Some("Whole-model element table.".to_string()),
+                root: None,
+                target_type: None,
+                scope: TableScopeDto::WholeModel,
+                row_type: None,
+                query: catalog_query(default_catalog_relations()),
+                columns: Vec::new(),
+                show_affordances: false,
+            }),
+        });
+    }
+
+    if graph.elements().iter().any(is_requirement_element) {
+        entries.push(ViewCatalogEntry {
+            kind: "table.requirements".to_string(),
+            subject: None,
+            label: "Table: Requirements".to_string(),
+            spec: ViewDocumentDto::table(TableSpecDto {
+                version: VIEW_SPEC_VERSION,
+                kind: TableKindDto::Requirements,
+                title: "Requirements".to_string(),
+                description: Some("Whole-model requirements table.".to_string()),
+                root: None,
+                target_type: None,
+                scope: TableScopeDto::WholeModel,
+                row_type: None,
+                query: catalog_query(vec![
+                    "owner".to_string(),
+                    "satisfy".to_string(),
+                    "verify".to_string(),
+                ]),
+                columns: Vec::new(),
+                show_affordances: false,
+            }),
+        });
+    }
+
+    for element in graph.elements().iter().filter(|element| element.layer >= 2) {
+        if is_package_element(element) {
+            entries.push(ViewCatalogEntry {
+                kind: "diagram.bdd".to_string(),
+                subject: Some(element.element_id.clone()),
+                label: format!("BDD: {}", catalog_element_label(element)),
+                spec: ViewDocumentDto::diagram(diagram_spec(
+                    DiagramKindDto::Bdd,
+                    &format!("{} BDD", catalog_element_label(element)),
+                    Some(element.element_id.clone()),
+                    vec![
+                        "owner".to_string(),
+                        "part".to_string(),
+                        "specializes".to_string(),
+                    ],
+                )),
+            });
+        }
+
+        if is_block_definition_element(element) {
+            entries.push(ViewCatalogEntry {
+                kind: "diagram.bdd".to_string(),
+                subject: Some(element.element_id.clone()),
+                label: format!("BDD: {}", catalog_element_label(element)),
+                spec: ViewDocumentDto::diagram(diagram_spec(
+                    DiagramKindDto::Bdd,
+                    &format!("{} BDD", catalog_element_label(element)),
+                    Some(element.element_id.clone()),
+                    vec![
+                        "owner".to_string(),
+                        "part".to_string(),
+                        "specializes".to_string(),
+                    ],
+                )),
+            });
+
+            if has_internal_block_structure(graph, element) {
+                entries.push(ViewCatalogEntry {
+                    kind: "diagram.internal_block".to_string(),
+                    subject: Some(element.element_id.clone()),
+                    label: format!("IBD: {}", catalog_element_label(element)),
+                    spec: ViewDocumentDto::diagram(diagram_spec(
+                        DiagramKindDto::InternalBlock,
+                        &format!("{} Internal Block", catalog_element_label(element)),
+                        Some(element.element_id.clone()),
+                        vec![
+                            "owner".to_string(),
+                            "owning_type".to_string(),
+                            "source".to_string(),
+                            "target".to_string(),
+                        ],
+                    )),
+                });
+            }
+        }
+
+        if is_activity_element(element) {
+            entries.push(ViewCatalogEntry {
+                kind: "diagram.activity".to_string(),
+                subject: Some(element.element_id.clone()),
+                label: format!("Activity: {}", catalog_element_label(element)),
+                spec: ViewDocumentDto::diagram(diagram_spec(
+                    DiagramKindDto::Activity,
+                    &format!("{} Activity", catalog_element_label(element)),
+                    Some(element.element_id.clone()),
+                    vec![
+                        "owner".to_string(),
+                        "source".to_string(),
+                        "target".to_string(),
+                    ],
+                )),
+            });
+        }
+
+        if is_state_machine_root_element(graph, element) {
+            entries.push(ViewCatalogEntry {
+                kind: "diagram.state_machine".to_string(),
+                subject: Some(element.element_id.clone()),
+                label: format!("State Machine: {}", catalog_element_label(element)),
+                spec: ViewDocumentDto::diagram(diagram_spec(
+                    DiagramKindDto::StateMachine,
+                    &format!("{} State Machine", catalog_element_label(element)),
+                    Some(element.element_id.clone()),
+                    vec![
+                        "owner".to_string(),
+                        "source".to_string(),
+                        "target".to_string(),
+                    ],
+                )),
+            });
+        }
+
+        if is_package_element(element) && package_contains_requirement(graph, element) {
+            entries.push(ViewCatalogEntry {
+                kind: "diagram.requirement".to_string(),
+                subject: Some(element.element_id.clone()),
+                label: format!("Requirement Diagram: {}", catalog_element_label(element)),
+                spec: ViewDocumentDto::diagram(diagram_spec(
+                    DiagramKindDto::Requirement,
+                    &format!("{} Requirements", catalog_element_label(element)),
+                    Some(element.element_id.clone()),
+                    requirement_diagram_relations(),
+                )),
+            });
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then_with(|| left.subject.cmp(&right.subject))
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    entries.dedup_by(|left, right| left.kind == right.kind && left.subject == right.subject);
+
+    ViewCatalogReport { entries }
+}
+
+fn diagram_kind_descriptor(kind: DiagramKindDto) -> ViewKindDescriptor {
+    let id = format!("diagram.{}", diagram_kind_name(&kind));
+    let (title, summary, root, root_metatypes, scopes, animatable) = match kind {
+        DiagramKindDto::Structure => (
+            "Structure Diagram",
+            "Generic relation graph over model elements.",
+            ViewRootRequirementDto::Optional,
+            vec![],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::Bdd => (
+            "Block Definition Diagram",
+            "Block definitions, part usages, and specialization relationships.",
+            ViewRootRequirementDto::Optional,
+            vec!["Package", "PartDefinition", "ItemDefinition"],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::InternalBlock => (
+            "Internal Block Diagram",
+            "Internal parts, ports, and connection/interface usages for a block.",
+            ViewRootRequirementDto::Required,
+            vec!["PartDefinition", "PartUsage", "ItemDefinition"],
+            vec![ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::Requirement => (
+            "Requirement Diagram",
+            "Requirement definitions/usages and derive, satisfy, verify, refine relationships.",
+            ViewRootRequirementDto::Optional,
+            vec!["Package", "RequirementDefinition", "RequirementUsage"],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::Activity => (
+            "Activity Diagram",
+            "Activity actions and control or object flows.",
+            ViewRootRequirementDto::Required,
+            vec!["ActivityDefinition", "ActivityUsage"],
+            vec![ViewScopeDto::Subtree],
+            true,
+        ),
+        DiagramKindDto::StateMachine => (
+            "State Machine Diagram",
+            "States, transitions, and pseudostate markers.",
+            ViewRootRequirementDto::Required,
+            vec!["StateDefinition", "StateUsage"],
+            vec![ViewScopeDto::Subtree],
+            true,
+        ),
+        DiagramKindDto::PackageTree => (
+            "Package Tree",
+            "Package containment hierarchy.",
+            ViewRootRequirementDto::Optional,
+            vec!["Package"],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::CompositionGraph => (
+            "Composition Graph",
+            "Whole-model composition and ownership graph.",
+            ViewRootRequirementDto::Optional,
+            vec![],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::ReferenceGraph => (
+            "Reference Graph",
+            "Reference relationships between model elements.",
+            ViewRootRequirementDto::Optional,
+            vec![],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::DependencyGraph => (
+            "Dependency Graph",
+            "Dependency relationships between model elements.",
+            ViewRootRequirementDto::Optional,
+            vec![],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::MetatypeInstanceMap => (
+            "Metatype Instance Map",
+            "Model elements grouped by metaclass.",
+            ViewRootRequirementDto::Optional,
+            vec![],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::ImpactView => (
+            "Impact View",
+            "Impact relationships around a selected model element.",
+            ViewRootRequirementDto::Required,
+            vec![],
+            vec![ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::PropertyInheritance => (
+            "Property Inheritance",
+            "Inherited and overriding properties for a selected element.",
+            ViewRootRequirementDto::Required,
+            vec![],
+            vec![ViewScopeDto::Subtree],
+            false,
+        ),
+        DiagramKindDto::ValidationView => (
+            "Validation View",
+            "Validation findings attached to model elements.",
+            ViewRootRequirementDto::Optional,
+            vec![],
+            vec![ViewScopeDto::WholeModel, ViewScopeDto::Subtree],
+            false,
+        ),
+    };
+
+    ViewKindDescriptor {
+        id,
+        family: ViewFamilyDto::Diagram,
+        title: title.to_string(),
+        summary: summary.to_string(),
+        root,
+        root_metatypes: root_metatypes.into_iter().map(str::to_string).collect(),
+        scopes,
+        animatable,
+        editable: false,
+    }
+}
+
+fn table_kind_descriptor(kind: TableKindDto) -> ViewKindDescriptor {
+    let id = format!("table.{}", table_kind_name(&kind));
+    let (title, summary, root_metatypes) = match kind {
+        TableKindDto::ModelElements => (
+            "Model Elements Table",
+            "Tabular model element inventory.",
+            vec![],
+        ),
+        TableKindDto::Elements => (
+            "Elements Table",
+            "Tabular view over a selected element type.",
+            vec![],
+        ),
+        TableKindDto::Requirements => (
+            "Requirements Table",
+            "Requirement rows with standard requirement columns.",
+            vec!["RequirementDefinition", "RequirementUsage"],
+        ),
+    };
+
+    ViewKindDescriptor {
+        id,
+        family: ViewFamilyDto::Table,
+        title: title.to_string(),
+        summary: summary.to_string(),
+        root: ViewRootRequirementDto::Optional,
+        root_metatypes: root_metatypes.into_iter().map(str::to_string).collect(),
+        scopes: vec![
+            ViewScopeDto::WholeModel,
+            ViewScopeDto::Subtree,
+            ViewScopeDto::Explicit,
+        ],
+        animatable: false,
+        editable: false,
+    }
+}
+
+fn model_view_kind_descriptor(kind: ModelViewKindDto) -> ViewKindDescriptor {
+    let id = model_view_kind_name(&kind).to_string();
+    let (title, summary, root, scopes) = match kind {
+        ModelViewKindDto::Metadata => (
+            "Model Metadata",
+            "Model counts, source, and revision metadata.",
+            ViewRootRequirementDto::None,
+            vec![ViewScopeDto::WholeModel],
+        ),
+        ModelViewKindDto::Graph => (
+            "Model Graph",
+            "Whole-model graph DTO for product exploration.",
+            ViewRootRequirementDto::None,
+            vec![ViewScopeDto::WholeModel],
+        ),
+        ModelViewKindDto::Search => (
+            "Model Search",
+            "Search results over model elements.",
+            ViewRootRequirementDto::None,
+            vec![ViewScopeDto::WholeModel],
+        ),
+        ModelViewKindDto::ElementDetails => (
+            "Element Details",
+            "Detailed properties for a selected element.",
+            ViewRootRequirementDto::Required,
+            vec![ViewScopeDto::Subtree],
+        ),
+        ModelViewKindDto::LibraryTree => (
+            "Library Tree",
+            "Mounted library hierarchy.",
+            ViewRootRequirementDto::None,
+            vec![ViewScopeDto::WholeModel],
+        ),
+        ModelViewKindDto::ModelExplorer => (
+            "Model Explorer",
+            "Expandable neighborhood around a selected element.",
+            ViewRootRequirementDto::Required,
+            vec![ViewScopeDto::Subtree],
+        ),
+        ModelViewKindDto::MetatypeExplorer => (
+            "Metatype Explorer",
+            "Metatype-focused neighborhood around a selected element.",
+            ViewRootRequirementDto::Required,
+            vec![ViewScopeDto::Subtree],
+        ),
+    };
+
+    ViewKindDescriptor {
+        id,
+        family: ViewFamilyDto::Model,
+        title: title.to_string(),
+        summary: summary.to_string(),
+        root,
+        root_metatypes: Vec::new(),
+        scopes,
+        animatable: false,
+        editable: false,
+    }
+}
+
+fn diagram_spec(
+    kind: DiagramKindDto,
+    title: &str,
+    root: Option<String>,
+    relations: Vec<String>,
+) -> DiagramSpecDto {
+    DiagramSpecDto {
+        version: VIEW_SPEC_VERSION,
+        kind,
+        title: title.to_string(),
+        description: None,
+        root,
+        query: catalog_query(relations),
+        layout: DiagramLayoutOptionsDto::default(),
+        style: DiagramStyleOptionsDto::default(),
+    }
+}
+
+fn model_view_spec(kind: ModelViewKindDto, title: &str, root: Option<String>) -> ModelViewSpecDto {
+    ModelViewSpecDto {
+        version: VIEW_SPEC_VERSION,
+        kind,
+        title: title.to_string(),
+        description: None,
+        root,
+        graph_scope: None,
+        query: None,
+        expanded_parents: Vec::new(),
+        expanded_children: Vec::new(),
+        include_reference_edges: true,
+    }
+}
+
+fn catalog_query(relations: Vec<String>) -> DiagramQueryOptionsDto {
+    DiagramQueryOptionsDto {
+        relations,
+        direction: DiagramDirectionDto::Children,
+        depth: default_diagram_depth(),
+        include_libraries: false,
+        include_user_model: true,
+        max_nodes: default_max_nodes(),
+        max_edges: default_max_edges(),
+    }
+}
+
+fn default_catalog_relations() -> Vec<String> {
+    vec![
+        "owner".to_string(),
+        "members".to_string(),
+        "owning_type".to_string(),
+        "specializes".to_string(),
+    ]
+}
+
+fn catalog_element_label(element: &Element) -> String {
+    property_text(element, "qualified_name")
+        .or_else(|| property_text(element, "declared_name"))
+        .unwrap_or_else(|| label_for_id(&element.element_id))
+}
+
+fn is_package_element(element: &Element) -> bool {
+    kind_matches(element, &["Package"])
+}
+
+fn is_block_definition_element(element: &Element) -> bool {
+    kind_matches(
+        element,
+        &[
+            "PartDefinition",
+            "BlockDefinition",
+            "ItemDefinition",
+            "ComponentDefinition",
+        ],
+    )
+}
+
+fn is_activity_element(element: &Element) -> bool {
+    kind_matches(element, &["ActivityDefinition", "ActivityUsage"])
+}
+
+fn is_requirement_element(element: &Element) -> bool {
+    if requirement_relationship_kind(element).is_some() {
+        return false;
+    }
+    let semantic_text = element_semantic_text(element);
+    kind_matches(
+        element,
+        &["RequirementDefinition", "RequirementUsage", "Requirement"],
+    ) || semantic_text.contains("requirementdefinition")
+        || semantic_text.contains("requirementusage")
+}
+
+fn has_internal_block_structure(graph: &Graph, element: &Element) -> bool {
+    graph.elements().iter().any(|candidate| {
+        internal_block_owned_by(candidate, &element.element_id)
+            && (is_internal_block_part_or_port(candidate) || is_internal_block_connector(candidate))
+    })
+}
+
+fn package_contains_requirement(graph: &Graph, element: &Element) -> bool {
+    let subtree = collect_containment_subtree_ids(graph, element.id);
+    graph
+        .elements()
+        .iter()
+        .any(|candidate| subtree.contains(&candidate.id) && is_requirement_element(candidate))
+}
+
+fn internal_block_owned_by(element: &Element, root_id: &str) -> bool {
+    diagram_string_property_values(
+        element,
+        &[
+            "owner",
+            "owning_type",
+            "owningType",
+            "owning_definition",
+            "owningDefinition",
+            "owning_namespace",
+            "owningNamespace",
+        ],
+    )
+    .iter()
+    .any(|owner| owner == root_id)
+}
+
+fn is_internal_block_part_or_port(element: &Element) -> bool {
+    let role = internal_block_node_role(element);
+    matches!(role.as_deref(), Some("part") | Some("port"))
+}
+
+fn is_internal_block_connector(element: &Element) -> bool {
+    kind_matches(
+        element,
+        &[
+            "ConnectionUsage",
+            "Connector",
+            "InterfaceUsage",
+            "BindingConnector",
+            "SuccessionFlow",
+        ],
+    ) || element_semantic_text(element).contains("connection")
+        || element_semantic_text(element).contains("interfaceusage")
+}
+
+fn internal_block_node_role(element: &Element) -> Option<String> {
+    let text = element_semantic_text(element);
+    if text.contains("port") {
+        Some("port".to_string())
+    } else if text.contains("partusage")
+        || text.contains("itemusage")
+        || text.contains("attributeusage")
+        || text.contains("referencusage")
+        || text.contains("referenceusage")
+    {
+        Some("part".to_string())
+    } else if is_block_definition_element(element) {
+        Some("block".to_string())
+    } else {
+        None
+    }
+}
+
+fn internal_block_node_symbol(
+    element: &Element,
+) -> Option<(String, serde_json::Map<String, Value>)> {
+    let role = internal_block_node_role(element)?;
+    let mut properties = serde_json::Map::new();
+    let shape = match role.as_str() {
+        "block" => "block",
+        "port" => "port",
+        _ => "part",
+    };
+    properties.insert("shape".to_string(), Value::String(shape.to_string()));
+    Some((role, properties))
+}
+
+fn internal_block_node_badges(element: &Element) -> Vec<String> {
+    internal_block_node_role(element)
+        .map(|role| vec![role])
+        .unwrap_or_else(|| vec![format!("L{}", element.layer)])
+}
+
+fn requirement_diagram_relations() -> Vec<String> {
+    [
+        "owner",
+        "derive",
+        "derived_from",
+        "satisfy",
+        "verify",
+        "refine",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn requirement_relation(relation: &str) -> Option<&'static str> {
+    let normalized = relation.to_ascii_lowercase();
+    if normalized.contains("satisfy") {
+        Some("satisfy")
+    } else if normalized.contains("verify") {
+        Some("verify")
+    } else if normalized.contains("refine") {
+        Some("refine")
+    } else if normalized.contains("derive") || normalized.contains("derived") {
+        Some("derive")
+    } else {
+        None
+    }
+}
+
+fn requirement_relationship_kind(element: &Element) -> Option<&'static str> {
+    let text = element_semantic_text(element);
+    ["satisfy", "verify", "refine", "derive"]
+        .into_iter()
+        .find(|relation| text.contains(relation))
+}
+
+fn relationship_endpoints(graph: &Graph, element: &Element) -> Option<(String, String)> {
+    let sources = endpoint_values(graph, element, &["source", "sources", "source_feature"]);
+    let targets = endpoint_values(
+        graph,
+        element,
+        &["target", "targets", "target_ref", "target_feature"],
+    );
+    sources.into_iter().zip(targets).next()
+}
+
+fn endpoint_values(graph: &Graph, element: &Element, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|key| element.properties.get(*key))
+        .flat_map(|value| value_reference_ids(value))
+        .flat_map(|id| resolve_endpoint_reference_ids(graph, &id))
+        .collect()
+}
+
+fn resolve_endpoint_reference_ids(graph: &Graph, id: &str) -> Vec<String> {
+    if graph.element_by_element_id(id).is_some() {
+        return vec![id.to_string()];
+    }
+
+    let Some((prefix, qualified_name)) = id.split_once('.') else {
+        return Vec::new();
+    };
+    if prefix != "feature" {
+        return Vec::new();
+    }
+
+    ["requirement", "req"]
+        .into_iter()
+        .map(|candidate_prefix| format!("{candidate_prefix}.{qualified_name}"))
+        .filter(|candidate| graph.element_by_element_id(candidate).is_some())
+        .collect()
+}
+
+fn value_reference_ids(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(value) => vec![value.clone()],
+        Value::Array(values) => values.iter().flat_map(value_reference_ids).collect(),
+        Value::Object(object) => ["element_id", "id", "target", "source"]
+            .iter()
+            .filter_map(|key| object.get(*key))
+            .flat_map(value_reference_ids)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn is_state_machine_root_element(graph: &Graph, element: &Element) -> bool {
+    kind_matches(element, &["StateDefinition", "StateUsage"])
+        && graph.incoming(element.id, "owner").any(|edge| {
+            graph
+                .element(edge.source)
+                .is_some_and(|child| kind_matches(child, &["StateDefinition", "StateUsage"]))
+        })
+}
+
+fn kind_matches(element: &Element, candidates: &[&str]) -> bool {
+    candidates.iter().any(|candidate| {
+        element.kind.as_ref() == *candidate
+            || element.kind.as_ref().ends_with(&format!("::{candidate}"))
+    })
 }
 
 pub fn validate_view_document(
@@ -785,7 +1663,7 @@ pub fn render_table(
         return Err(TableError::UnsupportedVersion(spec.version));
     }
 
-    match spec.kind {
+    match spec.kind.clone() {
         TableKindDto::ModelElements | TableKindDto::Elements => {
             render_elements_table(graph, metamodel_registry, &mut spec)
         }
@@ -818,6 +1696,9 @@ fn render_elements_table(
         .map(|element| table_row(graph, element, &columns))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.id.cmp(&right.id));
+    if spec.show_affordances {
+        attach_table_affordances(graph, &mut rows);
+    }
 
     let mut warnings = Vec::new();
     if rows.is_empty() {
@@ -864,6 +1745,9 @@ fn render_requirements_table(
         .map(|element| table_row(graph, element, &columns))
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.id.cmp(&right.id));
+    if spec.show_affordances {
+        attach_table_affordances(graph, &mut rows);
+    }
 
     let mut warnings = Vec::new();
     if rows.is_empty() {
@@ -975,11 +1859,37 @@ fn collect_containment_subtree_ids(graph: &Graph, root_id: u32) -> BTreeSet<u32>
         if !visible.insert(node_id) {
             continue;
         }
+        let Some(parent) = graph.element(node_id) else {
+            continue;
+        };
         for edge in graph.incoming(node_id, "owner") {
             stack.push(edge.source);
         }
+        for child in graph.elements().iter().filter(|candidate| {
+            element_contains_member(parent, candidate)
+                || diagram_string_property_values(
+                    candidate,
+                    &[
+                        "owner",
+                        "owning_type",
+                        "owningType",
+                        "owning_namespace",
+                        "owningNamespace",
+                    ],
+                )
+                .iter()
+                .any(|owner| owner == &parent.element_id)
+        }) {
+            stack.push(child.id);
+        }
     }
     visible
+}
+
+fn element_contains_member(parent: &Element, child: &Element) -> bool {
+    diagram_string_property_values(parent, &["members", "owned_members", "ownedMembers"])
+        .iter()
+        .any(|member| member == &child.element_id)
 }
 
 fn default_table_columns(available_columns: &[TableColumnSpecDto]) -> Vec<TableColumnSpecDto> {
@@ -1089,6 +1999,9 @@ fn table_target_matches(
     if table_type_is_element(target_type) {
         return true;
     }
+    if table_type_is_requirement(target_type) && is_requirement_element(element) {
+        return true;
+    }
     table_type_identifier_matches(element, target_type)
         || element_metatype(graph, element.id)
             .is_some_and(|metatype| table_type_identifier_matches(metatype, target_type))
@@ -1101,6 +2014,16 @@ fn table_target_matches(
 fn table_type_is_element(target_type: &str) -> bool {
     let normalized = canonical_table_type(target_type);
     normalized == "element" || normalized.ends_with("::element")
+}
+
+fn table_type_is_requirement(target_type: &str) -> bool {
+    let normalized = canonical_table_type(target_type);
+    normalized == "requirement"
+        || normalized == "requirementusage"
+        || normalized == "requirementdefinition"
+        || normalized.ends_with("::requirement")
+        || normalized.ends_with("::requirementusage")
+        || normalized.ends_with("::requirementdefinition")
 }
 
 fn table_type_identifier_matches(element: &Element, target_type: &str) -> bool {
@@ -1138,6 +2061,7 @@ fn table_row(graph: &Graph, element: &Element, columns: &[TableColumnSpecDto]) -
                 value: table_cell_value(graph, element, column),
             })
             .collect(),
+        affordances: Vec::new(),
     }
 }
 
@@ -1324,14 +2248,224 @@ pub fn render_diagram(
         return Err(DiagramError::UnsupportedVersion(spec.version));
     }
 
-    match spec.kind {
+    let mut view = match spec.kind.clone() {
         DiagramKindDto::Structure => render_structure_diagram(graph, metamodel_registry, spec),
         DiagramKindDto::Bdd => render_bdd_diagram(graph, metamodel_registry, spec),
+        DiagramKindDto::InternalBlock => {
+            render_internal_block_diagram(graph, metamodel_registry, spec)
+        }
+        DiagramKindDto::Requirement => render_requirement_diagram(graph, metamodel_registry, spec),
         DiagramKindDto::Activity => render_activity_diagram(graph, metamodel_registry, spec),
         DiagramKindDto::StateMachine => {
             render_state_machine_diagram(graph, metamodel_registry, spec)
         }
         _ => Err(DiagramError::UnsupportedKind(spec.kind)),
+    }?;
+
+    if view.spec.style.show_affordances {
+        attach_diagram_affordances(graph, &mut view);
+    }
+
+    Ok(view)
+}
+
+fn attach_diagram_affordances(graph: &Graph, view: &mut DiagramViewDto) {
+    let affordances_by_subject = catalog_affordances_by_subject(graph);
+    for node in &mut view.nodes {
+        node.affordances = affordances_by_subject
+            .get(&node.id)
+            .cloned()
+            .unwrap_or_default();
+    }
+}
+
+fn attach_table_affordances(graph: &Graph, rows: &mut [TableRowDto]) {
+    let affordances_by_subject = catalog_affordances_by_subject(graph);
+    for row in rows {
+        row.affordances = affordances_by_subject
+            .get(&row.element)
+            .cloned()
+            .unwrap_or_default();
+    }
+}
+
+fn catalog_affordances_by_subject(graph: &Graph) -> BTreeMap<String, Vec<ViewAffordanceDto>> {
+    let mut by_subject: BTreeMap<String, Vec<ViewAffordanceDto>> = BTreeMap::new();
+    for entry in view_catalog(graph).entries {
+        let Some(subject) = entry.subject.as_deref() else {
+            continue;
+        };
+        by_subject
+            .entry(subject.to_string())
+            .or_default()
+            .push(view_affordance_from_catalog_entry(&entry));
+    }
+
+    for affordances in by_subject.values_mut() {
+        affordances.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.subject.cmp(&right.subject))
+        });
+        affordances
+            .dedup_by(|left, right| left.kind == right.kind && left.subject == right.subject);
+    }
+
+    by_subject
+}
+
+fn view_affordance_from_catalog_entry(entry: &ViewCatalogEntry) -> ViewAffordanceDto {
+    ViewAffordanceDto {
+        kind: entry.kind.clone(),
+        subject: entry.subject.clone(),
+        label: entry.label.clone(),
+        spec: entry.spec.clone(),
+    }
+}
+
+pub fn merge_view_overlay(
+    view: &DiagramViewDto,
+    overlay: &ViewOverlayDto,
+    frame_index: usize,
+) -> DiagramViewDto {
+    let mut decorated = view.clone();
+    let Some(frame) = overlay
+        .frames
+        .iter()
+        .find(|frame| frame.index == frame_index)
+        .or_else(|| overlay.frames.get(frame_index))
+    else {
+        decorated
+            .warnings
+            .push(format!("Overlay frame {frame_index} was not found."));
+        return decorated;
+    };
+
+    decorated
+        .warnings
+        .extend(frame.warnings.iter().map(|warning| {
+            format!(
+                "Overlay frame {}{}: {warning}",
+                frame.index,
+                frame
+                    .time_s
+                    .map(|time_s| format!(" @ {time_s:.3}s"))
+                    .unwrap_or_default()
+            )
+        }));
+
+    for mark in &frame.node_marks {
+        let Some(node) = decorated
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == mark.element)
+        else {
+            decorated.warnings.push(format!(
+                "Overlay node mark `{}` references unknown element `{}`.",
+                mark.kind, mark.element
+            ));
+            continue;
+        };
+        push_unique_badge(node, mark.label.as_deref().unwrap_or(&mark.kind));
+        node.properties
+            .insert("overlay_frame".to_string(), overlay_frame_value(frame));
+        push_property_array_value(
+            &mut node.properties,
+            "overlay_marks",
+            serde_json::to_value(mark)
+                .unwrap_or_else(|_| Value::String(format!("{}:{}", mark.kind, mark.element))),
+        );
+    }
+
+    for value in &frame.node_values {
+        let Some(node) = decorated
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == value.element)
+        else {
+            decorated.warnings.push(format!(
+                "Overlay value `{}` references unknown element `{}`.",
+                value.key, value.element
+            ));
+            continue;
+        };
+        push_unique_badge(node, &overlay_value_badge(value));
+        node.properties
+            .insert("overlay_frame".to_string(), overlay_frame_value(frame));
+        push_property_array_value(
+            &mut node.properties,
+            "overlay_values",
+            serde_json::to_value(value).unwrap_or_else(|_| {
+                Value::String(format!("{}={}", value.key, value_to_text(&value.value)))
+            }),
+        );
+    }
+
+    for mark in &frame.edge_marks {
+        let Some(edge) = decorated
+            .edges
+            .iter_mut()
+            .find(|edge| edge.id == mark.element || edge.symbol == mark.element)
+        else {
+            decorated.warnings.push(format!(
+                "Overlay edge mark `{}` references unknown edge `{}`.",
+                mark.kind, mark.element
+            ));
+            continue;
+        };
+        let label = mark.label.as_deref().unwrap_or(&mark.kind);
+        if !edge.label.contains(label) {
+            edge.label = format!("{} [{}]", edge.label, label);
+        }
+    }
+
+    decorated
+}
+
+fn push_unique_badge(node: &mut DiagramNodeDto, badge: &str) {
+    let trimmed = badge.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if !node.badges.iter().any(|existing| existing == trimmed) {
+        node.badges.push(trimmed.to_string());
+    }
+}
+
+fn overlay_value_badge(value: &ViewNodeValueDto) -> String {
+    let label = value.label.as_deref().unwrap_or(&value.key);
+    let mut badge = format!("{label}={}", value_to_text(&value.value));
+    if let Some(unit) = value.unit.as_deref().filter(|unit| !unit.trim().is_empty()) {
+        badge.push(' ');
+        badge.push_str(unit);
+    }
+    badge
+}
+
+fn overlay_frame_value(frame: &ViewOverlayFrameDto) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("index".to_string(), Value::from(frame.index));
+    if let Some(time_s) = frame.time_s {
+        object.insert("time_s".to_string(), Value::from(time_s));
+    }
+    Value::Object(object)
+}
+
+fn push_property_array_value(
+    properties: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Value,
+) {
+    match properties.get_mut(key) {
+        Some(Value::Array(values)) => values.push(value),
+        Some(existing) => {
+            let previous = std::mem::take(existing);
+            *existing = Value::Array(vec![previous, value]);
+        }
+        None => {
+            properties.insert(key.to_string(), Value::Array(vec![value]));
+        }
     }
 }
 
@@ -1674,6 +2808,294 @@ fn diagram_string_property_values(element: &Element, keys: &[&str]) -> Vec<Strin
             _ => Vec::new(),
         })
         .collect()
+}
+
+fn render_internal_block_diagram(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    spec: DiagramSpecDto,
+) -> Result<DiagramViewDto, DiagramError> {
+    let root = spec
+        .root
+        .as_deref()
+        .filter(|root| !root.trim().is_empty())
+        .ok_or(DiagramError::MissingRoot)?;
+    let root = resolve_root(graph, root).ok_or_else(|| DiagramError::RootNotFound(root.into()))?;
+    let root_id = root.element_id.clone();
+    let mut node_ids = BTreeSet::from([root_id.clone()]);
+
+    for element in graph.elements().iter().filter(|element| {
+        include_element(element, &spec.query) && internal_block_owned_by(element, &root_id)
+    }) {
+        if internal_block_node_role(element).is_some() {
+            node_ids.insert(element.element_id.clone());
+        }
+    }
+
+    let mut warnings = Vec::new();
+    let mut edges = Vec::new();
+    let max_edges = effective_max_edges(&spec.query);
+    for element in graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, &spec.query))
+    {
+        if internal_block_owned_by(element, &root_id) && is_internal_block_part_or_port(element) {
+            edges.push(DiagramEdgeDto {
+                id: format!("part:{}:{}", root_id, element.element_id),
+                symbol: symbol_id_for_edge("part", &root_id, &element.element_id),
+                source: root_id.clone(),
+                target: element.element_id.clone(),
+                relation: "part".to_string(),
+                label: "part".to_string(),
+            });
+        }
+
+        if !is_internal_block_connector(element) {
+            continue;
+        }
+        let Some((source, target)) = relationship_endpoints(graph, element) else {
+            continue;
+        };
+        if !node_ids.contains(&source) || !node_ids.contains(&target) {
+            continue;
+        }
+        edges.push(DiagramEdgeDto {
+            id: element.element_id.clone(),
+            symbol: symbol_id_for_edge("connection", &source, &target),
+            source,
+            target,
+            relation: "connection".to_string(),
+            label: catalog_element_label(element),
+        });
+        if edges.len() >= max_edges {
+            warnings.push(format!(
+                "Internal block diagram edge limit reached; showing first {max_edges} edges."
+            ));
+            break;
+        }
+    }
+
+    let mut nodes = node_ids
+        .iter()
+        .filter_map(|node_id| graph.element_by_element_id(node_id))
+        .map(|element| {
+            let mut node = diagram_node(graph, metamodel_registry, element);
+            node.badges = internal_block_node_badges(element);
+            node
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    edges.sort_by(|left, right| left.id.cmp(&right.id));
+    edges.dedup_by(|left, right| left.id == right.id);
+
+    let symbols = nodes
+        .iter()
+        .map(|node| {
+            let (role, properties) = graph
+                .element_by_element_id(&node.id)
+                .and_then(internal_block_node_symbol)
+                .unwrap_or_else(|| ("part".to_string(), serde_json::Map::new()));
+            DiagramSymbolDto {
+                id: node.symbol.clone(),
+                element: node.id.clone(),
+                role,
+                source: None,
+                target: None,
+                relation: None,
+                properties,
+            }
+        })
+        .chain(edges.iter().map(|edge| DiagramSymbolDto {
+            id: edge.symbol.clone(),
+            element: edge.id.clone(),
+            role: "edge".to_string(),
+            source: Some(symbol_id_for_element(&edge.source)),
+            target: Some(symbol_id_for_element(&edge.target)),
+            relation: Some(edge.relation.clone()),
+            properties: edge_symbol_properties(edge.relation.as_str()),
+        }))
+        .collect();
+
+    Ok(DiagramViewDto {
+        spec,
+        symbols,
+        nodes,
+        edges,
+        warnings,
+    })
+}
+
+fn render_requirement_diagram(
+    graph: &Graph,
+    metamodel_registry: &MetamodelAttributeRegistry,
+    spec: DiagramSpecDto,
+) -> Result<DiagramViewDto, DiagramError> {
+    let scoped_ids = if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty())
+    {
+        let root = resolve_root(graph, root)
+            .ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?;
+        Some(collect_containment_subtree_ids(graph, root.id))
+    } else {
+        None
+    };
+
+    let mut node_ids = graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, &spec.query))
+        .filter(|element| {
+            scoped_ids
+                .as_ref()
+                .is_none_or(|ids| ids.contains(&element.id))
+        })
+        .filter(|element| is_requirement_element(element))
+        .map(|element| element.element_id.clone())
+        .collect::<BTreeSet<_>>();
+
+    let mut edges = Vec::new();
+    let max_edges = effective_max_edges(&spec.query);
+    for edge in graph.edges() {
+        let Some(relation) = requirement_relation(edge.relation.as_ref()) else {
+            continue;
+        };
+        let Some(source) = graph.element(edge.source) else {
+            continue;
+        };
+        let Some(target) = graph.element(edge.target) else {
+            continue;
+        };
+        if !include_element(source, &spec.query) || !include_element(target, &spec.query) {
+            continue;
+        }
+        let in_scope = scoped_ids
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&source.id) || ids.contains(&target.id));
+        if !in_scope || (!is_requirement_element(target) && !is_requirement_element(source)) {
+            continue;
+        }
+        node_ids.insert(source.element_id.clone());
+        node_ids.insert(target.element_id.clone());
+        edges.push(DiagramEdgeDto {
+            id: format!("{relation}:{}:{}", source.element_id, target.element_id),
+            symbol: symbol_id_for_edge(relation, &source.element_id, &target.element_id),
+            source: source.element_id.clone(),
+            target: target.element_id.clone(),
+            relation: relation.to_string(),
+            label: relation.to_string(),
+        });
+        if edges.len() >= max_edges {
+            break;
+        }
+    }
+
+    for relationship in graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, &spec.query))
+        .filter(|element| requirement_relationship_kind(element).is_some())
+    {
+        let Some((source, target)) = relationship_endpoints(graph, relationship) else {
+            continue;
+        };
+        let Some(source_element) = graph.element_by_element_id(&source) else {
+            continue;
+        };
+        let Some(target_element) = graph.element_by_element_id(&target) else {
+            continue;
+        };
+        let in_scope = scoped_ids
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&source_element.id) || ids.contains(&target_element.id));
+        if !in_scope
+            || (!is_requirement_element(target_element) && !is_requirement_element(source_element))
+        {
+            continue;
+        }
+        node_ids.insert(source.clone());
+        node_ids.insert(target.clone());
+        let relation = requirement_relationship_kind(relationship).unwrap_or("requirement");
+        edges.push(DiagramEdgeDto {
+            id: relationship.element_id.clone(),
+            symbol: symbol_id_for_edge(relation, &source, &target),
+            source,
+            target,
+            relation: relation.to_string(),
+            label: catalog_element_label(relationship),
+        });
+        if edges.len() >= max_edges {
+            break;
+        }
+    }
+
+    let mut warnings = Vec::new();
+    if node_ids.is_empty() {
+        warnings.push("No requirements matched the requested filters.".to_string());
+    }
+    if edges.len() >= max_edges {
+        warnings.push(format!(
+            "Requirement diagram edge limit reached; showing first {max_edges} edges."
+        ));
+    }
+
+    let mut nodes = node_ids
+        .iter()
+        .filter_map(|node_id| graph.element_by_element_id(node_id))
+        .map(|element| {
+            let mut node = diagram_node(graph, metamodel_registry, element);
+            if is_requirement_element(element) {
+                node.badges = vec!["requirement".to_string()];
+            }
+            node
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    edges.sort_by(|left, right| left.id.cmp(&right.id));
+    edges.dedup_by(|left, right| left.id == right.id);
+
+    let symbols = nodes
+        .iter()
+        .map(|node| {
+            let role = graph
+                .element_by_element_id(&node.id)
+                .filter(|element| is_requirement_element(element))
+                .map(|_| "requirement")
+                .unwrap_or("element");
+            let mut properties = serde_json::Map::new();
+            if role == "requirement" {
+                properties.insert(
+                    "shape".to_string(),
+                    Value::String("requirement".to_string()),
+                );
+            }
+            DiagramSymbolDto {
+                id: node.symbol.clone(),
+                element: node.id.clone(),
+                role: role.to_string(),
+                source: None,
+                target: None,
+                relation: None,
+                properties,
+            }
+        })
+        .chain(edges.iter().map(|edge| DiagramSymbolDto {
+            id: edge.symbol.clone(),
+            element: edge.id.clone(),
+            role: "edge".to_string(),
+            source: Some(symbol_id_for_element(&edge.source)),
+            target: Some(symbol_id_for_element(&edge.target)),
+            relation: Some(edge.relation.clone()),
+            properties: edge_symbol_properties(edge.relation.as_str()),
+        }))
+        .collect();
+
+    Ok(DiagramViewDto {
+        spec,
+        symbols,
+        nodes,
+        edges,
+        warnings,
+    })
 }
 
 fn render_activity_diagram(
@@ -2974,6 +4396,7 @@ fn diagram_node(
             .iter()
             .map(|(key, value)| (key.to_string(), value.clone()))
             .collect(),
+        affordances: Vec::new(),
     }
 }
 
@@ -3726,6 +5149,9 @@ mod tests {
                             "members".to_string(),
                             json!([
                                 "type.Example.Vehicle",
+                                "port.Example.Vehicle.power",
+                                "connection.Example.Vehicle.ControllerPower",
+                                "satisfy.Example.Vehicle.ControllerSafeStart",
                                 "state.Example.DriveMode",
                                 "activity.Example.Startup",
                                 "req.Example.SafeStart",
@@ -3761,6 +5187,54 @@ mod tests {
                         ),
                         ("owner".to_string(), json!("type.Example.Vehicle")),
                         ("owning_type".to_string(), json!("type.Example.Vehicle")),
+                        ("satisfy".to_string(), json!(["req.Example.SafeStart"])),
+                    ]),
+                ),
+                element(
+                    "port.Example.Vehicle.power",
+                    "PortUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("power")),
+                        ("qualified_name".to_string(), json!("Example.Vehicle.power")),
+                        ("owner".to_string(), json!("type.Example.Vehicle")),
+                        ("owning_type".to_string(), json!("type.Example.Vehicle")),
+                    ]),
+                ),
+                element(
+                    "connection.Example.Vehicle.ControllerPower",
+                    "ConnectionUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("ControllerPower")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Example.Vehicle.ControllerPower"),
+                        ),
+                        ("owner".to_string(), json!("type.Example.Vehicle")),
+                        (
+                            "source".to_string(),
+                            json!("feature.Example.Vehicle.controller"),
+                        ),
+                        ("target".to_string(), json!("port.Example.Vehicle.power")),
+                    ]),
+                ),
+                element(
+                    "satisfy.Example.Vehicle.ControllerSafeStart",
+                    "SatisfyRequirementUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("ControllerSafeStart")),
+                        (
+                            "qualified_name".to_string(),
+                            json!("Example.Vehicle.ControllerSafeStart"),
+                        ),
+                        ("owner".to_string(), json!("pkg.Example")),
+                        (
+                            "source".to_string(),
+                            json!("feature.Example.Vehicle.controller"),
+                        ),
+                        ("target".to_string(), json!("feature.Example.SafeStart")),
                     ]),
                 ),
                 element(
@@ -3857,11 +5331,12 @@ mod tests {
                 ),
                 element(
                     "req.Example.SafeStart",
-                    "RequirementUsage",
+                    "KerML::Core::Feature",
                     2,
                     BTreeMap::from([
                         ("declared_name".to_string(), json!("SafeStart")),
                         ("qualified_name".to_string(), json!("Example.SafeStart")),
+                        ("metatype".to_string(), json!("SysML::RequirementUsage")),
                         ("owner".to_string(), json!("pkg.Example")),
                         ("requirement_id".to_string(), json!("REQ-001")),
                         (
@@ -3922,6 +5397,125 @@ mod tests {
         render_table(&graph, &registry, spec).expect("sample table should render")
     }
 
+    #[test]
+    fn merge_view_overlay_decorates_copy_without_mutating_base() {
+        let base = render_sample(DiagramSpecDto {
+            version: 1,
+            kind: DiagramKindDto::StateMachine,
+            title: "Drive Mode".to_string(),
+            description: None,
+            root: Some("state.Example.DriveMode".to_string()),
+            query: DiagramQueryOptionsDto {
+                relations: Vec::new(),
+                direction: DiagramDirectionDto::Children,
+                depth: 3,
+                include_libraries: false,
+                include_user_model: true,
+                max_nodes: 350,
+                max_edges: 900,
+            },
+            layout: DiagramLayoutOptionsDto::default(),
+            style: DiagramStyleOptionsDto::default(),
+        });
+        let base_svg = render_diagram_svg(&base);
+        let overlay = ViewOverlayDto {
+            version: 1,
+            frames: vec![ViewOverlayFrameDto {
+                index: 2,
+                time_s: Some(2.0),
+                node_marks: vec![ViewNodeMarkDto {
+                    element: "state.Example.Driving".to_string(),
+                    kind: "active".to_string(),
+                    label: Some("active".to_string()),
+                    properties: serde_json::Map::new(),
+                }],
+                edge_marks: vec![ViewEdgeMarkDto {
+                    element: "transition.Example.DriveMode.ParkedToDriving".to_string(),
+                    kind: "visited".to_string(),
+                    label: Some("visited".to_string()),
+                    properties: serde_json::Map::new(),
+                }],
+                node_values: vec![ViewNodeValueDto {
+                    element: "state.Example.Driving".to_string(),
+                    key: "mode".to_string(),
+                    value: json!("Running"),
+                    label: Some("mode".to_string()),
+                    unit: None,
+                }],
+                warnings: Vec::new(),
+            }],
+        };
+
+        let decorated = merge_view_overlay(&base, &overlay, 2);
+        let running = decorated
+            .nodes
+            .iter()
+            .find(|node| node.id == "state.Example.Driving")
+            .expect("driving state node");
+        assert!(running.badges.iter().any(|badge| badge == "active"));
+        assert!(running.badges.iter().any(|badge| badge == "mode=Running"));
+        assert!(running.properties.contains_key("overlay_marks"));
+        assert!(decorated.edges.iter().any(|edge| {
+            edge.id == "transition.Example.DriveMode.ParkedToDriving"
+                && edge.label.contains("visited")
+        }));
+        assert_eq!(render_diagram_svg(&base), base_svg);
+        assert_ne!(render_diagram_svg(&decorated), base_svg);
+    }
+
+    #[test]
+    fn merge_view_overlay_reports_missing_frame_and_targets() {
+        let base = render_sample(DiagramSpecDto {
+            version: 1,
+            kind: DiagramKindDto::Activity,
+            title: "Startup".to_string(),
+            description: None,
+            root: Some("activity.Example.Startup".to_string()),
+            query: DiagramQueryOptionsDto {
+                relations: Vec::new(),
+                direction: DiagramDirectionDto::Children,
+                depth: 3,
+                include_libraries: false,
+                include_user_model: true,
+                max_nodes: 350,
+                max_edges: 900,
+            },
+            layout: DiagramLayoutOptionsDto::default(),
+            style: DiagramStyleOptionsDto::default(),
+        });
+        let overlay = ViewOverlayDto {
+            version: 1,
+            frames: vec![ViewOverlayFrameDto {
+                index: 0,
+                time_s: None,
+                node_marks: vec![ViewNodeMarkDto {
+                    element: "missing.node".to_string(),
+                    kind: "active".to_string(),
+                    label: None,
+                    properties: serde_json::Map::new(),
+                }],
+                edge_marks: Vec::new(),
+                node_values: Vec::new(),
+                warnings: Vec::new(),
+            }],
+        };
+
+        let missing_target = merge_view_overlay(&base, &overlay, 0);
+        assert!(
+            missing_target
+                .warnings
+                .iter()
+                .any(|warning| { warning.contains("references unknown element `missing.node`") })
+        );
+        let missing_frame = merge_view_overlay(&base, &overlay, 99);
+        assert!(
+            missing_frame
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Overlay frame 99 was not found"))
+        );
+    }
+
     fn structure_spec(root: Option<&str>, relations: Vec<&str>) -> DiagramSpecDto {
         DiagramSpecDto {
             version: 1,
@@ -3941,6 +5535,290 @@ mod tests {
             layout: DiagramLayoutOptionsDto::default(),
             style: DiagramStyleOptionsDto::default(),
         }
+    }
+
+    #[test]
+    fn list_view_kinds_covers_existing_view_families() {
+        let descriptors = list_view_kinds();
+        let ids = descriptors
+            .iter()
+            .map(|descriptor| descriptor.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(ids.contains("diagram.state_machine"));
+        assert!(ids.contains("diagram.activity"));
+        assert!(ids.contains("diagram.bdd"));
+        assert!(ids.contains("table.requirements"));
+        assert!(ids.contains("model.graph"));
+        assert!(ids.contains("explorer.model"));
+        assert_eq!(
+            ids.len(),
+            list_diagram_kinds().len() + list_table_kinds().len() + 7
+        );
+
+        let state_machine = descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == "diagram.state_machine")
+            .expect("state machine descriptor is present");
+        assert_eq!(state_machine.family, ViewFamilyDto::Diagram);
+        assert_eq!(state_machine.root, ViewRootRequirementDto::Required);
+        assert!(state_machine.animatable);
+    }
+
+    #[test]
+    fn view_catalog_returns_descriptor_backed_renderable_offers() {
+        let (graph, registry) = sample_graph();
+        let catalog = view_catalog(&graph);
+        let descriptor_ids = list_view_kinds()
+            .into_iter()
+            .map(|descriptor| descriptor.id)
+            .collect::<BTreeSet<_>>();
+
+        assert!(
+            catalog
+                .entries
+                .iter()
+                .all(|entry| descriptor_ids.contains(&entry.kind)),
+            "{catalog:#?}"
+        );
+        assert!(catalog.entries.iter().any(|entry| {
+            entry.kind == "diagram.state_machine"
+                && entry.subject.as_deref() == Some("state.Example.DriveMode")
+        }));
+        assert!(catalog.entries.iter().any(|entry| {
+            entry.kind == "diagram.activity"
+                && entry.subject.as_deref() == Some("activity.Example.Startup")
+        }));
+        assert!(catalog.entries.iter().any(|entry| {
+            entry.kind == "diagram.internal_block"
+                && entry.subject.as_deref() == Some("type.Example.Vehicle")
+        }));
+        assert!(catalog.entries.iter().any(|entry| {
+            entry.kind == "diagram.requirement" && entry.subject.as_deref() == Some("pkg.Example")
+        }));
+        assert!(
+            catalog
+                .entries
+                .iter()
+                .any(|entry| entry.kind == "table.requirements")
+        );
+
+        for entry in &catalog.entries {
+            validate_view_document(&entry.spec).expect("catalog spec should validate");
+            if let Some(spec) = entry.spec.diagram.clone() {
+                render_diagram(&graph, &registry, spec).unwrap_or_else(|err| {
+                    panic!("catalog diagram `{}` should render: {err}", entry.kind)
+                });
+            }
+            if let Some(spec) = entry.spec.table.clone() {
+                render_table(&graph, &registry, spec).unwrap_or_else(|err| {
+                    panic!("catalog table `{}` should render: {err}", entry.kind)
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn diagram_affordances_are_opt_in_and_catalog_backed() {
+        let lean = render_sample(structure_spec(Some("pkg.Example"), vec!["owner"]));
+        assert!(lean.nodes.iter().all(|node| node.affordances.is_empty()));
+        let lean_json = serde_json::to_value(&lean).expect("lean view should serialize");
+        assert!(
+            lean_json["nodes"]
+                .as_array()
+                .expect("nodes should be an array")
+                .iter()
+                .all(|node| node.get("affordances").is_none())
+        );
+
+        let mut spec = structure_spec(Some("pkg.Example"), vec!["owner"]);
+        spec.style.show_affordances = true;
+        let view = render_sample(spec);
+        let drive_mode = view
+            .nodes
+            .iter()
+            .find(|node| node.id == "state.Example.DriveMode")
+            .expect("state machine root should render");
+        let affordance = drive_mode
+            .affordances
+            .iter()
+            .find(|affordance| affordance.kind == "diagram.state_machine")
+            .expect("state machine root should expose state machine affordance");
+
+        assert_eq!(
+            affordance.subject.as_deref(),
+            Some("state.Example.DriveMode")
+        );
+        assert!(affordance.spec.diagram.as_ref().is_some_and(|spec| {
+            spec.root.as_deref() == Some("state.Example.DriveMode")
+                && spec.kind == DiagramKindDto::StateMachine
+        }));
+    }
+
+    #[test]
+    fn table_affordances_are_opt_in_and_catalog_backed() {
+        let mut spec = TableSpecDto {
+            version: 1,
+            kind: TableKindDto::ModelElements,
+            title: "Model Elements".to_string(),
+            description: None,
+            root: None,
+            target_type: None,
+            scope: TableScopeDto::ContainmentSubtree {
+                root: "pkg.Example".to_string(),
+            },
+            row_type: Some(TableRowTypeDto {
+                type_name: "Element".to_string(),
+                include_subtypes: true,
+            }),
+            query: DiagramQueryOptionsDto::default(),
+            columns: Vec::new(),
+            show_affordances: false,
+        };
+        let lean = render_table_sample(spec.clone());
+        assert!(lean.rows.iter().all(|row| row.affordances.is_empty()));
+
+        spec.show_affordances = true;
+        let view = render_table_sample(spec);
+        let vehicle = view
+            .rows
+            .iter()
+            .find(|row| row.element == "type.Example.Vehicle")
+            .expect("vehicle row should render");
+        assert!(vehicle.affordances.iter().any(|affordance| {
+            affordance.kind == "diagram.internal_block"
+                && affordance.subject.as_deref() == Some("type.Example.Vehicle")
+                && affordance.spec.diagram.as_ref().is_some_and(|spec| {
+                    spec.kind == DiagramKindDto::InternalBlock
+                        && spec.root.as_deref() == Some("type.Example.Vehicle")
+                })
+        }));
+    }
+
+    #[test]
+    fn affordance_flags_accept_camel_case_input() {
+        let diagram: DiagramSpecDto = serde_json::from_value(json!({
+            "version": 1,
+            "kind": "structure",
+            "title": "Overview",
+            "style": {
+                "showAffordances": true
+            }
+        }))
+        .expect("diagram spec should accept camelCase affordance flag");
+        assert!(diagram.style.show_affordances);
+
+        let table: TableSpecDto = serde_json::from_value(json!({
+            "version": 1,
+            "kind": "model_elements",
+            "title": "Elements",
+            "showAffordances": true
+        }))
+        .expect("table spec should accept camelCase affordance flag");
+        assert!(table.show_affordances);
+    }
+
+    #[test]
+    fn internal_block_diagram_renders_parts_ports_and_connections() {
+        let view = render_sample(DiagramSpecDto {
+            version: 1,
+            kind: DiagramKindDto::InternalBlock,
+            title: "Vehicle IBD".to_string(),
+            description: None,
+            root: Some("type.Example.Vehicle".to_string()),
+            query: DiagramQueryOptionsDto {
+                relations: vec![],
+                direction: DiagramDirectionDto::Children,
+                depth: 2,
+                include_libraries: false,
+                include_user_model: true,
+                max_nodes: 350,
+                max_edges: 900,
+            },
+            layout: DiagramLayoutOptionsDto::default(),
+            style: DiagramStyleOptionsDto::default(),
+        });
+
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "type.Example.Vehicle")
+        );
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "feature.Example.Vehicle.controller")
+        );
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "port.Example.Vehicle.power")
+        );
+        assert!(view.edges.iter().any(|edge| {
+            edge.relation == "connection"
+                && edge.source == "feature.Example.Vehicle.controller"
+                && edge.target == "port.Example.Vehicle.power"
+        }));
+        assert!(view.symbols.iter().any(|symbol| {
+            symbol.element == "port.Example.Vehicle.power" && symbol.role == "port"
+        }));
+    }
+
+    #[test]
+    fn requirement_diagram_renders_satisfy_edges() {
+        let view = render_sample(DiagramSpecDto {
+            version: 1,
+            kind: DiagramKindDto::Requirement,
+            title: "Requirements".to_string(),
+            description: None,
+            root: Some("pkg.Example".to_string()),
+            query: DiagramQueryOptionsDto {
+                relations: requirement_diagram_relations(),
+                direction: DiagramDirectionDto::Children,
+                depth: 3,
+                include_libraries: false,
+                include_user_model: true,
+                max_nodes: 350,
+                max_edges: 900,
+            },
+            layout: DiagramLayoutOptionsDto::default(),
+            style: DiagramStyleOptionsDto::default(),
+        });
+
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "req.Example.SafeStart")
+        );
+        assert!(
+            view.nodes
+                .iter()
+                .any(|node| node.id == "feature.Example.Vehicle.controller")
+        );
+        assert!(view.edges.iter().any(|edge| {
+            edge.relation == "satisfy"
+                && edge.source == "feature.Example.Vehicle.controller"
+                && edge.target == "req.Example.SafeStart"
+        }));
+        assert!(view.symbols.iter().any(|symbol| {
+            symbol.element == "req.Example.SafeStart" && symbol.role == "requirement"
+        }));
+    }
+
+    #[test]
+    fn requirement_relationship_endpoints_resolve_feature_requirement_aliases() {
+        let (graph, _) = sample_graph();
+        let relationship = graph
+            .element_by_element_id("satisfy.Example.Vehicle.ControllerSafeStart")
+            .expect("sample relationship");
+
+        assert_eq!(
+            relationship_endpoints(&graph, relationship),
+            Some((
+                "feature.Example.Vehicle.controller".to_string(),
+                "req.Example.SafeStart".to_string()
+            ))
+        );
     }
 
     #[test]
@@ -4307,6 +6185,7 @@ mod tests {
                 max_edges: 900,
             },
             columns: Vec::new(),
+            show_affordances: false,
         });
 
         assert_eq!(view.columns.len(), 5);
@@ -4361,6 +6240,7 @@ mod tests {
                 path: None,
                 expression: None,
             }],
+            show_affordances: false,
         });
 
         validate_view_document(&document).expect("document should validate");
@@ -4589,6 +6469,7 @@ mod tests {
                     expression: None,
                 },
             ],
+            show_affordances: false,
         });
 
         let diagnostics =
@@ -4640,6 +6521,7 @@ mod tests {
                     expression: None,
                 },
             ],
+            show_affordances: false,
         });
 
         let row = view.rows.first().expect("requirement row should render");
@@ -4695,6 +6577,7 @@ mod tests {
                     expression: None,
                 },
             ],
+            show_affordances: false,
         });
 
         let row = view.rows.first().expect("requirement row should render");
@@ -4747,6 +6630,7 @@ mod tests {
                     expression: None,
                 },
             ],
+            show_affordances: false,
         });
 
         assert!(
@@ -4807,6 +6691,7 @@ mod tests {
                     expression: None,
                 },
             ],
+            show_affordances: false,
         });
 
         assert_eq!(
@@ -4814,7 +6699,12 @@ mod tests {
                 .iter()
                 .map(|row| row.element.as_str())
                 .collect::<Vec<_>>(),
-            vec!["feature.Example.Vehicle.controller", "type.Example.Vehicle"]
+            vec![
+                "connection.Example.Vehicle.ControllerPower",
+                "feature.Example.Vehicle.controller",
+                "port.Example.Vehicle.power",
+                "type.Example.Vehicle",
+            ]
         );
         let controller = view
             .rows
@@ -4860,6 +6750,7 @@ mod tests {
                     expression: None,
                 },
             ],
+            show_affordances: false,
         });
 
         let row = view.rows.first().expect("requirement row should render");
@@ -4913,6 +6804,7 @@ mod tests {
                     expression: Some("row.metadata[Review].status".to_string()),
                 },
             ],
+            show_affordances: false,
         });
 
         let row = view.rows.first().expect("requirement row should render");
@@ -4942,6 +6834,8 @@ fn diagram_kind_name(kind: &DiagramKindDto) -> &'static str {
     match kind {
         DiagramKindDto::Structure => "structure",
         DiagramKindDto::Bdd => "bdd",
+        DiagramKindDto::InternalBlock => "internal_block",
+        DiagramKindDto::Requirement => "requirement",
         DiagramKindDto::Activity => "activity",
         DiagramKindDto::StateMachine => "state_machine",
         DiagramKindDto::PackageTree => "package_tree",
@@ -4952,6 +6846,14 @@ fn diagram_kind_name(kind: &DiagramKindDto) -> &'static str {
         DiagramKindDto::ImpactView => "impact_view",
         DiagramKindDto::PropertyInheritance => "property_inheritance",
         DiagramKindDto::ValidationView => "validation_view",
+    }
+}
+
+fn table_kind_name(kind: &TableKindDto) -> &'static str {
+    match kind {
+        TableKindDto::ModelElements => "model_elements",
+        TableKindDto::Elements => "elements",
+        TableKindDto::Requirements => "requirements",
     }
 }
 
