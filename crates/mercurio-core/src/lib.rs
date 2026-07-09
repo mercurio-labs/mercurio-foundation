@@ -181,6 +181,7 @@ pub mod semantic_validation {
 }
 #[doc(hidden)]
 pub mod session {
+    pub use mercurio_session::cell_runner::*;
     pub use mercurio_session::session::*;
 }
 #[doc(hidden)]
@@ -439,9 +440,13 @@ pub use semantic_validation::{
     validate_kir_semantics_with_policy,
 };
 pub use session::{
-    CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,
-    CellRunStatus, CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec,
-    KirOverlay, ModelFork, ModelSession, ModelWorkspace, SessionError, WorkspaceSnapshot,
+    CAPABILITY_RUN_MIME_TYPE, CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunHandlers,
+    CellRunReport, CellRunRequest, CellRunStatus, CommitMode, CommitResult, CommitStrategy,
+    DSL_ACTION_PREVIEW_MIME_TYPE, DSL_QUERY_MIME_TYPE, DslCellAnalysisRequest, ForkElement,
+    ForkElementSpec, KirOverlay, ModelFork, ModelSession, ModelWorkspace, PythonCellScriptOutput,
+    PythonCellScriptRequest, SessionError, UnsupportedCellRun, WorkspaceSnapshot,
+    cell_status_from_capability, default_cell_id, run_cell_with_handlers, string_parameter,
+    u64_parameter,
 };
 pub use source_set::{
     SourceDocument, compile_source_document_with_registry, compile_source_documents,
