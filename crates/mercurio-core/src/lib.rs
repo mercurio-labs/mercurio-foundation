@@ -357,6 +357,7 @@ pub use mutation::{
     default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
     enrich_semantic_reasoning_context_with_child_affordances_for_capability,
+    enrich_semantic_reasoning_context_with_child_affordances_for_capability_and_oracle,
     enrich_semantic_reasoning_context_with_graph, mutation_application_digest,
     mutation_proposal_digest, semantic_reasoning_context_from_authoring_project,
     semantic_reasoning_context_from_authoring_project_with_oracle,
@@ -419,8 +420,8 @@ pub use semantic_legality::{
 };
 pub use semantic_next_actions::{
     SEMANTIC_NEXT_ACTIONS_SCHEMA_VERSION, SemanticNextAction, SemanticNextActionOperation,
-    SemanticNextActionsReport, SemanticNextActionsRequest, SemanticNextActionsService,
-    enrich_semantic_reasoning_context_with_next_action_affordances,
+    SemanticNextActionTarget, SemanticNextActionsReport, SemanticNextActionsRequest,
+    SemanticNextActionsService, enrich_semantic_reasoning_context_with_next_action_affordances,
 };
 pub use semantic_profile::{
     AttributePolicyAnswer, AttributePolicyKey, CapabilityAnswer, CapabilityPair,
