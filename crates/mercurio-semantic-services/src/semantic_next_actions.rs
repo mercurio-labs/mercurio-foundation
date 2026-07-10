@@ -98,11 +98,32 @@ where
                     SemanticNextActionOperation::AddRelationship {
                         relationship_kind: relationship_kind.clone(),
                         target_kind: target_kind.clone(),
+                        target: None,
                     },
                     SemanticLegalityOperation::Relationship {
                         relationship_kind: relationship_kind.clone(),
                         source_kind: request.element_kind.clone(),
                         target_kind: target_kind.clone(),
+                    },
+                );
+            }
+        }
+
+        for target in &request.candidate_targets {
+            for relationship_kind in &self.capability_context.relationship_kinds {
+                self.push_checked_action(
+                    &mut candidates,
+                    &request,
+                    element.clone(),
+                    SemanticNextActionOperation::AddRelationship {
+                        relationship_kind: relationship_kind.clone(),
+                        target_kind: target.kind.clone(),
+                        target: Some(target.element.clone()),
+                    },
+                    SemanticLegalityOperation::Relationship {
+                        relationship_kind: relationship_kind.clone(),
+                        source_kind: request.element_kind.clone(),
+                        target_kind: target.kind.clone(),
                     },
                 );
             }
@@ -235,6 +256,14 @@ pub fn enrich_semantic_reasoning_context_with_next_action_affordances<O>(
 ) where
     O: SemanticCapabilityOracle,
 {
+    let facts = context
+        .facts
+        .iter()
+        .map(|fact| Fact {
+            predicate: fact.predicate.clone(),
+            terms: fact.terms.clone(),
+        })
+        .collect::<Vec<_>>();
     let focus = context
         .focus
         .iter()
@@ -246,17 +275,9 @@ pub fn enrich_semantic_reasoning_context_with_next_action_affordances<O>(
         .iter()
         .filter(|element| {
             (!focused_only || focus.contains(&element.element.qualified_name))
-                && next_action_element_can_own_children(element)
+                && next_action_element_has_affordances(element, context, service, &facts)
         })
         .cloned()
-        .collect::<Vec<_>>();
-    let facts = context
-        .facts
-        .iter()
-        .map(|fact| Fact {
-            predicate: fact.predicate.clone(),
-            terms: fact.terms.clone(),
-        })
         .collect::<Vec<_>>();
 
     for element in containers {
@@ -268,6 +289,7 @@ pub fn enrich_semantic_reasoning_context_with_next_action_affordances<O>(
             element: Some(element.element.clone()),
             element_kind: next_action_element_kind(&element),
             candidate_target_kinds: Vec::new(),
+            candidate_targets: next_action_candidate_targets(context, &element),
             candidate_attributes: Vec::new(),
             facts: facts.clone(),
             max_actions: Some(max_affordances.saturating_sub(context.affordances.len())),
@@ -295,6 +317,16 @@ fn affordance_from_next_action(action: SemanticNextAction) -> Option<SemanticAff
         SemanticNextActionOperation::AddElement { child_kind } => ("AddElement", child_kind),
         SemanticNextActionOperation::AddDefinition { child_kind } => ("AddDefinition", child_kind),
         SemanticNextActionOperation::AddUsage { child_kind } => ("AddUsage", child_kind),
+        SemanticNextActionOperation::AddRelationship {
+            relationship_kind,
+            target,
+            ..
+        } => (
+            "AddRelationship",
+            target
+                .map(|target| format!("{relationship_kind} -> {}", target.qualified_name))
+                .unwrap_or(relationship_kind),
+        ),
         _ => return None,
     };
     Some(SemanticAffordanceContext {
@@ -306,23 +338,102 @@ fn affordance_from_next_action(action: SemanticNextAction) -> Option<SemanticAff
     })
 }
 
-fn next_action_element_can_own_children(element: &SemanticElementContext) -> bool {
-    let kind = element.kind.to_ascii_lowercase();
-    if kind == "package" || kind == "definition" || kind == "usage" {
-        return true;
-    }
-    let Some(kir_kind) = element
-        .attributes
-        .get("kirKind")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_ascii_lowercase)
-    else {
-        return false;
-    };
-    kir_kind.contains("package")
-        || kir_kind.contains("definition")
-        || kir_kind.contains("usage")
-        || kir_kind.ends_with("usage")
+fn next_action_element_has_affordances<O>(
+    element: &SemanticElementContext,
+    context: &SemanticReasoningContext,
+    service: &SemanticNextActionsService<O>,
+    facts: &[Fact],
+) -> bool
+where
+    O: SemanticCapabilityOracle,
+{
+    next_action_element_can_own_children(element, service, facts)
+        || next_action_element_can_relate_to_candidate(element, context, service, facts)
+}
+
+fn next_action_element_can_own_children<O>(
+    element: &SemanticElementContext,
+    service: &SemanticNextActionsService<O>,
+    facts: &[Fact],
+) -> bool
+where
+    O: SemanticCapabilityOracle,
+{
+    let container_kind = next_action_element_kind(element);
+    let child_kinds = std::iter::once("package")
+        .chain(
+            service
+                .capability_context
+                .element_kinds
+                .iter()
+                .map(String::as_str),
+        )
+        .chain(
+            service
+                .capability_context
+                .definition_keywords
+                .iter()
+                .map(String::as_str),
+        )
+        .chain(
+            service
+                .capability_context
+                .usage_keywords
+                .iter()
+                .map(String::as_str),
+        );
+    child_kinds.into_iter().any(|child_kind| {
+        matches!(
+            service
+                .legality
+                .check(SemanticLegalityRequest {
+                    operation: SemanticLegalityOperation::Containment {
+                        container_kind: container_kind.clone(),
+                        child_kind: child_kind.to_string(),
+                    },
+                    facts: facts.to_vec(),
+                })
+                .status,
+            SemanticLegalityStatus::Allowed | SemanticLegalityStatus::AllowedWithWarnings
+        )
+    })
+}
+
+fn next_action_element_can_relate_to_candidate<O>(
+    element: &SemanticElementContext,
+    context: &SemanticReasoningContext,
+    service: &SemanticNextActionsService<O>,
+    facts: &[Fact],
+) -> bool
+where
+    O: SemanticCapabilityOracle,
+{
+    let source_kind = next_action_element_kind(element);
+    next_action_candidate_targets(context, element)
+        .into_iter()
+        .any(|target| {
+            service
+                .capability_context
+                .relationship_kinds
+                .iter()
+                .any(|relationship_kind| {
+                    matches!(
+                        service
+                            .legality
+                            .check(SemanticLegalityRequest {
+                                operation: SemanticLegalityOperation::Relationship {
+                                    relationship_kind: relationship_kind.clone(),
+                                    source_kind: source_kind.clone(),
+                                    target_kind: target.kind.clone(),
+                                },
+                                facts: facts.to_vec(),
+                            })
+                            .status,
+                        SemanticLegalityStatus::Allowed
+                            | SemanticLegalityStatus::AllowedWithWarnings
+                    )
+                })
+        })
 }
 
 fn next_action_element_kind(element: &SemanticElementContext) -> String {
@@ -335,6 +446,56 @@ fn next_action_element_kind(element: &SemanticElementContext) -> String {
         .unwrap_or_else(|| element.kind.clone())
 }
 
+fn next_action_candidate_targets(
+    context: &SemanticReasoningContext,
+    source: &SemanticElementContext,
+) -> Vec<SemanticNextActionTarget> {
+    let mut seen = std::collections::BTreeSet::new();
+    context
+        .elements
+        .iter()
+        .filter(|candidate| candidate.element != source.element)
+        .filter_map(|candidate| {
+            let target = SemanticNextActionTarget {
+                element: candidate.element.clone(),
+                kind: next_action_target_kind(candidate),
+                label: Some(candidate.label.clone()).filter(|label| !label.trim().is_empty()),
+            };
+            if target.kind.trim().is_empty()
+                || target.element.qualified_name.trim().is_empty()
+                || !seen.insert(target.element.qualified_name.clone())
+            {
+                return None;
+            }
+            Some(target)
+        })
+        .collect()
+}
+
+fn next_action_target_kind(element: &SemanticElementContext) -> String {
+    if let Some(kir_kind) = element
+        .attributes
+        .get("kirKind")
+        .and_then(serde_json::Value::as_str)
+        .filter(|kind| !kind.trim().is_empty())
+    {
+        return kir_kind.to_string();
+    }
+    if let Some(keyword) = element
+        .attributes
+        .get("keyword")
+        .and_then(serde_json::Value::as_str)
+        .filter(|keyword| !keyword.trim().is_empty())
+    {
+        return if element.kind.eq_ignore_ascii_case("definition") {
+            format!("{keyword} def")
+        } else {
+            keyword.to_string()
+        };
+    }
+    element.kind.clone()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticNextActionsRequest {
@@ -343,6 +504,8 @@ pub struct SemanticNextActionsRequest {
     pub element_kind: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidate_target_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_targets: Vec<SemanticNextActionTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidate_attributes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -357,11 +520,21 @@ impl SemanticNextActionsRequest {
             element: None,
             element_kind: element_kind.into(),
             candidate_target_kinds: Vec::new(),
+            candidate_targets: Vec::new(),
             candidate_attributes: Vec::new(),
             facts: Vec::new(),
             max_actions: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticNextActionTarget {
+    pub element: ElementRef,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -413,6 +586,8 @@ pub enum SemanticNextActionOperation {
         relationship_kind: String,
         #[serde(rename = "targetKind")]
         target_kind: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<ElementRef>,
     },
     Specialize {
         #[serde(rename = "targetKind")]
@@ -516,6 +691,7 @@ mod tests {
             element: Some(ElementRef::new("Vehicle")),
             element_kind: "part".to_string(),
             candidate_target_kinds: vec!["requirement".to_string(), "part".to_string()],
+            candidate_targets: Vec::new(),
             candidate_attributes: vec!["text".to_string(), "private".to_string()],
             facts: Vec::new(),
             max_actions: None,
@@ -526,6 +702,7 @@ mod tests {
                 == SemanticNextActionOperation::AddRelationship {
                     relationship_kind: "satisfy".to_string(),
                     target_kind: "requirement".to_string(),
+                    target: None,
                 }
                 && action.status == SemanticLegalityStatus::Allowed
         }));
@@ -534,6 +711,7 @@ mod tests {
                 == SemanticNextActionOperation::AddRelationship {
                     relationship_kind: "satisfy".to_string(),
                     target_kind: "part".to_string(),
+                    target: None,
                 }
                 && action.status == SemanticLegalityStatus::Blocked
         }));
@@ -589,6 +767,7 @@ mod tests {
             element: Some(ElementRef::new("Vehicle")),
             element_kind: "part".to_string(),
             candidate_target_kinds: vec!["requirement".to_string()],
+            candidate_targets: Vec::new(),
             candidate_attributes: vec!["text".to_string()],
             facts: Vec::new(),
             max_actions: Some(4),
@@ -615,6 +794,7 @@ mod tests {
             SemanticNextActionOperation::AddRelationship {
                 relationship_kind: "satisfy".to_string(),
                 target_kind: "requirement".to_string(),
+                target: None,
             }
         );
         assert_eq!(report.actions[1].status, SemanticLegalityStatus::Allowed);
@@ -658,6 +838,7 @@ mod tests {
             element: Some(ElementRef::new("Vehicle")),
             element_kind: "part".to_string(),
             candidate_target_kinds: Vec::new(),
+            candidate_targets: Vec::new(),
             candidate_attributes: vec!["text".to_string()],
             facts: Vec::new(),
             max_actions: Some(2),
@@ -717,5 +898,115 @@ mod tests {
                 && affordance.child_kind == "part"
                 && affordance.status == "Allowed"
         }));
+    }
+
+    #[test]
+    fn next_action_affordances_include_concrete_relationship_targets() {
+        let profile = SemanticCapabilityProfile::default()
+            .allow_containment("part", "part")
+            .allow_relationship("satisfy", "part", "requirement");
+        let service = SemanticNextActionsService::with_legality(
+            SemanticLegalityService::with_oracle(TableSemanticCapabilityOracle::new(profile)),
+            SemanticMutationCapabilityContext {
+                metamodel_version: "test".to_string(),
+                supported_operations: Vec::new(),
+                variant_capabilities: crate::variant::default_semantic_variant_capability_context(),
+                element_kinds: Vec::new(),
+                definition_keywords: Vec::new(),
+                usage_keywords: Vec::new(),
+                relationship_kinds: vec!["satisfy".to_string()],
+                usage_typing_rules: Vec::new(),
+                relationship_target_rules: Vec::new(),
+                guidance: Vec::new(),
+            },
+        );
+        let mut context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
+            metamodel_version: "test".to_string(),
+            workspace_revision: WorkspaceRevision::unchecked(),
+            focus: vec![ElementRef::new("vehicle")],
+            elements: vec![
+                SemanticElementContext {
+                    element: ElementRef::new("vehicle"),
+                    kind: "usage".to_string(),
+                    label: "vehicle".to_string(),
+                    owner: None,
+                    attributes: BTreeMap::from([(
+                        "keyword".to_string(),
+                        Value::String("part".to_string()),
+                    )]),
+                },
+                SemanticElementContext {
+                    element: ElementRef::new("SafetyRequirement"),
+                    kind: "usage".to_string(),
+                    label: "SafetyRequirement".to_string(),
+                    owner: None,
+                    attributes: BTreeMap::from([(
+                        "keyword".to_string(),
+                        Value::String("requirement".to_string()),
+                    )]),
+                },
+            ],
+            relationships: Vec::<SemanticRelationshipContext>::new(),
+            facts: Vec::<SemanticFactContext>::new(),
+            affordances: Vec::new(),
+            source_files: Vec::new(),
+            truncated: false,
+            usage: test_ai_context_usage(),
+        };
+
+        enrich_semantic_reasoning_context_with_next_action_affordances(&mut context, 8, &service);
+
+        assert!(context.affordances.iter().any(|affordance| {
+            affordance.operation == "AddRelationship"
+                && affordance.child_kind == "satisfy -> SafetyRequirement"
+                && affordance.status == "Allowed"
+        }));
+    }
+
+    #[test]
+    fn next_action_affordances_do_not_treat_kind_substrings_as_containers() {
+        let profile = SemanticCapabilityProfile::default().allow_containment("part", "part");
+        let service = SemanticNextActionsService::with_legality(
+            SemanticLegalityService::with_oracle(TableSemanticCapabilityOracle::new(profile)),
+            SemanticMutationCapabilityContext {
+                metamodel_version: "test".to_string(),
+                supported_operations: Vec::new(),
+                variant_capabilities: crate::variant::default_semantic_variant_capability_context(),
+                element_kinds: Vec::new(),
+                definition_keywords: vec!["part".to_string()],
+                usage_keywords: Vec::new(),
+                relationship_kinds: Vec::new(),
+                usage_typing_rules: Vec::new(),
+                relationship_target_rules: Vec::new(),
+                guidance: Vec::new(),
+            },
+        );
+        let mut context = SemanticReasoningContext {
+            schema_version: AI_SEMANTIC_CONTEXT_SCHEMA_VERSION.to_string(),
+            metamodel_version: "test".to_string(),
+            workspace_revision: WorkspaceRevision::unchecked(),
+            focus: vec![ElementRef::new("notAContainer")],
+            elements: vec![SemanticElementContext {
+                element: ElementRef::new("notAContainer"),
+                kind: "kirElement".to_string(),
+                label: "notAContainer".to_string(),
+                owner: None,
+                attributes: BTreeMap::from([(
+                    "kirKind".to_string(),
+                    Value::String("NonUsageThing".to_string()),
+                )]),
+            }],
+            relationships: Vec::<SemanticRelationshipContext>::new(),
+            facts: Vec::<SemanticFactContext>::new(),
+            affordances: Vec::new(),
+            source_files: Vec::new(),
+            truncated: false,
+            usage: test_ai_context_usage(),
+        };
+
+        enrich_semantic_reasoning_context_with_next_action_affordances(&mut context, 8, &service);
+
+        assert!(context.affordances.is_empty());
     }
 }
