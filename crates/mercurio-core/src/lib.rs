@@ -404,14 +404,19 @@ pub use runtime::{
     RuntimeProfileTimings,
 };
 pub use semantic_compare::{
-    SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION, SemanticCompareError, SemanticCompareOptions,
-    SemanticComparisonReport, SemanticElementMismatch, SemanticModelChange,
-    SemanticModelChangeKind, SemanticModelCompareReport, SemanticModelCompareSection,
-    SemanticModelCompareSummary, SemanticModelPropertyChange, SemanticModelRelationshipChange,
+    SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION, SemanticCompareCoverage, SemanticCompareError,
+    SemanticCompareOptions, SemanticCompareProfile, SemanticCompareTolerance,
+    SemanticCompareToleranceAction, SemanticCompareToleranceScope, SemanticComparisonReport,
+    SemanticElementMismatch, SemanticModelChange, SemanticModelChangeKind,
+    SemanticModelCompareReport, SemanticModelCompareSection, SemanticModelCompareSummary,
+    SemanticModelPropertyChange, SemanticModelRelationshipChange,
     SemanticModelRelationshipChangeKind, SemanticSnapshot, SemanticSnapshotAttribute,
-    SemanticSnapshotElement, SemanticSourceSpan, SemanticValueMismatch, SnapshotMode,
-    build_semantic_snapshot, build_semantic_snapshot_with_registry, compare_snapshots,
-    compare_snapshots_with_options, semantic_model_compare_report_from_diff,
+    SemanticSnapshotElement, SemanticSnapshotExclusion, SemanticSourceSpan,
+    SemanticToleranceApplication, SemanticValueMismatch, SnapshotMode, build_semantic_snapshot,
+    build_semantic_snapshot_with_profile, build_semantic_snapshot_with_registry,
+    build_semantic_snapshot_with_registry_and_profile, compare_snapshots,
+    compare_snapshots_with_options, compare_snapshots_with_profile,
+    semantic_model_compare_report_from_diff,
 };
 pub use semantic_legality::{
     SEMANTIC_LEGALITY_SCHEMA_VERSION, SemanticLegalityDiagnostic, SemanticLegalityDiagnosticSource,
@@ -477,7 +482,10 @@ pub use workspace::{
 };
 pub use workspace_cache::{
     PersistentCacheStatus, PersistentCompileResult, PersistentWorkspaceCache,
-    PersistentWorkspaceCacheOptions, RuntimeCachePolicy, WorkspaceCompileArtifactKey,
-    WorkspaceCompileCacheManifest, WorkspaceCompileCacheOutputs, WorkspaceSourceFileFingerprint,
-    source_file_fingerprints, workspace_compile_artifact_key,
+    PersistentWorkspaceCacheOptions, RUNTIME_CACHE_FORMAT_VERSION, RuntimeCacheManifest,
+    RuntimeCachePolicy, WorkspaceCompileArtifactKey, WorkspaceCompileCacheManifest,
+    WorkspaceCompileCacheOutputs, WorkspaceSourceFileFingerprint, load_runtime_artifact_cache,
+    load_runtime_artifact_cache_with_rejection_reason, runtime_artifact_from_binary_bytes,
+    runtime_artifact_to_binary_bytes, source_file_fingerprints, workspace_compile_artifact_key,
+    write_runtime_artifact_cache,
 };

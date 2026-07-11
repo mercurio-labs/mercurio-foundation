@@ -26,7 +26,7 @@ const DOCUMENT_FILE_NAME: &str = "document.kir.json";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const RUNTIME_CACHE_FILE_NAME: &str = "runtime.mruntime";
 const RUNTIME_CACHE_MANIFEST_FILE_NAME: &str = "runtime.mruntime.manifest.json";
-const RUNTIME_CACHE_FORMAT_VERSION: u16 = 3;
+pub const RUNTIME_CACHE_FORMAT_VERSION: u16 = 3;
 
 #[derive(Debug, Clone)]
 pub struct PersistentWorkspaceCache {
@@ -125,18 +125,18 @@ pub struct WorkspaceCompileCacheOutputs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct RuntimeCacheManifest {
-    runtime_format_version: u16,
-    kir_schema_version: String,
-    source_digest: String,
-    runtime_digest: String,
-    generator: String,
-    element_count: usize,
-    edge_count: usize,
-    subtype_count: usize,
-    ownership_count: usize,
-    inherited_feature_count: usize,
-    requirement_count: usize,
+pub struct RuntimeCacheManifest {
+    pub runtime_format_version: u16,
+    pub kir_schema_version: String,
+    pub source_digest: String,
+    pub runtime_digest: String,
+    pub generator: String,
+    pub element_count: usize,
+    pub edge_count: usize,
+    pub subtype_count: usize,
+    pub ownership_count: usize,
+    pub inherited_feature_count: usize,
+    pub requirement_count: usize,
 }
 
 struct RuntimeCacheRead {
@@ -619,7 +619,7 @@ fn manifest_rejection_reason(
     None
 }
 
-fn write_runtime_artifact_cache(
+pub fn write_runtime_artifact_cache(
     runtime_path: &Path,
     manifest_path: &Path,
     runtime_artifact: &RuntimeArtifact,
@@ -650,25 +650,40 @@ fn write_runtime_artifact_cache(
     Ok(())
 }
 
-fn load_runtime_artifact_cache(
+pub fn load_runtime_artifact_cache(
     runtime_path: &Path,
     manifest_path: &Path,
     source_bytes: &[u8],
 ) -> Result<Option<RuntimeArtifact>, KirError> {
+    load_runtime_artifact_cache_with_rejection_reason(runtime_path, manifest_path, source_bytes)
+        .map(|result| result.ok())
+}
+
+pub fn load_runtime_artifact_cache_with_rejection_reason(
+    runtime_path: &Path,
+    manifest_path: &Path,
+    source_bytes: &[u8],
+) -> Result<Result<RuntimeArtifact, String>, KirError> {
     let Some(read) = read_runtime_cache_files(runtime_path, manifest_path)? else {
-        return Ok(None);
+        return Ok(Err("runtime artifact or manifest is missing".to_string()));
     };
     if !runtime_cache_manifest_matches(&read.manifest, &read.bytes, source_bytes) {
-        return Ok(None);
+        return Ok(Err(runtime_cache_manifest_rejection_reason(
+            &read.manifest,
+            &read.bytes,
+            source_bytes,
+        )));
     }
     let runtime_artifact = match runtime_artifact_from_binary_bytes(&read.bytes) {
         Ok(artifact) => artifact,
-        Err(_) => return Ok(None),
+        Err(err) => return Ok(Err(format!("runtime artifact decode failed: {err}"))),
     };
     if !runtime_cache_counts_match(&read.manifest, &runtime_artifact) {
-        return Ok(None);
+        return Ok(Err(
+            "runtime artifact counts do not match manifest".to_string()
+        ));
     }
-    Ok(Some(runtime_artifact))
+    Ok(Ok(runtime_artifact))
 }
 
 fn read_runtime_cache_files(
@@ -704,6 +719,40 @@ fn runtime_cache_manifest_matches(
         && manifest.kir_schema_version == KIR_SCHEMA_VERSION
         && manifest.source_digest == digest_labeled_chunks([("source".as_bytes(), source_bytes)])
         && manifest.runtime_digest == digest_labeled_chunks([("runtime".as_bytes(), runtime_bytes)])
+}
+
+fn runtime_cache_manifest_rejection_reason(
+    manifest: &RuntimeCacheManifest,
+    runtime_bytes: &[u8],
+    source_bytes: &[u8],
+) -> String {
+    if manifest.runtime_format_version != RUNTIME_CACHE_FORMAT_VERSION {
+        return format!(
+            "runtime format version mismatch: manifest={} expected={}",
+            manifest.runtime_format_version, RUNTIME_CACHE_FORMAT_VERSION
+        );
+    }
+    if manifest.kir_schema_version != KIR_SCHEMA_VERSION {
+        return format!(
+            "KIR schema version mismatch: manifest={} expected={}",
+            manifest.kir_schema_version, KIR_SCHEMA_VERSION
+        );
+    }
+    let expected_source_digest = digest_labeled_chunks([("source".as_bytes(), source_bytes)]);
+    if manifest.source_digest != expected_source_digest {
+        return format!(
+            "source digest mismatch: manifest={} expected={}",
+            manifest.source_digest, expected_source_digest
+        );
+    }
+    let expected_runtime_digest = digest_labeled_chunks([("runtime".as_bytes(), runtime_bytes)]);
+    if manifest.runtime_digest != expected_runtime_digest {
+        return format!(
+            "runtime digest mismatch: manifest={} expected={}",
+            manifest.runtime_digest, expected_runtime_digest
+        );
+    }
+    "runtime artifact manifest is not valid".to_string()
 }
 
 fn runtime_cache_counts_match(
@@ -1978,6 +2027,47 @@ mod tests {
         let dir = artifact_dir(&cache, &first.artifact_key);
         mutate_runtime_manifest(&dir, |manifest| {
             manifest.runtime_digest = "fnv1a64:stale".to_string();
+        });
+
+        let second = cache
+            .compile_source_documents_with_registry(
+                sources,
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            second.cache_status,
+            PersistentCacheStatus::PersistentRejected { .. }
+        ));
+        assert_eq!(first.document, second.document);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_compile_cache_rejects_runtime_source_digest_mismatch() {
+        let root = temp_dir("persistent_runtime_source_digest_mismatch");
+        let cache = PersistentWorkspaceCache::for_workspace_root(&root);
+        let library_context = test_library_context();
+        let sources = vec![SourceDocument::new(
+            "demo.model",
+            "package Demo { part def Thing; }",
+        )];
+
+        let first = cache
+            .compile_source_documents_with_registry(
+                sources.clone(),
+                &library_context,
+                None,
+                &test_language_registry(),
+            )
+            .unwrap();
+        let dir = artifact_dir(&cache, &first.artifact_key);
+        mutate_runtime_manifest(&dir, |manifest| {
+            manifest.source_digest = "fnv1a64:stale-source".to_string();
         });
 
         let second = cache
