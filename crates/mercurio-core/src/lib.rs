@@ -155,7 +155,8 @@ pub mod query {
 #[doc(hidden)]
 pub mod runtime {
     pub use mercurio_runtime::{
-        ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+        ExecutionContext, LayeredRuntime, LayeredRuntimeAssembly, QueryResult, Runtime,
+        RuntimeArtifact, RuntimeBase, RuntimeError, RuntimeOverlay, RuntimeProfile,
         RuntimeProfileTimings,
     };
 }
@@ -400,7 +401,8 @@ pub use query::{
     SortDirection, TermPattern, TriplePattern, elements_with_metadata, parse_query,
 };
 pub use runtime::{
-    ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+    ExecutionContext, LayeredRuntime, LayeredRuntimeAssembly, QueryResult, Runtime,
+    RuntimeArtifact, RuntimeBase, RuntimeError, RuntimeOverlay, RuntimeProfile,
     RuntimeProfileTimings,
 };
 pub use semantic_compare::{

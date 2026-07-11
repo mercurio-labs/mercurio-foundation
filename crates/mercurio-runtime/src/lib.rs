@@ -15,6 +15,7 @@ pub use datalog::{
     materialize_core_indexes,
 };
 pub use runtime::{
-    ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+    ExecutionContext, LayeredRuntime, LayeredRuntimeAssembly, QueryResult, Runtime,
+    RuntimeArtifact, RuntimeBase, RuntimeError, RuntimeOverlay, RuntimeProfile,
     RuntimeProfileTimings,
 };
