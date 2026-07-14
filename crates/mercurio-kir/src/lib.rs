@@ -765,6 +765,27 @@ impl KirDocument {
         self
     }
 
+    pub fn normalized_for_persistence_with_registered_fields<I, N>(mut self, fields: I) -> Self
+    where
+        I: IntoIterator<Item = (N, KirFieldKind)>,
+        N: Into<String>,
+    {
+        self.set_schema_version();
+        let mut field_registry = KirFieldRegistry::from_document(&self);
+        field_registry.register_fields(fields);
+        for element in &mut self.elements {
+            normalize_reference_shapes(&field_registry, element);
+            if !element.properties.contains_key("qualified_name")
+                && let Some(qualified_name) = qualified_name_from_element_id(&element.id)
+            {
+                element
+                    .properties
+                    .insert("qualified_name".to_string(), Value::String(qualified_name));
+            }
+        }
+        self
+    }
+
     pub fn set_schema_version(&mut self) {
         self.metadata.insert(
             KIR_SCHEMA_VERSION_METADATA_KEY.to_string(),
@@ -948,12 +969,24 @@ impl KirDocument {
             metadata.insert("merged_sources".to_string(), Value::Array(source_metadata));
         }
 
-        let merged = Self { metadata, elements }.normalized_for_persistence();
-        if let Some(fields) = fields {
-            merged.validate_persisted_with_registered_fields(fields)?;
+        let merged = Self { metadata, elements };
+        let merged = if let Some(fields) = fields {
+            let fields = fields
+                .into_iter()
+                .map(|(name, kind)| (name.into(), kind))
+                .collect::<Vec<(String, KirFieldKind)>>();
+            let normalized = merged.normalized_for_persistence_with_registered_fields(
+                fields.iter().map(|(name, kind)| (name.as_str(), *kind)),
+            );
+            normalized.validate_persisted_with_registered_fields(
+                fields.iter().map(|(name, kind)| (name.as_str(), *kind)),
+            )?;
+            normalized
         } else {
-            merged.validate_persisted()?;
-        }
+            let normalized = merged.normalized_for_persistence();
+            normalized.validate_persisted()?;
+            normalized
+        };
         Ok(merged)
     }
 

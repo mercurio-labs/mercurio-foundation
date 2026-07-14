@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::identity::{SemanticAnchor, stable_digest};
-use crate::semantic_profile::SemanticCapabilityOracle;
+use crate::semantic_profile::{
+    CapabilityAnswer, ConservativeSemanticCapabilityOracle, SemanticCapabilityOracle,
+};
 use crate::variant::{
     SemanticVariantCapabilityContext, default_semantic_variant_capability_context,
 };
@@ -440,6 +442,20 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances_for_capability(
     max_affordances: usize,
     capability_context: &SemanticMutationCapabilityContext,
 ) {
+    enrich_semantic_reasoning_context_with_child_affordances_for_capability_and_oracle(
+        context,
+        max_affordances,
+        capability_context,
+        &ConservativeSemanticCapabilityOracle,
+    );
+}
+
+pub fn enrich_semantic_reasoning_context_with_child_affordances_for_capability_and_oracle(
+    context: &mut SemanticReasoningContext,
+    max_affordances: usize,
+    capability_context: &SemanticMutationCapabilityContext,
+    oracle: &impl SemanticCapabilityOracle,
+) {
     let focus = context
         .focus
         .iter()
@@ -451,7 +467,7 @@ pub fn enrich_semantic_reasoning_context_with_child_affordances_for_capability(
         .iter()
         .filter(|element| {
             (!focused_only || focus.contains(&element.element.qualified_name))
-                && semantic_element_can_own_children(element)
+                && semantic_element_can_own_children(element, capability_context, oracle)
         })
         .map(|element| element.element.clone())
         .collect::<Vec<_>>();
@@ -517,24 +533,52 @@ fn push_child_affordance(
     context.affordances.push(affordance);
 }
 
-fn semantic_element_can_own_children(element: &SemanticElementContext) -> bool {
-    let kind = element.kind.to_ascii_lowercase();
-    if kind == "package" || kind == "definition" || kind == "usage" {
-        return true;
-    }
-    let Some(kir_kind) = element
-        .attributes
-        .get("kirKind")
-        .and_then(Value::as_str)
-        .map(str::to_ascii_lowercase)
-    else {
+fn semantic_element_can_own_children(
+    element: &SemanticElementContext,
+    capability_context: &SemanticMutationCapabilityContext,
+    oracle: &impl SemanticCapabilityOracle,
+) -> bool {
+    let container_kinds = semantic_element_container_kind_candidates(element);
+    if container_kinds.is_empty() {
         return false;
-    };
-    kir_kind.contains("package")
-        || kir_kind.contains("definition")
-        || kir_kind.contains("usage")
-        || kir_kind.contains("type")
-        || kir_kind.contains("namespace")
+    }
+
+    ["package"]
+        .into_iter()
+        .chain(
+            capability_context
+                .definition_keywords
+                .iter()
+                .map(String::as_str),
+        )
+        .chain(capability_context.usage_keywords.iter().map(String::as_str))
+        .any(|child_kind| {
+            container_kinds.iter().any(|container_kind| {
+                matches!(
+                    oracle.can_contain(container_kind, child_kind),
+                    CapabilityAnswer::Allowed
+                )
+            })
+        })
+}
+
+fn semantic_element_container_kind_candidates(element: &SemanticElementContext) -> Vec<&str> {
+    let mut candidates = Vec::new();
+    push_nonempty_candidate(&mut candidates, element.kind.as_str());
+    if let Some(kir_kind) = element.attributes.get("kirKind").and_then(Value::as_str) {
+        push_nonempty_candidate(&mut candidates, kir_kind);
+    }
+    if let Some(keyword) = element.attributes.get("keyword").and_then(Value::as_str) {
+        push_nonempty_candidate(&mut candidates, keyword);
+    }
+    candidates
+}
+
+fn push_nonempty_candidate<'a>(candidates: &mut Vec<&'a str>, value: &'a str) {
+    let trimmed = value.trim();
+    if !trimmed.is_empty() && !candidates.contains(&trimmed) {
+        candidates.push(trimmed);
+    }
 }
 
 pub fn enrich_semantic_reasoning_context_with_graph(

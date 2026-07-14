@@ -290,7 +290,7 @@ pub enum CognitiveConfidence {
 }
 
 /// A cognitive-provider diagnostic. Alias of the canonical
-/// [`mercurio_kir::Diagnostic`] — the same type as [`SemanticDiagnostic`].
+/// [`mercurio_kir::Diagnostic`].
 pub use mercurio_kir::Diagnostic as CognitiveDiagnostic;
 
 /// Severity for a [`CognitiveDiagnostic`]. Alias of the canonical

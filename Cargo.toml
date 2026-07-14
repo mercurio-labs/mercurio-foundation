@@ -23,6 +23,8 @@ edition = "2024"
 license = "MIT"
 description = "KerML-aligned semantic modeling substrate and KIR runtime for Mercurio."
 repository = "https://github.com/mercurio-labs/mercurio-foundation"
+readme = "README.md"
+rust-version = "1.85"
 
 [workspace.dependencies]
 reqwest = { version = "0.13", features = ["blocking", "json"] }

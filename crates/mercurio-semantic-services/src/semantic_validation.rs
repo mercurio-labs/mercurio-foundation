@@ -71,7 +71,7 @@ fn default_semantic_validation_policy_version() -> u32 {
     SEMANTIC_VALIDATION_POLICY_VERSION
 }
 
-/// Severity for a [`SemanticValidationDiagnostic`]. Alias of the canonical
+/// Severity used by [`SemanticValidationReport`] diagnostics. Alias of the canonical
 /// [`mercurio_kir::Severity`].
 pub use mercurio_kir::Severity as SemanticValidationSeverity;
 

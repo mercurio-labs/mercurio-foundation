@@ -1,5 +1,6 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use crate::datalog::{
 use mercurio_model::{
     DerivedFeatureCache, DerivedFeatureManifestError, DerivedFeatureRegistry, DerivedPropertyValue,
     ElementProperties, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
-    ExpressionPathSegment, Graph, GraphArtifact, GraphError, KirDocument, NodeId,
+    ExpressionPathSegment, Graph, GraphArtifact, GraphError, KirDocument, KirElement, NodeId,
     manifest_from_metadata,
 };
 
@@ -27,6 +28,35 @@ pub struct Runtime {
 pub struct RuntimeArtifact {
     pub graph: GraphArtifact,
     pub derived: DerivedIndexes,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeBase {
+    document: Arc<KirDocument>,
+    graph: Arc<Graph>,
+    derived: Arc<DerivedIndexes>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RuntimeOverlay {
+    pub added_elements: BTreeMap<String, KirElement>,
+    pub updated_properties: BTreeMap<String, BTreeMap<String, Value>>,
+    pub added_members: BTreeMap<String, Vec<String>>,
+    pub removed_elements: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LayeredRuntime {
+    graph: Arc<Graph>,
+    derived: Arc<DerivedIndexes>,
+    overlay_element_count: usize,
+    assembly: LayeredRuntimeAssembly,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayeredRuntimeAssembly {
+    SharedBase,
+    OverlayMaterialized { elapsed_millis: f64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,6 +283,14 @@ impl Runtime {
         RuntimeArtifact {
             graph: self.graph.artifact(),
             derived: self.derived.clone(),
+        }
+    }
+
+    pub fn into_base(self, document: Arc<KirDocument>) -> RuntimeBase {
+        RuntimeBase {
+            document,
+            graph: Arc::new(self.graph),
+            derived: Arc::new(self.derived),
         }
     }
 
@@ -679,6 +717,148 @@ impl Runtime {
     }
 }
 
+impl RuntimeBase {
+    pub fn from_document(document: Arc<KirDocument>) -> Result<Self, RuntimeError> {
+        let runtime = Runtime::from_document(document.as_ref().clone())?;
+        Ok(runtime.into_base(document))
+    }
+
+    pub fn from_artifact(
+        document: Arc<KirDocument>,
+        artifact: RuntimeArtifact,
+    ) -> Result<Self, RuntimeError> {
+        let runtime = Runtime::from_artifact(artifact)?;
+        Ok(runtime.into_base(document))
+    }
+
+    pub fn document(&self) -> &Arc<KirDocument> {
+        &self.document
+    }
+
+    pub fn graph(&self) -> &Arc<Graph> {
+        &self.graph
+    }
+
+    pub fn derived(&self) -> &Arc<DerivedIndexes> {
+        &self.derived
+    }
+}
+
+impl RuntimeOverlay {
+    pub fn is_empty(&self) -> bool {
+        self.added_elements.is_empty()
+            && self.updated_properties.is_empty()
+            && self.added_members.is_empty()
+            && self.removed_elements.is_empty()
+    }
+
+    pub fn added_element_count(&self) -> usize {
+        self.added_elements.len()
+    }
+}
+
+impl LayeredRuntime {
+    pub fn from_base_and_overlay(
+        base: &RuntimeBase,
+        overlay: &RuntimeOverlay,
+    ) -> Result<Self, RuntimeError> {
+        if overlay.is_empty() {
+            return Ok(Self {
+                graph: base.graph.clone(),
+                derived: base.derived.clone(),
+                overlay_element_count: 0,
+                assembly: LayeredRuntimeAssembly::SharedBase,
+            });
+        }
+
+        let start = Instant::now();
+        let document = apply_runtime_overlay(base.document.as_ref(), overlay);
+        let runtime = Runtime::from_document(document)?;
+        Ok(Self {
+            graph: Arc::new(runtime.graph),
+            derived: Arc::new(runtime.derived),
+            overlay_element_count: overlay.added_element_count(),
+            assembly: LayeredRuntimeAssembly::OverlayMaterialized {
+                elapsed_millis: millis(start.elapsed()),
+            },
+        })
+    }
+
+    pub fn graph(&self) -> &Graph {
+        &self.graph
+    }
+
+    pub fn graph_arc(&self) -> Arc<Graph> {
+        self.graph.clone()
+    }
+
+    pub fn derived(&self) -> &DerivedIndexes {
+        &self.derived
+    }
+
+    pub fn derived_arc(&self) -> Arc<DerivedIndexes> {
+        self.derived.clone()
+    }
+
+    pub fn overlay_element_count(&self) -> usize {
+        self.overlay_element_count
+    }
+
+    pub fn assembly(&self) -> &LayeredRuntimeAssembly {
+        &self.assembly
+    }
+}
+
+fn apply_runtime_overlay(base: &KirDocument, overlay: &RuntimeOverlay) -> KirDocument {
+    let mut document = base.clone();
+    document.metadata.remove("derived_feature_manifest");
+    document.metadata.remove("merged_sources");
+    document
+        .elements
+        .retain(|element| !overlay.removed_elements.contains(&element.id));
+
+    let mut element_index = document
+        .elements
+        .iter()
+        .enumerate()
+        .map(|(index, element)| (element.id.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+
+    for (element_id, properties) in &overlay.updated_properties {
+        let Some(index) = element_index.get(element_id).copied() else {
+            continue;
+        };
+        for (property, value) in properties {
+            document.elements[index]
+                .properties
+                .insert(property.clone(), value.clone());
+        }
+    }
+
+    for (owner_id, members) in &overlay.added_members {
+        let Some(index) = element_index.get(owner_id).copied() else {
+            continue;
+        };
+        let entry = document.elements[index]
+            .properties
+            .entry("members".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(existing) = entry {
+            existing.extend(members.iter().cloned().map(Value::String));
+        }
+    }
+
+    for element in overlay.added_elements.values() {
+        if element_index.contains_key(&element.id) {
+            continue;
+        }
+        element_index.insert(element.id.clone(), document.elements.len());
+        document.elements.push(element.clone());
+    }
+
+    document
+}
+
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
@@ -766,9 +946,14 @@ fn parse_function<'a>(expression: &'a str, function: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use serde_json::{Value, json};
 
-    use super::{ExecutionContext, Runtime};
+    use super::{
+        ExecutionContext, LayeredRuntime, LayeredRuntimeAssembly, Runtime, RuntimeBase,
+        RuntimeOverlay,
+    };
     use mercurio_model::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
 
     fn sample_runtime() -> Runtime {
@@ -893,6 +1078,102 @@ mod tests {
             ],
         })
         .unwrap()
+    }
+
+    fn layered_base_document() -> KirDocument {
+        KirDocument {
+            metadata: [("kir_schema_version".to_string(), json!(KIR_SCHEMA_VERSION))]
+                .into_iter()
+                .collect(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Base".to_string(),
+                    kind: "model.Package".to_string(),
+                    layer: 1,
+                    properties: [
+                        ("qualified_name".to_string(), json!("Base")),
+                        ("members".to_string(), json!(["part.Base.Vehicle"])),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                KirElement {
+                    id: "part.Base.Vehicle".to_string(),
+                    kind: "model.PartDefinition".to_string(),
+                    layer: 1,
+                    properties: [
+                        ("qualified_name".to_string(), json!("Base.Vehicle")),
+                        ("owner".to_string(), json!("pkg.Base")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn layered_runtime_empty_overlay_shares_base_graph_and_indexes() {
+        let document = Arc::new(layered_base_document());
+        let base = RuntimeBase::from_document(document).unwrap();
+        let layered =
+            LayeredRuntime::from_base_and_overlay(&base, &RuntimeOverlay::default()).unwrap();
+
+        assert_eq!(layered.assembly(), &LayeredRuntimeAssembly::SharedBase);
+        assert!(Arc::ptr_eq(base.graph(), &layered.graph_arc()));
+        assert!(Arc::ptr_eq(base.derived(), &layered.derived_arc()));
+        assert_eq!(layered.overlay_element_count(), 0);
+    }
+
+    #[test]
+    fn layered_runtime_overlay_matches_flat_document_build() {
+        let document = Arc::new(layered_base_document());
+        let base = RuntimeBase::from_document(document.clone()).unwrap();
+        let mut overlay = RuntimeOverlay::default();
+        overlay
+            .added_members
+            .insert("pkg.Base".to_string(), vec!["part.Base.Wheel".to_string()]);
+        overlay.added_elements.insert(
+            "part.Base.Wheel".to_string(),
+            KirElement {
+                id: "part.Base.Wheel".to_string(),
+                kind: "model.PartDefinition".to_string(),
+                layer: 2,
+                properties: [
+                    ("qualified_name".to_string(), json!("Base.Wheel")),
+                    ("owner".to_string(), json!("pkg.Base")),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        );
+
+        let layered = LayeredRuntime::from_base_and_overlay(&base, &overlay).unwrap();
+        let mut flat = document.as_ref().clone();
+        flat.elements[0].properties.insert(
+            "members".to_string(),
+            json!(["part.Base.Vehicle", "part.Base.Wheel"]),
+        );
+        flat.elements
+            .push(overlay.added_elements["part.Base.Wheel"].clone());
+        let flat_runtime = Runtime::from_document(flat).unwrap();
+
+        assert!(matches!(
+            layered.assembly(),
+            LayeredRuntimeAssembly::OverlayMaterialized { .. }
+        ));
+        assert_eq!(
+            layered.graph().elements().len(),
+            flat_runtime.graph().elements().len()
+        );
+        assert_eq!(
+            layered.graph().edge_count(),
+            flat_runtime.graph().edge_count()
+        );
+        assert_eq!(
+            layered.derived().ownership.len(),
+            flat_runtime.derived().ownership.len()
+        );
     }
 
     fn aggregate_feature(id: &str, function: &str) -> KirElement {
