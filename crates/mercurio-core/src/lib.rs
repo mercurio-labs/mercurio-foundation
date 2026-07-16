@@ -155,7 +155,8 @@ pub mod query {
 #[doc(hidden)]
 pub mod runtime {
     pub use mercurio_runtime::{
-        ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+        ExecutionContext, LayeredRuntime, LayeredRuntimeAssembly, QueryResult, Runtime,
+        RuntimeArtifact, RuntimeBase, RuntimeError, RuntimeOverlay, RuntimeProfile,
         RuntimeProfileTimings,
     };
 }
@@ -400,7 +401,8 @@ pub use query::{
     SortDirection, TermPattern, TriplePattern, elements_with_metadata, parse_query,
 };
 pub use runtime::{
-    ExecutionContext, QueryResult, Runtime, RuntimeArtifact, RuntimeError, RuntimeProfile,
+    ExecutionContext, LayeredRuntime, LayeredRuntimeAssembly, QueryResult, Runtime,
+    RuntimeArtifact, RuntimeBase, RuntimeError, RuntimeOverlay, RuntimeProfile,
     RuntimeProfileTimings,
 };
 pub use semantic_compare::{
@@ -477,7 +479,10 @@ pub use workspace::{
 };
 pub use workspace_cache::{
     PersistentCacheStatus, PersistentCompileResult, PersistentWorkspaceCache,
-    PersistentWorkspaceCacheOptions, RuntimeCachePolicy, WorkspaceCompileArtifactKey,
-    WorkspaceCompileCacheManifest, WorkspaceCompileCacheOutputs, WorkspaceSourceFileFingerprint,
-    source_file_fingerprints, workspace_compile_artifact_key,
+    PersistentWorkspaceCacheOptions, RUNTIME_CACHE_FORMAT_VERSION, RuntimeCacheManifest,
+    RuntimeCachePolicy, WorkspaceCompileArtifactKey, WorkspaceCompileCacheManifest,
+    WorkspaceCompileCacheOutputs, WorkspaceSourceFileFingerprint, load_runtime_artifact_cache,
+    load_runtime_artifact_cache_with_rejection_reason, runtime_artifact_from_binary_bytes,
+    runtime_artifact_to_binary_bytes, source_file_fingerprints, workspace_compile_artifact_key,
+    write_runtime_artifact_cache,
 };
