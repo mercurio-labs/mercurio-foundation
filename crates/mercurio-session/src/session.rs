@@ -48,8 +48,34 @@ pub struct ModelWorkspace {
     subscribers: Arc<RwLock<BTreeMap<u64, Sender<ModelChangeEvent>>>>,
     next_subscription: Arc<AtomicU64>,
     next_event_sequence: Arc<AtomicU64>,
+    command_stack: Arc<RwLock<CommandStackState>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandStackState {
+    #[serde(default)]
+    undo: Vec<CommandRecord>,
+    #[serde(default)]
+    redo: Vec<CommandRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandRecord {
+    mutation_id: String,
+    before: KirDocument,
+    after: KirDocument,
+    before_profile_id: Option<String>,
+    after_profile_id: Option<String>,
+}
+
+impl CommandStackState {
+    fn push(&mut self, record: CommandRecord) {
+        self.undo.push(record);
+        self.redo.clear();
+    }
+}
 #[derive(Debug)]
 pub struct ModelChangeSubscription {
     receiver: Receiver<ModelChangeEvent>,
@@ -375,6 +401,7 @@ impl ModelWorkspace {
             subscribers: Arc::new(RwLock::new(BTreeMap::new())),
             next_subscription: Arc::new(AtomicU64::new(1)),
             next_event_sequence: Arc::new(AtomicU64::new(1)),
+            command_stack: Arc::new(RwLock::new(CommandStackState::default())),
         }
     }
 
@@ -412,13 +439,147 @@ impl ModelWorkspace {
         ModelChangeSubscription { receiver }
     }
 
-    fn publish_snapshot(&self, snapshot: WorkspaceSnapshot, mut event: ModelChangeEvent) {
+    fn publish_snapshot(&self, snapshot: WorkspaceSnapshot, event: ModelChangeEvent) {
+        let current = self.current_snapshot();
+        self.command_stack
+            .write()
+            .expect("workspace command stack lock poisoned")
+            .push(CommandRecord {
+                mutation_id: event.provenance.mutation_id.clone(),
+                before: (*current.kir).clone(),
+                after: (*snapshot.kir).clone(),
+                before_profile_id: current.profile_id.clone(),
+                after_profile_id: snapshot.profile_id.clone(),
+            });
+        self.publish_snapshot_untracked(snapshot, event);
+    }
+
+    fn publish_snapshot_untracked(&self, snapshot: WorkspaceSnapshot, mut event: ModelChangeEvent) {
         *self.current.write().expect("workspace lock poisoned") = Arc::new(snapshot);
         event.sequence = self.next_event_sequence.fetch_add(1, Ordering::SeqCst);
         self.subscribers
             .write()
             .expect("workspace subscriber lock poisoned")
             .retain(|_, sender| sender.send(event.clone()).is_ok());
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self
+            .command_stack
+            .read()
+            .expect("workspace command stack lock poisoned")
+            .undo
+            .is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self
+            .command_stack
+            .read()
+            .expect("workspace command stack lock poisoned")
+            .redo
+            .is_empty()
+    }
+
+    pub fn command_stack_state(&self) -> CommandStackState {
+        self.command_stack
+            .read()
+            .expect("workspace command stack lock poisoned")
+            .clone()
+    }
+
+    pub fn restore_command_stack_state(&self, state: CommandStackState) {
+        *self
+            .command_stack
+            .write()
+            .expect("workspace command stack lock poisoned") = state;
+    }
+
+    pub fn undo(&self) -> Result<WorkspaceRevision, SessionError> {
+        let record = {
+            let mut stack = self
+                .command_stack
+                .write()
+                .expect("workspace command stack lock poisoned");
+            stack
+                .undo
+                .pop()
+                .ok_or_else(|| SessionError::Unsupported("nothing to undo".to_string()))?
+        };
+        let current = self.current_snapshot();
+        let expected = workspace_revision_for_kir_document(&record.after)?;
+        if current.revision != expected {
+            self.command_stack
+                .write()
+                .expect("workspace command stack lock poisoned")
+                .redo
+                .clear();
+            return Err(SessionError::StaleWorkspace {
+                base_revision: expected,
+                current_revision: current.revision.clone(),
+            });
+        }
+        let snapshot = WorkspaceSnapshot::with_profile(
+            record.before.clone(),
+            record.before_profile_id.clone(),
+        )?;
+        let revision = snapshot.revision.clone();
+        let event = ModelChangeEvent::new(
+            current.revision.clone(),
+            revision.clone(),
+            ModelChangeProvenance {
+                mutation_id: format!("undo:{}", record.mutation_id),
+                actor: None,
+            },
+            diff_kir_documents(&current.kir, &record.before),
+        );
+        self.command_stack
+            .write()
+            .expect("workspace command stack lock poisoned")
+            .redo
+            .push(record);
+        self.publish_snapshot_untracked(snapshot, event);
+        Ok(revision)
+    }
+
+    pub fn redo(&self) -> Result<WorkspaceRevision, SessionError> {
+        let record = {
+            let mut stack = self
+                .command_stack
+                .write()
+                .expect("workspace command stack lock poisoned");
+            stack
+                .redo
+                .pop()
+                .ok_or_else(|| SessionError::Unsupported("nothing to redo".to_string()))?
+        };
+        let current = self.current_snapshot();
+        let expected = workspace_revision_for_kir_document(&record.before)?;
+        if current.revision != expected {
+            return Err(SessionError::StaleWorkspace {
+                base_revision: expected,
+                current_revision: current.revision.clone(),
+            });
+        }
+        let snapshot =
+            WorkspaceSnapshot::with_profile(record.after.clone(), record.after_profile_id.clone())?;
+        let revision = snapshot.revision.clone();
+        let event = ModelChangeEvent::new(
+            current.revision.clone(),
+            revision.clone(),
+            ModelChangeProvenance {
+                mutation_id: format!("redo:{}", record.mutation_id),
+                actor: None,
+            },
+            diff_kir_documents(&current.kir, &record.after),
+        );
+        self.command_stack
+            .write()
+            .expect("workspace command stack lock poisoned")
+            .undo
+            .push(record);
+        self.publish_snapshot_untracked(snapshot, event);
+        Ok(revision)
     }
 }
 
@@ -1317,5 +1478,38 @@ mod tests {
 
         assert_eq!(second_event.sequence, 2);
         assert_eq!(second_event.diff, second_result.semantic_diff);
+    }
+    #[test]
+    fn command_stack_undo_redo_and_persistence_restore_snapshot_digests() {
+        let workspace = ModelWorkspace::new(WorkspaceSnapshot::new(empty_document()).unwrap());
+        let initial = workspace.current_snapshot().revision.clone();
+
+        let mut fork = workspace.session().fork("add-package");
+        fork.package("Added", None).unwrap();
+        let committed = fork.commit(CommitMode::RewriteSource).unwrap();
+        assert_ne!(committed.new_revision, initial);
+        assert!(workspace.can_undo());
+
+        let persisted = serde_json::to_string(&workspace.command_stack_state()).unwrap();
+        let restored: CommandStackState = serde_json::from_str(&persisted).unwrap();
+        workspace.restore_command_stack_state(restored);
+
+        assert_eq!(workspace.undo().unwrap(), initial);
+        assert!(workspace.can_redo());
+        assert_eq!(workspace.redo().unwrap(), committed.new_revision);
+    }
+
+    #[test]
+    fn new_mutation_after_undo_invalidates_redo_branch() {
+        let workspace = ModelWorkspace::new(WorkspaceSnapshot::new(empty_document()).unwrap());
+        let mut first = workspace.session().fork("first");
+        first.package("First", None).unwrap();
+        first.commit(CommitMode::RewriteSource).unwrap();
+        workspace.undo().unwrap();
+
+        let mut second = workspace.session().fork("second");
+        second.package("Second", None).unwrap();
+        second.commit(CommitMode::RewriteSource).unwrap();
+        assert!(!workspace.can_redo());
     }
 }

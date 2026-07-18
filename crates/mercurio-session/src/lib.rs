@@ -10,9 +10,9 @@ pub use cell_runner::{
 };
 pub use session::{
     CellKind, CellLanguage, CellOutput, CellOutputKind, CellRunReport, CellRunRequest,
-    CellRunStatus, CommitMode, CommitResult, CommitStrategy, ForkElement, ForkElementSpec,
-    KirOverlay, ModelChangeSubscription, ModelFork, ModelSession, ModelWorkspace, SessionError,
-    WorkspaceSnapshot,
+    CellRunStatus, CommandStackState, CommitMode, CommitResult, CommitStrategy, ForkElement,
+    ForkElementSpec, KirOverlay, ModelChangeSubscription, ModelFork, ModelSession, ModelWorkspace,
+    SessionError, WorkspaceSnapshot,
 };
 pub use transaction::{
     SEMANTIC_CHANGE_SET_SCHEMA, SEMANTIC_TRANSACTION_SCHEMA, SemanticChangeSet,
