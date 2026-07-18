@@ -4,6 +4,7 @@ pub mod mpack;
 pub mod paths;
 pub mod performance;
 pub mod plugin_registry;
+pub mod symbol_index;
 pub mod workspace;
 pub mod workspace_cache;
 
@@ -51,6 +52,7 @@ pub use plugin_registry::{
     plugin_package_digest, plugin_registry_root, publish_plugin_package,
     read_plugin_install_source, read_plugin_manifest as read_registry_plugin_manifest,
 };
+pub use symbol_index::WorkspaceSymbolIndex;
 pub use workspace::{
     ProjectDescriptor, ProjectExtensionDescriptor, ProjectModelConfig, ResolvedWorkspaceContext,
     ResolvedWorkspaceLibrary, WorkspaceConfig, WorkspaceConfigError, WorkspaceContextOptions,

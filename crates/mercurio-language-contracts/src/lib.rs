@@ -16,6 +16,7 @@ pub mod expression;
 pub mod lexer;
 pub mod reports;
 pub mod service;
+pub mod workbench;
 
 pub use ast::*;
 pub use diagnostics::Diagnostic;
@@ -28,6 +29,11 @@ pub use expression::{
 pub use lexer::{Token, TokenKind, lex};
 pub use reports::{ParseReport, SemanticCompileReport, SemanticCompileStatus};
 pub use service::{CompileContext, LanguageRegistry, LanguageService};
+pub use workbench::{
+    DocumentSymbols, ElementAtPosition, LanguageAnalysis, ReferenceDescriptor, ScopeProvider,
+    SourceDocument, SymbolDescriptor, analysis_from_compile_report, document_symbols,
+    line_col_to_byte, source_span_to_text_range,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

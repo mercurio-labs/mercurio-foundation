@@ -4,6 +4,7 @@ use mercurio_kir::KirDocument;
 
 use crate::diagnostics::Diagnostic;
 use crate::reports::{SemanticCompileReport, SemanticCompileStatus};
+use crate::workbench::{LanguageAnalysis, SourceDocument, analysis_from_compile_report};
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompileContext<'a> {
@@ -21,6 +22,41 @@ pub trait LanguageService: Send + Sync {
         source: &str,
         context: CompileContext<'_>,
     ) -> SemanticCompileReport<KirDocument>;
+
+    fn analyze(
+        &self,
+        source: &str,
+        revision: u64,
+        context: CompileContext<'_>,
+    ) -> LanguageAnalysis {
+        let report = self.compile(source, context);
+        analysis_from_compile_report(
+            source,
+            context.source_name,
+            revision,
+            context.library_context,
+            report,
+        )
+    }
+
+    fn analyze_workspace(
+        &self,
+        documents: &[SourceDocument],
+        source_name: &str,
+        library_context: &KirDocument,
+    ) -> Option<LanguageAnalysis> {
+        let document = documents
+            .iter()
+            .find(|document| document.source_name == source_name)?;
+        Some(self.analyze(
+            &document.text,
+            document.revision,
+            CompileContext {
+                source_name: &document.source_name,
+                library_context,
+            },
+        ))
+    }
 
     fn supports_path(&self, path: &Path) -> bool {
         let Some(extension) = path.extension().and_then(|value| value.to_str()) else {

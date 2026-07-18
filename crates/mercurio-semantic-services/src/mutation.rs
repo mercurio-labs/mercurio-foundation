@@ -1257,6 +1257,39 @@ pub struct SemanticDiff {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelChangeProvenance {
+    pub mutation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelChangeEvent {
+    pub sequence: u64,
+    pub revision_before: WorkspaceRevision,
+    pub revision_after: WorkspaceRevision,
+    pub provenance: ModelChangeProvenance,
+    pub diff: SemanticDiff,
+}
+
+impl ModelChangeEvent {
+    pub fn new(
+        revision_before: WorkspaceRevision,
+        revision_after: WorkspaceRevision,
+        provenance: ModelChangeProvenance,
+        diff: SemanticDiff,
+    ) -> Self {
+        Self {
+            sequence: 0,
+            revision_before,
+            revision_after,
+            provenance,
+            diff,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenamedElement {
     pub element: SemanticDiffElementRef,
     pub before_name: Option<String>,
