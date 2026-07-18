@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::language::{Concept, LanguageProfile};
 use mercurio_kir::{KirDocument, KirElement};
+use mercurio_model::{Graph, MetamodelFeatureRegistry, MetamodelFeatureView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PythonWrapperGeneration {
@@ -12,39 +13,67 @@ pub struct PythonWrapperGeneration {
     pub files: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PythonFacadeGeneration {
+    pub module_name: String,
+    pub files: BTreeMap<String, String>,
+}
+
+pub fn generate_python_facades(
+    document: &KirDocument,
+    module_name: &str,
+) -> PythonFacadeGeneration {
+    let module_path = module_name.replace('.', "/");
+    let mut files = BTreeMap::new();
+    files.insert(format!("{module_path}/__init__.py"), facade_init_py());
+    files.insert(format!("{module_path}/base.py"), base_py());
+    files.insert(
+        format!("{module_path}/facades.py"),
+        facades_py(document, None),
+    );
+    files.insert(
+        format!("{module_path}/metamodel.py"),
+        metamodel_compatibility_py(),
+    );
+    files.insert(format!("{module_path}/py.typed"), String::new());
+    PythonFacadeGeneration {
+        module_name: module_name.to_string(),
+        files,
+    }
+}
+
 pub fn generate_python_wrappers(
     document: &KirDocument,
     profile: &LanguageProfile,
     module_name: &str,
 ) -> PythonWrapperGeneration {
-    let mut files = BTreeMap::new();
+    let module_path = module_name.replace('.', "/");
+    let mut files = generate_python_facades(document, module_name).files;
     files.insert(
-        format!("{module_name}/__init__.py"),
+        format!("{module_path}/__init__.py"),
         init_py(module_name, profile),
     );
-    files.insert(format!("{module_name}/base.py"), base_py());
     files.insert(
-        format!("{module_name}/metamodel.py"),
-        metamodel_py(document, profile),
+        format!("{module_path}/facades.py"),
+        facades_py(document, Some(profile)),
     );
-    files.insert(format!("{module_name}/concepts.py"), concepts_py(profile));
+    files.insert(format!("{module_path}/concepts.py"), concepts_py(profile));
     files.insert(
-        format!("{module_name}/generation_info.py"),
+        format!("{module_path}/generation_info.py"),
         generation_info_py(profile),
     );
     files.insert(
-        format!("{module_name}/stdlib/__init__.py"),
+        format!("{module_path}/stdlib/__init__.py"),
         stdlib_init_py(),
     );
     files.insert(
-        format!("{module_name}/stdlib/si.py"),
+        format!("{module_path}/stdlib/si.py"),
         catalog_py(document, "SI"),
     );
     files.insert(
-        format!("{module_name}/stdlib/isq.py"),
+        format!("{module_path}/stdlib/isq.py"),
         catalog_prefix_py(document, "ISQ"),
     );
-    files.insert(format!("{module_name}/py.typed"), String::new());
 
     PythonWrapperGeneration {
         module_name: module_name.to_string(),
@@ -54,7 +83,6 @@ pub fn generate_python_wrappers(
         files,
     }
 }
-
 pub fn generate_rust_stdlib_consts(document: &KirDocument, metamodel_id: &str) -> String {
     let mut output = format!("// AUTO-GENERATED from {metamodel_id} - do not edit\n\n");
     output.push_str(&rust_catalog_module(document, "isq", "ISQ"));
@@ -111,16 +139,59 @@ fn stdlib_qualified_name(element: &KirElement) -> Option<String> {
         .map(str::to_string)
 }
 
-fn init_py(module_name: &str, profile: &LanguageProfile) -> String {
-    format!(
-        r#""""Generated Mercurio wrappers for {profile_id}."""
+fn facade_init_py() -> String {
+    r#""""Generated typed Mercurio metamodel facades."""
 
-from .base import ElementView, StdlibRef
-from .metamodel import (
+from .base import ElementFacade, ElementView
+from .facades import (
     METAMODEL_CLASSES,
     METAMODEL_CLASS_BY_KIND,
     METAMODEL_CLASS_BY_METATYPE,
     class_for,
+    facade,
+    wrap,
+)
+
+__all__ = [
+    "ElementFacade",
+    "ElementView",
+    "METAMODEL_CLASSES",
+    "METAMODEL_CLASS_BY_KIND",
+    "METAMODEL_CLASS_BY_METATYPE",
+    "class_for",
+    "facade",
+    "wrap",
+]
+
+for _cls in METAMODEL_CLASSES:
+    globals().setdefault(_cls.__name__, _cls)
+    if _cls.__name__ not in __all__:
+        __all__.append(_cls.__name__)
+if METAMODEL_CLASSES:
+    del _cls
+"#
+    .to_string()
+}
+
+fn metamodel_compatibility_py() -> String {
+    r#""""Compatibility module; generated facades now live in facades.py."""
+
+from .facades import *  # noqa: F401,F403
+"#
+    .to_string()
+}
+
+fn init_py(module_name: &str, profile: &LanguageProfile) -> String {
+    format!(
+        r#""""Generated Mercurio wrappers for {profile_id}."""
+
+from .base import ElementFacade, ElementView, StdlibRef
+from .facades import (
+    METAMODEL_CLASSES,
+    METAMODEL_CLASS_BY_KIND,
+    METAMODEL_CLASS_BY_METATYPE,
+    class_for,
+    facade,
     wrap,
 )
 from .concepts import (
@@ -139,6 +210,7 @@ from .generation_info import KIR_SCHEMA_VERSION, PROFILE_ID, STDLIB_VERSION
 __all__ = [
     "AttributeUsage",
     "ConstraintUsage",
+    "ElementFacade",
     "ElementView",
     "KIR_SCHEMA_VERSION",
     "METAMODEL_CLASSES",
@@ -155,6 +227,7 @@ __all__ = [
     "Model",
     "VerificationCaseUsage",
     "class_for",
+    "facade",
     "register",
     "wrap",
 ]
@@ -219,7 +292,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 
-class ElementView:
+class ElementFacade:
     concept: ClassVar[str | None] = None
     metatype_id: ClassVar[str | None] = None
     metatype_ids: ClassVar[tuple[str, ...]] = ()
@@ -252,12 +325,20 @@ class ElementView:
         )
 
     @property
+    def raw(self) -> Any:
+        return self._element
+
+    @property
     def id(self) -> str:
-        return self._element.id
+        value = getattr(self._element, "id", None)
+        if value is None:
+            value = getattr(self._element, "qualified_name", None)
+        return str(value() if callable(value) else value)
 
     @property
     def kind(self) -> str:
-        return self._element.kind
+        value = getattr(self._element, "kind", None)
+        return str(value() if callable(value) else value)
 
     def get(self, name: str) -> Any:
         get = getattr(self._element, "get", None)
@@ -286,7 +367,42 @@ class ElementView:
         return self.get(name)
 
     def references(self, name: str) -> list[Any]:
-        return self._element.references(name)
+        references = getattr(self._element, "references", None)
+        if callable(references):
+            return list(references(name))
+        value = self.get(name)
+        values = value if isinstance(value, (list, tuple)) else (() if value is None else (value,))
+        model = getattr(self._element, "_model", None)
+        resolve = getattr(model, "resolve", None)
+        if not callable(resolve):
+            return list(values)
+        resolved = []
+        for item in values:
+            try:
+                resolved.append(resolve(item))
+            except (KeyError, TypeError, ValueError):
+                resolved.append(item)
+        return resolved
+
+    def values(self, name: str) -> list[Any]:
+        value = self.effective(name)
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+
+    def effective_bool(self, name: str) -> bool | None:
+        value = self.effective(name)
+        return value if isinstance(value, bool) else None
+
+    def effective_int(self, name: str) -> int | None:
+        value = self.effective(name)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def effective_float(self, name: str) -> float | None:
+        value = self.effective(name)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
     def metadata(self) -> Any:
         metadata = getattr(self._element, "metadata", None)
@@ -308,6 +424,38 @@ class ElementView:
         value = self.effective(name)
         return value if isinstance(value, str) else None
 
+    @property
+    def name(self) -> str | None:
+        return self.effective_str("name")
+
+    @property
+    def declared_name(self) -> str | None:
+        return self.effective_str("declared_name")
+
+    @property
+    def qualified_name(self) -> str | None:
+        return self.effective_str("qualified_name")
+
+    @property
+    def documentation(self) -> str | None:
+        return self.effective_str("documentation") or self.effective_str("doc")
+
+    def members(self) -> list[Any]:
+        return self.references("members")
+
+    def features(self) -> list[Any]:
+        return self.references("features")
+
+    def owner(self) -> list[Any]:
+        return self.references("owner")
+
+    def specializes(self) -> list[Any]:
+        return self.references("specializes")
+
+
+# Compatibility alias for wrapper packages generated before facades.py became canonical.
+ElementView = ElementFacade
+
 
 @dataclass(frozen=True)
 class StdlibRef:
@@ -325,16 +473,20 @@ struct PythonMetamodelClass {
     base_class_names: BTreeSet<String>,
     metatype_ids: BTreeSet<String>,
     kind_names: BTreeSet<String>,
+    feature_owner_ids: BTreeSet<String>,
 }
 
-fn metamodel_py(document: &KirDocument, profile: &LanguageProfile) -> String {
+fn facades_py(document: &KirDocument, profile: Option<&LanguageProfile>) -> String {
     let classes = metamodel_classes(document, profile);
+    let registry = Graph::from_document(document.clone())
+        .ok()
+        .map(|graph| MetamodelFeatureRegistry::build(&graph));
     let mut output = String::from(
         r#"from __future__ import annotations
 
 from typing import Any
 
-from .base import ElementView
+from .base import ElementFacade, ElementView
 
 
 "#,
@@ -342,7 +494,7 @@ from .base import ElementView
 
     for class in ordered_metamodel_classes(&classes) {
         let bases = if class.base_class_names.is_empty() {
-            "ElementView".to_string()
+            "ElementFacade".to_string()
         } else {
             class
                 .base_class_names
@@ -369,38 +521,19 @@ from .base import ElementView
             "    kind_names = {}\n\n",
             python_tuple_literal(&class.kind_names)
         ));
-        output.push_str(
-            r#"    @property
-    def name(self) -> str | None:
-        return self.effective_str("name")
-
-    @property
-    def declared_name(self) -> str | None:
-        return self.effective_str("declared_name")
-
-    @property
-    def qualified_name(self) -> str | None:
-        return self.effective_str("qualified_name")
-
-    @property
-    def documentation(self) -> str | None:
-        return self.effective_str("documentation")
-
-    def members(self) -> list[ElementView]:
-        return self.references("members")
-
-    def features(self) -> list[ElementView]:
-        return self.references("features")
-
-    def owner(self) -> list[ElementView]:
-        return self.references("owner")
-
-    def specializes(self) -> list[ElementView]:
-        return self.references("specializes")
-
-
-"#,
-        );
+        if let Some(registry) = registry.as_ref() {
+            let mut features = BTreeMap::new();
+            for owner_id in &class.feature_owner_ids {
+                for feature in registry.declared_features_for(owner_id) {
+                    features
+                        .entry(feature.kir_property.clone())
+                        .or_insert(feature);
+                }
+            }
+            for feature in features.values() {
+                emit_python_feature_accessor(&mut output, feature);
+            }
+        }
     }
 
     output.push_str("METAMODEL_CLASSES = (\n");
@@ -432,26 +565,90 @@ def _call_or_value(element: Any, name: str):
     return value() if callable(value) else value
 
 
-def class_for(element: Any) -> type[ElementView]:
+def class_for(element: Any) -> type[ElementFacade]:
     metatype_id = _call_or_value(element, "metatype_id")
     if metatype_id in METAMODEL_CLASS_BY_METATYPE:
         return METAMODEL_CLASS_BY_METATYPE[metatype_id]
     kind = _call_or_value(element, "kind")
     if kind in METAMODEL_CLASS_BY_KIND:
         return METAMODEL_CLASS_BY_KIND[kind]
-    return ElementView
+    return ElementFacade
 
 
-def wrap(element: Any) -> ElementView:
+def facade(element: Any) -> ElementFacade:
     return class_for(element).wrap(element)
+
+
+def wrap(element: Any) -> ElementFacade:
+    """Compatibility alias for facade()."""
+    return facade(element)
 "#,
     );
     output
 }
 
+fn emit_python_feature_accessor(output: &mut String, feature: &MetamodelFeatureView) {
+    let property = feature.kir_property.as_str();
+    let method = python_identifier(property);
+    if [
+        "effective",
+        "effective_bool",
+        "effective_float",
+        "effective_int",
+        "effective_str",
+        "features",
+        "get",
+        "id",
+        "kind",
+        "matches",
+        "members",
+        "metadata",
+        "metadata_by_type",
+        "owner",
+        "raw",
+        "references",
+        "specializes",
+        "values",
+        "wrap",
+    ]
+    .contains(&method.as_str())
+    {
+        return;
+    }
+    let many = feature.multiplicity_upper.as_deref() == Some("*")
+        || feature
+            .multiplicity_upper
+            .as_deref()
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|upper| upper > 1);
+    let type_label = feature.type_label.as_deref().unwrap_or_default();
+    output.push_str("    @property\n");
+    if many {
+        output.push_str(&format!(
+            "    def {method}(self) -> list[Any]:\n        return self.values({property:?})\n\n"
+        ));
+    } else if type_label.contains("Boolean") {
+        output.push_str(&format!(
+            "    def {method}(self) -> bool | None:\n        return self.effective_bool({property:?})\n\n"
+        ));
+    } else if type_label.contains("Integer") {
+        output.push_str(&format!(
+            "    def {method}(self) -> int | None:\n        return self.effective_int({property:?})\n\n"
+        ));
+    } else if type_label.contains("Real") || type_label.contains("Number") {
+        output.push_str(&format!(
+            "    def {method}(self) -> float | None:\n        return self.effective_float({property:?})\n\n"
+        ));
+    } else {
+        output.push_str(&format!(
+            "    def {method}(self) -> str | None:\n        return self.effective_str({property:?})\n\n"
+        ));
+    }
+}
+
 fn metamodel_classes(
     document: &KirDocument,
-    profile: &LanguageProfile,
+    profile: Option<&LanguageProfile>,
 ) -> BTreeMap<String, PythonMetamodelClass> {
     let mut classes = BTreeMap::<String, PythonMetamodelClass>::new();
 
@@ -465,6 +662,13 @@ fn metamodel_classes(
                     ..Default::default()
                 });
             class.metatype_ids.insert(element.id.clone());
+            class.kind_names.insert(
+                metadata_name(element)
+                    .or_else(|| element.id.rsplit("::").next())
+                    .unwrap_or(element.id.as_str())
+                    .to_string(),
+            );
+            class.feature_owner_ids.insert(element.id.clone());
         }
     }
 
@@ -518,20 +722,22 @@ fn metamodel_classes(
         class.kind_names.insert(kind.to_string());
     }
 
-    for target in profile
-        .canonical_kinds
-        .values()
-        .chain(profile.aliases.values())
-        .collect::<BTreeSet<_>>()
-    {
-        let class_name = python_class_identifier(target.rsplit("::").next().unwrap_or(target));
-        let class = classes
-            .entry(class_name.clone())
-            .or_insert_with(|| PythonMetamodelClass {
-                class_name,
-                ..Default::default()
-            });
-        class.metatype_ids.insert(target.clone());
+    if let Some(profile) = profile {
+        for target in profile
+            .canonical_kinds
+            .values()
+            .chain(profile.aliases.values())
+            .collect::<BTreeSet<_>>()
+        {
+            let class_name = python_class_identifier(target.rsplit("::").next().unwrap_or(target));
+            let class = classes
+                .entry(class_name.clone())
+                .or_insert_with(|| PythonMetamodelClass {
+                    class_name,
+                    ..Default::default()
+                });
+            class.metatype_ids.insert(target.clone());
+        }
     }
 
     remove_redundant_bases(&mut classes);
@@ -661,8 +867,8 @@ fn concepts_py(profile: &LanguageProfile) -> String {
     format!(
         r#"from __future__ import annotations
 
-from . import metamodel as _metamodel
-from .base import ElementView
+from . import facades as _metamodel
+from .base import ElementFacade, ElementView
 from .stdlib.si import SINamespace
 from .stdlib.isq import ISQNamespace
 
@@ -1023,6 +1229,11 @@ mod tests {
                 .files
                 .contains_key("mercurio_model_test/metamodel.py")
         );
+        assert!(
+            generated
+                .files
+                .contains_key("mercurio_model_test/facades.py")
+        );
     }
 
     #[test]
@@ -1064,6 +1275,19 @@ mod tests {
                     ]),
                 },
                 KirElement {
+                    id: "feature.part_definition.is_abstract".to_string(),
+                    kind: "MetamodelFeature".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        (
+                            "owner".to_string(),
+                            serde_json::json!("Model::Systems::PartDefinition"),
+                        ),
+                        ("kir_property".to_string(), serde_json::json!("is_abstract")),
+                        ("type_label".to_string(), serde_json::json!("Boolean")),
+                    ]),
+                },
+                KirElement {
                     id: "type.Demo.Vehicle".to_string(),
                     kind: "PartDefinition".to_string(),
                     layer: 2,
@@ -1091,15 +1315,17 @@ mod tests {
         };
 
         let generated = generate_python_wrappers(&document, &profile, "mercurio_model_test");
-        let metamodel = &generated.files["mercurio_model_test/metamodel.py"];
+        let metamodel = &generated.files["mercurio_model_test/facades.py"];
         let concepts = &generated.files["mercurio_model_test/concepts.py"];
 
-        assert!(metamodel.contains("class Package(ElementView):"));
-        assert!(metamodel.contains("class ItemDefinition(ElementView):"));
+        assert!(metamodel.contains("class Package(ElementFacade):"));
+        assert!(metamodel.contains("class ItemDefinition(ElementFacade):"));
         assert!(metamodel.contains("class PartDefinition(ItemDefinition):"));
         assert!(metamodel.contains(r#""Model::Systems::PartDefinition": PartDefinition"#));
         assert!(metamodel.contains(r#""PartDefinition": PartDefinition"#));
-        assert!(metamodel.contains("def class_for(element: Any) -> type[ElementView]:"));
+        assert!(metamodel.contains("def class_for(element: Any) -> type[ElementFacade]:"));
+        assert!(metamodel.contains("def is_abstract(self) -> bool | None:"));
+        assert!(metamodel.contains("return self.effective_bool(\"is_abstract\")"));
         assert!(concepts.contains("class PartDefinition(_metamodel.PartDefinition):"));
     }
 }

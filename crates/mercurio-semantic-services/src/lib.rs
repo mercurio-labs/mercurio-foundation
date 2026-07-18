@@ -20,12 +20,12 @@ pub use identity::{
 };
 pub use mutation::{
     AI_SEMANTIC_CONTEXT_SCHEMA_VERSION, AiSemanticContextUsage, ChangedAttribute,
-    ChangedSpecialization, ElementRef, MovedElement, MutationApplicationResult, MutationEvidence,
-    MutationPlan, MutationProposal, RelationshipChange, RenamedElement, RetypedUsage,
-    SemanticAffordanceContext, SemanticDiff, SemanticDiffElementRef, SemanticElementContext,
-    SemanticElementKind, SemanticElementRef, SemanticExpression, SemanticFactContext,
-    SemanticMutation, SemanticMutationCapabilityContext, SemanticReasoningContext,
-    SemanticRelationshipContext, SemanticRelationshipTargetRuleContext,
+    ChangedSpecialization, ElementRef, ModelChangeEvent, ModelChangeProvenance, MovedElement,
+    MutationApplicationResult, MutationEvidence, MutationPlan, MutationProposal,
+    RelationshipChange, RenamedElement, RetypedUsage, SemanticAffordanceContext, SemanticDiff,
+    SemanticDiffElementRef, SemanticElementContext, SemanticElementKind, SemanticElementRef,
+    SemanticExpression, SemanticFactContext, SemanticMutation, SemanticMutationCapabilityContext,
+    SemanticReasoningContext, SemanticRelationshipContext, SemanticRelationshipTargetRuleContext,
     SemanticUsageTypingRuleContext, WorkspaceRevision,
     default_semantic_mutation_capability_context, diff_kir_documents,
     enrich_semantic_reasoning_context_with_child_affordances,
