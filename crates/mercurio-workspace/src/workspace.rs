@@ -219,8 +219,7 @@ impl WorkspaceConfig {
 
 impl ProjectDescriptor {
     pub fn from_path(path: &Path) -> Result<Self, WorkspaceConfigError> {
-        let input = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&input)?)
+        read_project_descriptor(path).map(|(descriptor, _)| descriptor)
     }
 
     pub fn to_workspace_config(&self) -> WorkspaceConfig {
@@ -233,6 +232,54 @@ impl ProjectDescriptor {
     }
 }
 
+fn read_project_descriptor(
+    path: &Path,
+) -> Result<(ProjectDescriptor, Option<ProjectExtensionDescriptor>), WorkspaceConfigError> {
+    let input = std::fs::read_to_string(path)?;
+    let mut value = serde_json::from_str::<serde_json::Value>(&input)?;
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+    let legacy_extension = if version <= 1 {
+        value
+            .as_object_mut()
+            .map(|object| {
+                let project_plugins = object
+                    .remove("projectPlugins")
+                    .map(serde_json::from_value)
+                    .transpose()?
+                    .unwrap_or_default();
+                let capabilities = object
+                    .remove("capabilities")
+                    .map(serde_json::from_value)
+                    .transpose()?
+                    .unwrap_or_default();
+                let views = object
+                    .remove("views")
+                    .map(serde_json::from_value)
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok::<_, serde_json::Error>(ProjectExtensionDescriptor {
+                    schema: None,
+                    version: default_project_extension_descriptor_version(),
+                    project_plugins,
+                    capabilities,
+                    views,
+                })
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let descriptor = serde_json::from_value(value)?;
+    let legacy_extension = legacy_extension.filter(|extension| {
+        !extension.project_plugins.is_empty()
+            || !extension.capabilities.is_empty()
+            || !extension.views.is_empty()
+    });
+    Ok((descriptor, legacy_extension))
+}
 pub fn resolve_workspace_context(
     open_path: &Path,
 ) -> Result<ResolvedWorkspaceContext, WorkspaceConfigError> {
@@ -256,7 +303,7 @@ pub fn resolve_project_descriptor_context(
     descriptor_path: impl AsRef<Path>,
 ) -> Result<ResolvedWorkspaceContext, WorkspaceConfigError> {
     let descriptor_path = descriptor_path.as_ref();
-    let descriptor = ProjectDescriptor::from_path(descriptor_path)?;
+    let (descriptor, legacy_extension) = read_project_descriptor(descriptor_path)?;
     let config = descriptor.to_workspace_config();
     let workspace_root = descriptor_path
         .parent()
@@ -268,7 +315,8 @@ pub fn resolve_project_descriptor_context(
     let extension = extension_path
         .as_deref()
         .map(ProjectExtensionDescriptor::from_path)
-        .transpose()?;
+        .transpose()?
+        .or(legacy_extension);
 
     let validation_report = aggregate_workspace_validation_report(&resolved_libraries);
 
@@ -900,6 +948,52 @@ mod tests {
         assert!(err.to_string().contains("unknown field"));
     }
 
+    #[test]
+    fn project_descriptor_path_migrates_v1_inline_extension_fields() {
+        let root = temp_dir("legacy_inline_project_extensions");
+        let descriptor_path = root.join(".project.json");
+        std::fs::write(
+            &descriptor_path,
+            r#"{
+  "version": 1,
+  "name": "Legacy Project",
+  "projectPlugins": ["plugins/domain"],
+  "capabilities": ["plugins/domain/mercurio.plugin.json"],
+  "views": [{"label": "Domain View", "kind": "table"}]
+}"#,
+        )
+        .unwrap();
+
+        let descriptor = ProjectDescriptor::from_path(&descriptor_path).unwrap();
+        assert_eq!(descriptor.name.as_deref(), Some("Legacy Project"));
+        let serialized = serde_json::to_value(&descriptor).unwrap();
+        assert!(serialized.get("projectPlugins").is_none());
+        assert!(serialized.get("capabilities").is_none());
+        assert!(serialized.get("views").is_none());
+
+        let resolved = resolve_project_descriptor_context(&descriptor_path).unwrap();
+        assert!(resolved.extension_path.is_none());
+        let extension = resolved.extension.unwrap();
+        assert_eq!(extension.project_plugins, vec!["plugins/domain"]);
+        assert_eq!(extension.capabilities.len(), 1);
+        assert_eq!(extension.views.len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_descriptor_path_keeps_v2_inline_extension_fields_invalid() {
+        let root = temp_dir("invalid_v2_inline_project_extensions");
+        let descriptor_path = root.join(".project.json");
+        std::fs::write(
+            &descriptor_path,
+            r#"{"version":2,"name":"Modern Project","views":[]}"#,
+        )
+        .unwrap();
+
+        let error = ProjectDescriptor::from_path(&descriptor_path).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn project_descriptor_accepts_libraries_dependency_alias() {
         let descriptor = serde_json::from_str::<ProjectDescriptor>(
