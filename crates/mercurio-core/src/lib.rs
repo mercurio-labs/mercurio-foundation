@@ -145,6 +145,10 @@ pub mod plugin_registry {
 #[doc(hidden)]
 pub mod proposal;
 #[doc(hidden)]
+pub mod project_sources {
+    pub use mercurio_workspace::project_sources::*;
+}
+#[doc(hidden)]
 pub mod python_codegen {
     pub use mercurio_codegen::python_codegen::*;
 }
@@ -320,7 +324,10 @@ pub use library::{
     load_baseline_library_document, package_bytes_digest, parse_package_reference,
     write_kpar_package,
 };
-pub use mercurio_language_contracts::{CompileContext, LanguageRegistry, LanguageService};
+pub use mercurio_language_contracts::{
+    CompileContext, LanguageRegistry, LanguageService, ProjectSourceSelectionError,
+    select_project_source_paths,
+};
 pub use metadata::{
     ElementMetadataView, KirMetadataAnnotation, MetadataView, metadata_annotations,
     metadata_annotations_named, metadata_string_property,
@@ -388,6 +395,10 @@ pub use plugin_registry::{
     installed_plugin_manifest_paths, mpack_activation_index, plugin_manifest_dir,
     plugin_package_digest, plugin_registry_root, publish_plugin_package,
     read_plugin_install_source, read_plugin_manifest as read_registry_plugin_manifest,
+};
+pub use project_sources::{
+    PROJECT_DESCRIPTOR_FILE_NAME, ProjectSourceFile, ProjectSourceMode, ProjectSourceSet,
+    resolve_project_sources,
 };
 pub use proposal::{
     Proposal, ProposalStatus, PullRequestBinding, PullRequestState, SemanticImpact,
