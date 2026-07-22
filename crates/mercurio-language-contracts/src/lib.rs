@@ -14,6 +14,7 @@ pub mod diagnostics;
 pub mod editor;
 pub mod expression;
 pub mod lexer;
+pub mod project;
 pub mod reports;
 pub mod service;
 pub mod workbench;
@@ -27,6 +28,7 @@ pub use expression::{
     UnaryExpressionOp,
 };
 pub use lexer::{Token, TokenKind, lex};
+pub use project::{ProjectSourceSelectionError, select_project_source_paths};
 pub use reports::{ParseReport, SemanticCompileReport, SemanticCompileStatus};
 pub use service::{CompileContext, LanguageRegistry, LanguageService};
 pub use workbench::{
