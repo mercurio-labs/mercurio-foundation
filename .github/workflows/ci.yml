@@ -11,18 +11,35 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  HOST_REF: 735c781ce886265b3cc2a2b92ea6ec0c0808b795
+  SYSML_REF: cf7eea2be6aed7668e7cbbdc2f8c95100c3b5d1b
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: mercurio-foundation
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-sysml
+          ref: ${{ env.SYSML_REF }}
+          path: mercurio-sysml
+      - uses: actions/checkout@v4
+        with:
+          repository: mercurio-labs/mercurio-host-adapters
+          ref: ${{ env.HOST_REF }}
+          path: mercurio-host-adapters
       - uses: dtolnay/rust-toolchain@stable
       - name: Test workspace
+        working-directory: mercurio-foundation
         run: cargo test --workspace --locked
       - name: Build rustdoc without warnings
+        working-directory: mercurio-foundation
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --locked
       - name: Assemble crates.io packages
+        working-directory: mercurio-foundation
         run: cargo package --workspace --no-verify --locked

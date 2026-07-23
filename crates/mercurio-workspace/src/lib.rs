@@ -4,6 +4,7 @@ pub mod mpack;
 pub mod paths;
 pub mod performance;
 pub mod plugin_registry;
+pub mod project_sources;
 pub mod symbol_index;
 pub mod workspace;
 pub mod workspace_cache;
@@ -51,6 +52,10 @@ pub use plugin_registry::{
     installed_plugin_manifest_paths, mpack_activation_index, plugin_manifest_dir,
     plugin_package_digest, plugin_registry_root, publish_plugin_package,
     read_plugin_install_source, read_plugin_manifest as read_registry_plugin_manifest,
+};
+pub use project_sources::{
+    PROJECT_DESCRIPTOR_FILE_NAME, ProjectSourceFile, ProjectSourceMode, ProjectSourceSet,
+    resolve_project_sources,
 };
 pub use symbol_index::WorkspaceSymbolIndex;
 pub use workspace::{

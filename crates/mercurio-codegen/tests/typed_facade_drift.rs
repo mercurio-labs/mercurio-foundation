@@ -24,7 +24,8 @@ fn checked_in_typed_facades_match_the_pinned_sysml_metamodel()
     let actual = std::fs::read_to_string(generated_path)?;
 
     assert_eq!(
-        actual, expected,
+        actual.replace("\r\n", "\n"),
+        expected.replace("\r\n", "\n"),
         "run generate_typed_facades to refresh the checked-in facade module"
     );
     Ok(())
@@ -50,7 +51,8 @@ fn checked_in_python_facades_match_the_pinned_sysml_metamodel()
     for (relative_path, expected) in generated.files {
         let actual = std::fs::read_to_string(python_root.join(&relative_path))?;
         assert_eq!(
-            actual, expected,
+            actual.replace("\r\n", "\n"),
+            expected.replace("\r\n", "\n"),
             "run generate_python_facades to refresh {relative_path}"
         );
     }
