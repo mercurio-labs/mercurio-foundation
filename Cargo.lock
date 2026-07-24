@@ -168,7 +168,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "mercurio-analysis"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-model",
@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-authoring"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-codegen"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-core"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-analysis",
  "mercurio-authoring",
@@ -224,8 +224,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mercurio-foundation"
+version = "0.85.0"
+dependencies = [
+ "mercurio-core",
+]
+
+[[package]]
 name = "mercurio-kir"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -233,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-language-contracts"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "serde",
@@ -242,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-model"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-language-contracts",
@@ -252,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-query-dsl"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-analysis",
  "mercurio-kir",
@@ -268,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-runtime"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-model",
@@ -278,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-semantic-services"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-authoring",
  "mercurio-kir",
@@ -290,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-session"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-analysis",
  "mercurio-authoring",
@@ -303,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-simulation-core"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -311,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-views"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-kir",
  "mercurio-model",
@@ -322,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "mercurio-workspace"
-version = "0.1.0"
+version = "0.85.0"
 dependencies = [
  "mercurio-authoring",
  "mercurio-kir",
