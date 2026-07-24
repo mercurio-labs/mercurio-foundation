@@ -55,7 +55,8 @@ evolve without turning the facade into a catch-all crate.
 | `mercurio-session` | Session overlays, forks, host-authorized commits, and transaction reports. |
 | `mercurio-simulation-core` | Source-neutral deterministic simulation primitives over KIR-projected behavior facts. |
 | `mercurio-views` | View DTOs, element/model views, diagrams, tables, and deterministic view rendering helpers. |
-| `mercurio-core` | Compatibility facade crate. Its Cargo package is `mercurio-core`, and its library target remains `mercurio_core` for existing consumers. |
+| `mercurio-core` | Compatibility facade retained for existing consumers and internal integration. |
+| `mercurio-foundation` | Primary public facade and recommended crates.io dependency for new consumers. |
 
 See [Crates](docs/crates.md).
 
@@ -75,7 +76,7 @@ cargo run --manifest-path ..\mercurio-sysml\Cargo.toml -p mercurio-tools --bin c
 ```rust
 use std::collections::BTreeMap;
 
-use mercurio_core::{Graph, KIR_SCHEMA_VERSION, KirDocument, KirElement};
+use mercurio_foundation::{Graph, KIR_SCHEMA_VERSION, KirDocument, KirElement};
 use serde_json::json;
 
 let document = KirDocument {
@@ -113,3 +114,11 @@ cargo test --no-run
 ```
 
 Foundation tests use language-neutral KIR fixtures and a small test-only toy language service for registry, cache, graph, and runtime coverage.
+
+## Release
+
+Mercurio Foundation is one coordinated release unit. The public entry point and
+its implementation packages use the same version and are published together in
+dependency order.
+
+See [Releasing Mercurio Foundation](RELEASING.md).
