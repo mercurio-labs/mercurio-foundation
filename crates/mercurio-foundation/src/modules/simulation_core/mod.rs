@@ -1,3 +1,5 @@
+mod deadline;
+pub use deadline::{RequirementOutcome, evaluate_deadline_requirements};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
@@ -58,6 +60,8 @@ pub struct SimulationEvent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimulationRequirement {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_s: Option<f64>,
     pub id: String,
     pub label: String,
     pub expression: Option<Value>,
