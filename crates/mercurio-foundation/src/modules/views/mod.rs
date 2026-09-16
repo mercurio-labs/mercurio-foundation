@@ -5325,6 +5325,278 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
 
+    fn bdd_spec(root: &str) -> DiagramSpecDto {
+        DiagramSpecDto {
+            kind: DiagramKindDto::Bdd,
+            ..structure_spec(Some(root), Vec::new())
+        }
+    }
+
+    /// A graph shaped like the SysML compiler's own output, verified against a
+    /// compiled `part def` package: every part definition implicitly
+    /// `specializes` the stdlib `Parts::Part` (whose members compose it with
+    /// itself), a part usage names its type through BOTH `definition` and
+    /// `type`, and a declared attribute default rides `expression_ir` rather
+    /// than a literal `value` property.
+    fn bdd_compiled_rover_fixture_graph() -> (Graph, MetamodelAttributeRegistry) {
+        fn element(
+            id: &str,
+            kind: &str,
+            layer: u8,
+            properties: BTreeMap<String, Value>,
+        ) -> KirElement {
+            KirElement {
+                id: id.to_string(),
+                kind: kind.to_string(),
+                layer,
+                properties,
+            }
+        }
+
+        fn library_metadata(name: &str) -> Value {
+            json!({ "declared_name": name, "name": name, "is_library_element": true })
+        }
+
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                element(
+                    "ScalarValues::Real",
+                    "DataType",
+                    0,
+                    BTreeMap::from([("metadata".to_string(), library_metadata("Real"))]),
+                ),
+                element(
+                    "Parts::Part",
+                    "PartDefinition",
+                    1,
+                    BTreeMap::from([
+                        ("metadata".to_string(), library_metadata("Part")),
+                        (
+                            "members".to_string(),
+                            json!(["Parts::Part::done", "Parts::Part::start"]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "Parts::Part::done",
+                    "PartUsage",
+                    1,
+                    BTreeMap::from([
+                        ("metadata".to_string(), library_metadata("done")),
+                        ("owner".to_string(), json!("Parts::Part")),
+                        ("type".to_string(), json!(["Parts::Part"])),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                element(
+                    "Parts::Part::start",
+                    "PartUsage",
+                    1,
+                    BTreeMap::from([
+                        ("metadata".to_string(), library_metadata("start")),
+                        ("owner".to_string(), json!("Parts::Part")),
+                        ("type".to_string(), json!(["Parts::Part"])),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                element(
+                    "pkg.Rover",
+                    "SysML::Package",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Rover")),
+                        (
+                            "members".to_string(),
+                            json!(["type.Rover.Chassis", "type.Rover.Rover"]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "type.Rover.Rover",
+                    "SysML::Systems::PartDefinition",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Rover")),
+                        ("owner".to_string(), json!("pkg.Rover")),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                element(
+                    "type.Rover.Chassis",
+                    "SysML::Systems::PartDefinition",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Chassis")),
+                        ("owner".to_string(), json!("pkg.Rover")),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                // One `part chassis : Chassis;` — the compiler records the type
+                // under `definition` AND `type`.
+                element(
+                    "feature.Rover.Rover.chassis",
+                    "SysML::PartUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("chassis")),
+                        ("owner".to_string(), json!("type.Rover.Rover")),
+                        ("owning_definition".to_string(), json!("type.Rover.Rover")),
+                        ("definition".to_string(), json!("type.Rover.Chassis")),
+                        ("type".to_string(), json!("type.Rover.Chassis")),
+                        (
+                            "specializes".to_string(),
+                            json!(["type.Rover.Chassis", "Items::Item::subparts"]),
+                        ),
+                    ]),
+                ),
+                // `attribute mass_kg : Real = 12.0;` — the default is lowered
+                // to an initializer expression, not a literal property.
+                element(
+                    "feature.Rover.Chassis.mass_kg",
+                    "SysML::AttributeUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("mass_kg")),
+                        ("owner".to_string(), json!("type.Rover.Chassis")),
+                        ("owning_definition".to_string(), json!("type.Rover.Chassis")),
+                        ("definition".to_string(), json!("ScalarValues::Real")),
+                        ("type".to_string(), json!("ScalarValues::Real")),
+                        (
+                            "expression_ir".to_string(),
+                            json!({ "kind": "literal", "value": 12.0 }),
+                        ),
+                    ]),
+                ),
+            ],
+        };
+        let graph = Graph::from_document(document).expect("bdd fixture graph should be valid");
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        (graph, registry)
+    }
+
+    fn bdd_spec_including_libraries(root: &str) -> DiagramSpecDto {
+        let mut spec = bdd_spec(root);
+        spec.query.include_libraries = true;
+        spec
+    }
+
+    #[test]
+    fn bdd_diagram_honors_library_exclusion() {
+        let (graph, registry) = bdd_compiled_rover_fixture_graph();
+        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
+            .expect("bdd diagram should render");
+
+        assert_eq!(
+            view.nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["type.Rover.Chassis", "type.Rover.Rover"],
+            "`include_libraries: false` keeps the implicitly specialized stdlib \
+             base off a user-package bdd"
+        );
+        assert!(
+            view.edges
+                .iter()
+                .all(|edge| edge.source != "Parts::Part" && edge.target != "Parts::Part"),
+            "no edge may reach an excluded library block, got {:?}",
+            view.edges
+                .iter()
+                .map(|edge| (
+                    edge.source.as_str(),
+                    edge.relation.as_str(),
+                    edge.target.as_str()
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        // Positive control: the query flag is what excludes the base, not a
+        // hard-coded blocklist — asking for libraries brings it (and its own
+        // self-composition members) back.
+        let with_libraries =
+            render_diagram(&graph, &registry, bdd_spec_including_libraries("pkg.Rover"))
+                .expect("bdd diagram should render with libraries included");
+        assert!(
+            with_libraries
+                .nodes
+                .iter()
+                .any(|node| node.id == "Parts::Part"),
+            "`include_libraries: true` restores the library base"
+        );
+        assert!(
+            with_libraries
+                .edges
+                .iter()
+                .any(|edge| edge.relation == "part"
+                    && edge.source == "Parts::Part"
+                    && edge.target == "Parts::Part"),
+            "…together with the self-composition the exclusion was hiding"
+        );
+    }
+
+    #[test]
+    fn bdd_composition_label_counts_distinct_usages() {
+        let (graph, registry) = bdd_compiled_rover_fixture_graph();
+        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
+            .expect("bdd diagram should render");
+
+        let compositions = view
+            .edges
+            .iter()
+            .filter(|edge| edge.relation == "part")
+            .map(|edge| {
+                (
+                    edge.source.as_str(),
+                    edge.target.as_str(),
+                    edge.label.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compositions,
+            vec![("type.Rover.Rover", "type.Rover.Chassis", "chassis")],
+            "a single `part chassis : Chassis` is one usage: the aggregation \
+             counts distinct usages, so the label carries no `(N)` suffix even \
+             though the usage names its type under two aliased properties"
+        );
+    }
+
+    #[test]
+    fn bdd_attribute_row_carries_compiled_literal_default() {
+        let (graph, registry) = bdd_compiled_rover_fixture_graph();
+        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
+            .expect("bdd diagram should render");
+
+        let chassis = view
+            .nodes
+            .iter()
+            .find(|node| node.id == "type.Rover.Chassis")
+            .expect("chassis definition node is present");
+        assert_eq!(
+            chassis
+                .attributes
+                .iter()
+                .map(|attribute| attribute.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["mass_kg"],
+            "a block's compartment is its own declared attributes, not the \
+             metaclass feature list `diagram_node` attaches to every node"
+        );
+        let mass_row = chassis
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "mass_kg")
+            .expect("the definition's attribute usage rides its node as a row");
+        assert_eq!(
+            mass_row.type_label.as_deref(),
+            Some("Real = 12.0"),
+            "`attribute mass_kg : Real = 12.0` lowers its default onto \
+             `expression_ir`, and the row must still carry the value"
+        );
+    }
+
+
     fn sample_graph() -> (Graph, MetamodelAttributeRegistry) {
         let document = view_fixture_document();
         let graph = Graph::from_document(document).expect("sample graph should be valid");
@@ -7145,275 +7417,4 @@ fn value_type_label(value: &Value) -> &'static str {
         Value::Array(_) => "array",
         Value::Object(_) => "object",
     }
-    fn bdd_spec(root: &str) -> DiagramSpecDto {
-        DiagramSpecDto {
-            kind: DiagramKindDto::Bdd,
-            ..structure_spec(Some(root), Vec::new())
-        }
-    }
-
-    /// A graph shaped like the SysML compiler's own output, verified against a
-    /// compiled `part def` package: every part definition implicitly
-    /// `specializes` the stdlib `Parts::Part` (whose members compose it with
-    /// itself), a part usage names its type through BOTH `definition` and
-    /// `type`, and a declared attribute default rides `expression_ir` rather
-    /// than a literal `value` property.
-    fn bdd_compiled_rover_fixture_graph() -> (Graph, MetamodelAttributeRegistry) {
-        fn element(
-            id: &str,
-            kind: &str,
-            layer: u8,
-            properties: BTreeMap<String, Value>,
-        ) -> KirElement {
-            KirElement {
-                id: id.to_string(),
-                kind: kind.to_string(),
-                layer,
-                properties,
-            }
-        }
-
-        fn library_metadata(name: &str) -> Value {
-            json!({ "declared_name": name, "name": name, "is_library_element": true })
-        }
-
-        let document = KirDocument {
-            metadata: BTreeMap::new(),
-            elements: vec![
-                element(
-                    "ScalarValues::Real",
-                    "DataType",
-                    0,
-                    BTreeMap::from([("metadata".to_string(), library_metadata("Real"))]),
-                ),
-                element(
-                    "Parts::Part",
-                    "PartDefinition",
-                    1,
-                    BTreeMap::from([
-                        ("metadata".to_string(), library_metadata("Part")),
-                        (
-                            "members".to_string(),
-                            json!(["Parts::Part::done", "Parts::Part::start"]),
-                        ),
-                    ]),
-                ),
-                element(
-                    "Parts::Part::done",
-                    "PartUsage",
-                    1,
-                    BTreeMap::from([
-                        ("metadata".to_string(), library_metadata("done")),
-                        ("owner".to_string(), json!("Parts::Part")),
-                        ("type".to_string(), json!(["Parts::Part"])),
-                        ("specializes".to_string(), json!(["Parts::Part"])),
-                    ]),
-                ),
-                element(
-                    "Parts::Part::start",
-                    "PartUsage",
-                    1,
-                    BTreeMap::from([
-                        ("metadata".to_string(), library_metadata("start")),
-                        ("owner".to_string(), json!("Parts::Part")),
-                        ("type".to_string(), json!(["Parts::Part"])),
-                        ("specializes".to_string(), json!(["Parts::Part"])),
-                    ]),
-                ),
-                element(
-                    "pkg.Rover",
-                    "SysML::Package",
-                    2,
-                    BTreeMap::from([
-                        ("declared_name".to_string(), json!("Rover")),
-                        (
-                            "members".to_string(),
-                            json!(["type.Rover.Chassis", "type.Rover.Rover"]),
-                        ),
-                    ]),
-                ),
-                element(
-                    "type.Rover.Rover",
-                    "SysML::Systems::PartDefinition",
-                    2,
-                    BTreeMap::from([
-                        ("declared_name".to_string(), json!("Rover")),
-                        ("owner".to_string(), json!("pkg.Rover")),
-                        ("specializes".to_string(), json!(["Parts::Part"])),
-                    ]),
-                ),
-                element(
-                    "type.Rover.Chassis",
-                    "SysML::Systems::PartDefinition",
-                    2,
-                    BTreeMap::from([
-                        ("declared_name".to_string(), json!("Chassis")),
-                        ("owner".to_string(), json!("pkg.Rover")),
-                        ("specializes".to_string(), json!(["Parts::Part"])),
-                    ]),
-                ),
-                // One `part chassis : Chassis;` — the compiler records the type
-                // under `definition` AND `type`.
-                element(
-                    "feature.Rover.Rover.chassis",
-                    "SysML::PartUsage",
-                    2,
-                    BTreeMap::from([
-                        ("declared_name".to_string(), json!("chassis")),
-                        ("owner".to_string(), json!("type.Rover.Rover")),
-                        ("owning_definition".to_string(), json!("type.Rover.Rover")),
-                        ("definition".to_string(), json!("type.Rover.Chassis")),
-                        ("type".to_string(), json!("type.Rover.Chassis")),
-                        (
-                            "specializes".to_string(),
-                            json!(["type.Rover.Chassis", "Items::Item::subparts"]),
-                        ),
-                    ]),
-                ),
-                // `attribute mass_kg : Real = 12.0;` — the default is lowered
-                // to an initializer expression, not a literal property.
-                element(
-                    "feature.Rover.Chassis.mass_kg",
-                    "SysML::AttributeUsage",
-                    2,
-                    BTreeMap::from([
-                        ("declared_name".to_string(), json!("mass_kg")),
-                        ("owner".to_string(), json!("type.Rover.Chassis")),
-                        ("owning_definition".to_string(), json!("type.Rover.Chassis")),
-                        ("definition".to_string(), json!("ScalarValues::Real")),
-                        ("type".to_string(), json!("ScalarValues::Real")),
-                        (
-                            "expression_ir".to_string(),
-                            json!({ "kind": "literal", "value": 12.0 }),
-                        ),
-                    ]),
-                ),
-            ],
-        };
-        let graph = Graph::from_document(document).expect("bdd fixture graph should be valid");
-        let registry = MetamodelAttributeRegistry::build(&graph);
-        (graph, registry)
-    }
-
-    fn bdd_spec_including_libraries(root: &str) -> DiagramSpecDto {
-        let mut spec = bdd_spec(root);
-        spec.query.include_libraries = true;
-        spec
-    }
-
-    #[test]
-    fn bdd_diagram_honors_library_exclusion() {
-        let (graph, registry) = bdd_compiled_rover_fixture_graph();
-        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
-            .expect("bdd diagram should render");
-
-        assert_eq!(
-            view.nodes
-                .iter()
-                .map(|node| node.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["type.Rover.Chassis", "type.Rover.Rover"],
-            "`include_libraries: false` keeps the implicitly specialized stdlib \
-             base off a user-package bdd"
-        );
-        assert!(
-            view.edges
-                .iter()
-                .all(|edge| edge.source != "Parts::Part" && edge.target != "Parts::Part"),
-            "no edge may reach an excluded library block, got {:?}",
-            view.edges
-                .iter()
-                .map(|edge| (
-                    edge.source.as_str(),
-                    edge.relation.as_str(),
-                    edge.target.as_str()
-                ))
-                .collect::<Vec<_>>()
-        );
-
-        // Positive control: the query flag is what excludes the base, not a
-        // hard-coded blocklist — asking for libraries brings it (and its own
-        // self-composition members) back.
-        let with_libraries =
-            render_diagram(&graph, &registry, bdd_spec_including_libraries("pkg.Rover"))
-                .expect("bdd diagram should render with libraries included");
-        assert!(
-            with_libraries
-                .nodes
-                .iter()
-                .any(|node| node.id == "Parts::Part"),
-            "`include_libraries: true` restores the library base"
-        );
-        assert!(
-            with_libraries
-                .edges
-                .iter()
-                .any(|edge| edge.relation == "part"
-                    && edge.source == "Parts::Part"
-                    && edge.target == "Parts::Part"),
-            "…together with the self-composition the exclusion was hiding"
-        );
-    }
-
-    #[test]
-    fn bdd_composition_label_counts_distinct_usages() {
-        let (graph, registry) = bdd_compiled_rover_fixture_graph();
-        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
-            .expect("bdd diagram should render");
-
-        let compositions = view
-            .edges
-            .iter()
-            .filter(|edge| edge.relation == "part")
-            .map(|edge| {
-                (
-                    edge.source.as_str(),
-                    edge.target.as_str(),
-                    edge.label.as_str(),
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            compositions,
-            vec![("type.Rover.Rover", "type.Rover.Chassis", "chassis")],
-            "a single `part chassis : Chassis` is one usage: the aggregation \
-             counts distinct usages, so the label carries no `(N)` suffix even \
-             though the usage names its type under two aliased properties"
-        );
-    }
-
-    #[test]
-    fn bdd_attribute_row_carries_compiled_literal_default() {
-        let (graph, registry) = bdd_compiled_rover_fixture_graph();
-        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
-            .expect("bdd diagram should render");
-
-        let chassis = view
-            .nodes
-            .iter()
-            .find(|node| node.id == "type.Rover.Chassis")
-            .expect("chassis definition node is present");
-        assert_eq!(
-            chassis
-                .attributes
-                .iter()
-                .map(|attribute| attribute.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["mass_kg"],
-            "a block's compartment is its own declared attributes, not the \
-             metaclass feature list `diagram_node` attaches to every node"
-        );
-        let mass_row = chassis
-            .attributes
-            .iter()
-            .find(|attribute| attribute.name == "mass_kg")
-            .expect("the definition's attribute usage rides its node as a row");
-        assert_eq!(
-            mass_row.type_label.as_deref(),
-            Some("Real = 12.0"),
-            "`attribute mass_kg : Real = 12.0` lowers its default onto \
-             `expression_ir`, and the row must still carry the value"
-        );
-    }
-
 }
