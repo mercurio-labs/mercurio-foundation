@@ -4,7 +4,6 @@
 //! and render functions for model-backed views.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,7 +41,6 @@ const DEFAULT_MAX_DEPTH: usize = 8;
 const DEFAULT_MAX_NODES: usize = 350;
 const DEFAULT_MAX_EDGES: usize = 900;
 const MAX_RELATION_FANOUT_PER_NODE: usize = 250;
-const TIMING_WARNING_THRESHOLD_MS: u128 = 250;
 pub const VIEW_SCHEMA: &str = "mercurio.view.v1";
 pub const VIEW_SPEC_VERSION: u8 = 1;
 
@@ -4033,33 +4031,26 @@ fn render_structure_diagram(
     metamodel_registry: &MetamodelAttributeRegistry,
     spec: DiagramSpecDto,
 ) -> Result<DiagramViewDto, DiagramError> {
-    let total_start = Instant::now();
-    let mut timings = Vec::new();
     let mut warnings = Vec::new();
 
-    let relation_start = Instant::now();
     let relations = if spec.query.relations.is_empty() {
         default_diagram_relations()
     } else {
         spec.query.relations.clone()
     };
-    timings.push(("relations", relation_start.elapsed()));
 
-    let traversal_start = Instant::now();
     let traversal = if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty())
     {
-        let root_start = Instant::now();
         let root = resolve_root(graph, root)
             .ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?;
-        timings.push(("root", root_start.elapsed()));
+
         collect_structure_ids(graph, root.id, &spec.query, &relations)
     } else {
         collect_unrooted_structure_ids(graph, &spec.query)
     };
-    timings.push(("traversal", traversal_start.elapsed()));
+
     warnings.extend(traversal.warnings);
 
-    let node_start = Instant::now();
     let mut nodes = traversal
         .visible_ids
         .iter()
@@ -4069,7 +4060,6 @@ fn render_structure_diagram(
         .map(|element| diagram_node(graph, metamodel_registry, element))
         .collect::<Vec<_>>();
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    timings.push(("nodes", node_start.elapsed()));
 
     if nodes.is_empty() {
         warnings.push("No diagram nodes matched the requested filters.".to_string());
@@ -4082,7 +4072,6 @@ fn render_structure_diagram(
         ));
     }
 
-    let edge_start = Instant::now();
     let retained_ids = nodes
         .iter()
         .map(|node| node.id.as_str())
@@ -4123,20 +4112,6 @@ fn render_structure_diagram(
     }
     edges.sort_by(|left, right| left.id.cmp(&right.id));
     edges.dedup_by(|left, right| left.id == right.id);
-    timings.push(("edges", edge_start.elapsed()));
-
-    timings.push(("total", total_start.elapsed()));
-    let slow_phases = timings
-        .iter()
-        .filter(|(_, elapsed)| elapsed.as_millis() >= TIMING_WARNING_THRESHOLD_MS)
-        .map(|(phase, elapsed)| format!("{phase}={}ms", elapsed.as_millis()))
-        .collect::<Vec<_>>();
-    if !slow_phases.is_empty() {
-        warnings.push(format!(
-            "Diagram render timing: {}.",
-            slow_phases.join(", ")
-        ));
-    }
 
     Ok(DiagramViewDto {
         spec,
