@@ -23,9 +23,6 @@ pub use expose::{
     ExposeResolution, exposed_elements, inherited_filter_conditions, qualified_name,
     resolve_exposed_elements, scope_base, scope_is_wildcard,
 };
-pub use reify::{
-    ExposeDraft, NotReifiable, ViewUsageDraft, usage_from_view_spec, view_spec_from_usage,
-};
 pub use model_views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
     ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
@@ -35,6 +32,9 @@ pub use model_views::{
     ModelMetadataDto, SearchResultDto, document_model_metadata_view, element_details, graph_view,
     library_tree_view, library_tree_view_from_document, metatype_explorer_view,
     model_explorer_view, model_metadata_view, search_view,
+};
+pub use reify::{
+    ExposeDraft, NotReifiable, ViewUsageDraft, usage_from_view_spec, view_spec_from_usage,
 };
 
 const DEFAULT_MAX_DEPTH: usize = 8;
@@ -4206,7 +4206,7 @@ fn symbol_id_for_transition_edge(id: &str) -> String {
 fn render_structure_diagram(
     graph: &Graph,
     metamodel_registry: &MetamodelAttributeRegistry,
-    spec: DiagramSpecDto,
+    mut spec: DiagramSpecDto,
 ) -> Result<DiagramViewDto, DiagramError> {
     let mut warnings = Vec::new();
 
@@ -4216,12 +4216,20 @@ fn render_structure_diagram(
         spec.query.relations.clone()
     };
 
-    let traversal = if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty())
-    {
-        let root = resolve_root(graph, root)
-            .ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?;
-
+    let requested_root = spec
+        .root
+        .as_deref()
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string);
+    let traversal = if let Some(root_query) = requested_root {
+        let root = resolve_root(graph, &root_query)
+            .ok_or_else(|| DiagramError::RootNotFound(root_query.clone()))?;
+        // BDD expansion looks the root up by exact id after this traversal.
+        spec.root = Some(root.element_id.clone());
         collect_structure_ids(graph, root.id, &spec.query, &relations)
+    } else if spec.kind == DiagramKindDto::Bdd {
+        collect_unrooted_bdd_ids(graph, &spec.query)
     } else {
         collect_unrooted_structure_ids(graph, &spec.query)
     };
@@ -4421,6 +4429,33 @@ fn child_node_ids<'a>(
     }
 }
 
+// A BDD's node budget applies to blocks, not the library's unrelated
+// packages and metamodel elements that a generic structure traversal visits.
+fn collect_unrooted_bdd_ids(graph: &Graph, query: &DiagramQueryOptionsDto) -> StructureTraversal {
+    let max_nodes = effective_max_nodes(query);
+    let blocks = graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, query) && is_bdd_block_definition(element))
+        .collect::<Vec<_>>();
+    let visible_ids = blocks
+        .iter()
+        .take(max_nodes)
+        .map(|element| element.id)
+        .collect();
+    let warnings = if blocks.len() > max_nodes {
+        vec![format!(
+            "Diagram node limit reached; showing first {max_nodes} matching blocks."
+        )]
+    } else {
+        Vec::new()
+    };
+    StructureTraversal {
+        visible_ids,
+        warnings,
+    }
+}
+
 fn collect_unrooted_structure_ids(
     graph: &Graph,
     query: &DiagramQueryOptionsDto,
@@ -4547,19 +4582,34 @@ fn resolve_root<'a>(graph: &'a Graph, root: &str) -> Option<&'a Element> {
     }
 
     let normalized_root = root.trim().to_ascii_lowercase();
-    graph.elements().iter().find(|element| {
-        label_for_id(&element.element_id).to_ascii_lowercase() == normalized_root
-            || element
+    // Qualified names ("RoverParts::Wheel") address dotted element ids whose
+    // leading segment is a sort tag ("type.RoverParts.Wheel"), so compare the
+    // tag-stripped id in qualified spelling as well.
+    let qualified_root = normalized_root.replace("::", ".");
+    graph
+        .elements()
+        .iter()
+        .find(|element| {
+            element
                 .element_id
-                .rsplit("::")
-                .next()
-                .is_some_and(|name| name.eq_ignore_ascii_case(root))
-            || element
-                .element_id
-                .rsplit('.')
-                .next()
-                .is_some_and(|name| name.eq_ignore_ascii_case(root))
-    })
+                .split_once('.')
+                .is_some_and(|(_, path)| path.eq_ignore_ascii_case(&qualified_root))
+        })
+        .or_else(|| {
+            graph.elements().iter().find(|element| {
+                label_for_id(&element.element_id).to_ascii_lowercase() == normalized_root
+                    || element
+                        .element_id
+                        .rsplit("::")
+                        .next()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(root))
+                    || element
+                        .element_id
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(root))
+            })
+        })
 }
 
 fn include_element(element: &Element, query: &DiagramQueryOptionsDto) -> bool {
@@ -5325,6 +5375,74 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn unrooted_bdd_selects_blocks_before_applying_the_node_budget() {
+        let mut elements = (0..400)
+            .map(|index| KirElement {
+                id: format!("comment.{index}"),
+                kind: "Comment".to_string(),
+                layer: 2,
+                properties: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>();
+        elements.push(KirElement {
+            id: "type.Demo.Block".to_string(),
+            kind: "PartDefinition".to_string(),
+            layer: 2,
+            properties: BTreeMap::new(),
+        });
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements,
+        })
+        .unwrap();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        let spec = DiagramSpecDto {
+            kind: DiagramKindDto::Bdd,
+            ..structure_spec(None, Vec::new())
+        };
+        let view = render_diagram(&graph, &registry, spec).unwrap();
+        assert_eq!(view.nodes.len(), 1);
+        assert_eq!(view.nodes[0].id, "type.Demo.Block");
+        assert!(view.warnings.is_empty(), "{:?}", view.warnings);
+    }
+
+    #[test]
+    fn bdd_canonicalizes_package_and_definition_root_names() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Example".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "type.Example.Block".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([("owner".to_string(), json!("pkg.Example"))]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        for (root, canonical) in [
+            ("Example", "pkg.Example"),
+            ("Example::Block", "type.Example.Block"),
+            ("Block", "type.Example.Block"),
+        ] {
+            let view = render_diagram(&graph, &registry, bdd_spec(root)).unwrap();
+            assert_eq!(view.spec.root.as_deref(), Some(canonical));
+            assert!(
+                view.nodes
+                    .iter()
+                    .any(|node| node.id == "type.Example.Block")
+            );
+        }
+    }
+
     fn bdd_spec(root: &str) -> DiagramSpecDto {
         DiagramSpecDto {
             kind: DiagramKindDto::Bdd,
@@ -5595,7 +5713,6 @@ mod tests {
              `expression_ir`, and the row must still carry the value"
         );
     }
-
 
     fn sample_graph() -> (Graph, MetamodelAttributeRegistry) {
         let document = view_fixture_document();
