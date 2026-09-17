@@ -90,6 +90,9 @@ pub struct SimulationTrace {
     pub channels: Vec<SimTraceChannel>,
     pub timeline: Vec<SimTraceEntry>,
     pub status: SimulationStatus,
+    /// Why execution stopped; absent in traces recorded before this contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination: Option<SimulationTermination>,
     #[serde(default)]
     pub requirements: Vec<SimulationRequirement>,
     #[serde(default)]
@@ -143,6 +146,15 @@ pub enum SimulationStatus {
     Completed,
     Blocked,
     Failed,
+}
+
+/// Execution limits are independent of sampled requirement outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimulationTermination {
+    StepBudgetExhausted,
+    TimeBudgetExhausted,
+    Quiescent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -438,6 +450,7 @@ pub fn run_concurrent_simulation_model(
 
     let mut timeline = vec![make_core_entry(t, &subjects, &values, Vec::new())];
     let max_steps = scenario.max_steps.max(1);
+    let mut termination = SimulationTermination::TimeBudgetExhausted;
     while step < max_steps && t <= clock.max_time_s {
         let mut fired = false;
         let mut events = Vec::<SimTraceEvent>::new();
@@ -548,6 +561,11 @@ pub fn run_concurrent_simulation_model(
             if duration <= 0.0 {
                 duration = fixed_step;
             }
+            termination = if duration > 0.0 {
+                SimulationTermination::TimeBudgetExhausted
+            } else {
+                SimulationTermination::Quiescent
+            };
             if duration > 0.0 && t + duration <= clock.max_time_s {
                 integrate_active_state_behaviors(
                     &subjects,
@@ -595,6 +613,10 @@ pub fn run_concurrent_simulation_model(
         }
     }
 
+    if step >= max_steps {
+        termination = SimulationTermination::StepBudgetExhausted;
+    }
+
     let primary_subject_id = scenario
         .subjects
         .first()
@@ -618,6 +640,7 @@ pub fn run_concurrent_simulation_model(
         channels,
         timeline,
         status,
+        termination: Some(termination),
         requirements: scenario.requirements,
         objectives: scenario.objectives,
     })
@@ -2463,6 +2486,68 @@ pub mod tuple_value_map {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_reason_distinguishes_limits_from_quiescence() {
+        let model = SimulationModel {
+            id: "demo".into(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".into(),
+                label: "Machine".into(),
+                states: vec![state("idle", true)],
+                transitions: vec![],
+            }],
+            derived_rules: vec![],
+            binding_rules: vec![],
+        };
+        let scenario = ConcurrentSimulationScenario {
+            id: "run".into(),
+            subjects: vec![ConcurrentSubjectScenario {
+                subject_id: "subject".into(),
+                machine_id: "Machine".into(),
+                initial_state_id: None,
+                events: vec![],
+            }],
+            max_steps: 2,
+            step_duration_s: 1.0,
+            clock_config: None,
+            initial_values: BTreeMap::new(),
+            requirements: vec![],
+            objectives: vec![],
+        };
+        for (step, limit, expected, last_time) in [
+            (1.0, 10.0, SimulationTermination::StepBudgetExhausted, 2.0),
+            (1.0, 1.5, SimulationTermination::TimeBudgetExhausted, 1.0),
+            (1.0, 0.0, SimulationTermination::TimeBudgetExhausted, 0.0),
+            (0.0, 10.0, SimulationTermination::Quiescent, 0.0),
+        ] {
+            let trace = run_concurrent_simulation_model(
+                &model,
+                scenario.clone(),
+                SimulationClockConfig {
+                    fixed_step_s: step,
+                    max_time_s: limit,
+                    ..SimulationClockConfig::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(trace.termination, Some(expected));
+            assert_eq!(trace.timeline.last().unwrap().t, last_time);
+            assert_eq!(trace.status, SimulationStatus::Completed);
+            let mut json = serde_json::to_value(&trace).unwrap();
+            assert_eq!(
+                serde_json::from_value::<SimulationTrace>(json.clone()).unwrap(),
+                trace
+            );
+            json.as_object_mut().unwrap().remove("termination");
+            assert_eq!(
+                serde_json::from_value::<SimulationTrace>(json)
+                    .unwrap()
+                    .termination,
+                None
+            );
+        }
+    }
 
     #[test]
     fn validator_rejects_ambiguous_transitions() {

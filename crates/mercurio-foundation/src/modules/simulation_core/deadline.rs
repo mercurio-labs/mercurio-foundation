@@ -136,6 +136,7 @@ mod tests {
     use serde_json::json;
     fn trace() -> SimulationTrace {
         SimulationTrace {
+            termination: None,
             scenario_id: "case".into(),
             subject_id: "chamber".into(),
             channels: vec![],
