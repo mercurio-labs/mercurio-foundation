@@ -25,8 +25,18 @@ impl Default for SimulationClockConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SimulationTerminationPolicy {
+    pub on_all_satisfied: bool,
+    pub on_any_violated: bool,
+    pub on_blocked: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConcurrentSimulationScenario {
+    #[serde(default)]
+    pub termination_policy: SimulationTerminationPolicy,
     pub id: String,
     pub subjects: Vec<ConcurrentSubjectScenario>,
     pub max_steps: usize,
@@ -84,7 +94,17 @@ pub struct AnalysisCaseInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SimulationRunConfiguration {
+    pub schema_version: u32,
+    pub max_steps: usize,
+    pub clock: SimulationClockConfig,
+    pub termination_policy: SimulationTerminationPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimulationTrace {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<SimulationRunConfiguration>,
     pub scenario_id: String,
     pub subject_id: String,
     pub channels: Vec<SimTraceChannel>,
@@ -152,6 +172,9 @@ pub enum SimulationStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SimulationTermination {
+    RequirementsSatisfied,
+    RequirementViolated,
+    Blocked,
     FinalState,
     StepBudgetExhausted,
     TimeBudgetExhausted,
@@ -431,6 +454,32 @@ fn all_subjects_final(subjects: &[CoreSubjectRunState<'_>]) -> bool {
             .all(|subject| configuration_is_final(subject.machine, &subject.active))
 }
 
+fn policy_stop_reason(
+    scenario: &ConcurrentSimulationScenario,
+    status: SimulationStatus,
+    timeline: &[SimTraceEntry],
+) -> Option<SimulationTermination> {
+    let policy = &scenario.termination_policy;
+    if policy.on_blocked && status == SimulationStatus::Blocked {
+        return Some(SimulationTermination::Blocked);
+    }
+    if !policy.on_all_satisfied && !policy.on_any_violated {
+        return None;
+    }
+    let subject = scenario.subjects.first()?.subject_id.as_str();
+    let outcomes = deadline::evaluate_samples(subject, status, &scenario.requirements, timeline);
+    if policy.on_any_violated && outcomes.iter().any(|outcome| outcome.status == "violated") {
+        return Some(SimulationTermination::RequirementViolated);
+    }
+    if policy.on_all_satisfied
+        && !outcomes.is_empty()
+        && outcomes.iter().all(|outcome| outcome.status == "satisfied")
+    {
+        return Some(SimulationTermination::RequirementsSatisfied);
+    }
+    None
+}
+
 pub fn run_concurrent_simulation_model(
     model: &SimulationModel,
     scenario: ConcurrentSimulationScenario,
@@ -492,7 +541,9 @@ pub fn run_concurrent_simulation_model(
     let max_steps = scenario.max_steps.max(1);
     let mut termination = SimulationTermination::TimeBudgetExhausted;
     while step < max_steps && t <= clock.max_time_s {
-        if all_subjects_final(&subjects) {
+        if all_subjects_final(&subjects)
+            || policy_stop_reason(&scenario, status, &timeline).is_some()
+        {
             break;
         }
         let mut fired = false;
@@ -591,8 +642,25 @@ pub fn run_concurrent_simulation_model(
             fired = true;
         }
 
+        // Process already-due absolute times and zero-duration after triggers
+        // before advancing the clock; scripted events retain their priority.
+        if fire_after_transitions(
+            &mut subjects,
+            &mut values,
+            &mut pending_signals,
+            &mut history,
+            &mut elapsed,
+            &mut step,
+            max_steps,
+            &mut events,
+            t,
+        )? {
+            propagate_model_values(model, &subjects, &mut values)?;
+            fired = true;
+        }
+
         if !fired && step < max_steps && !all_subjects_final(&subjects) {
-            let next_after = next_after_duration(&subjects, &elapsed, &values);
+            let next_after = next_after_duration(&subjects, &elapsed, &values, t);
             let next_change = next_change_crossing_duration(&subjects, &values)?;
             let fixed_step = clock.fixed_step_s.max(0.0);
             let mut duration = [Some(fixed_step), next_after, next_change]
@@ -635,6 +703,7 @@ pub fn run_concurrent_simulation_model(
                     &mut step,
                     max_steps,
                     &mut events,
+                    t,
                 )?;
                 propagate_model_values(model, &subjects, &mut values)?;
                 fire_immediate_transitions(
@@ -661,6 +730,8 @@ pub fn run_concurrent_simulation_model(
 
     if all_subjects_final(&subjects) {
         termination = SimulationTermination::FinalState;
+    } else if let Some(reason) = policy_stop_reason(&scenario, status, &timeline) {
+        termination = reason;
     } else if step >= max_steps {
         termination = SimulationTermination::StepBudgetExhausted;
     }
@@ -683,6 +754,12 @@ pub fn run_concurrent_simulation_model(
         })
         .collect();
     Ok(SimulationTrace {
+        configuration: Some(SimulationRunConfiguration {
+            schema_version: 1,
+            max_steps,
+            clock,
+            termination_policy: scenario.termination_policy.clone(),
+        }),
         scenario_id: scenario.id,
         subject_id: primary_subject_id,
         channels,
@@ -1236,6 +1313,7 @@ fn next_after_duration(
     subjects: &[CoreSubjectRunState<'_>],
     elapsed: &BTreeMap<(String, String), f64>,
     values: &BTreeMap<(String, String), Value>,
+    current_time_s: f64,
 ) -> Option<f64> {
     subjects
         .iter()
@@ -1257,10 +1335,14 @@ fn next_after_duration(
                             return None;
                         }
                         let duration = parse_duration_s(transition.trigger.value.as_deref()?)?;
-                        let active_for = elapsed
-                            .get(&(subject.subject_id.clone(), state_id.clone()))
-                            .copied()
-                            .unwrap_or_default();
+                        let active_for = if transition.trigger.kind == SimulationTriggerKind::Time {
+                            current_time_s
+                        } else {
+                            elapsed
+                                .get(&(subject.subject_id.clone(), state_id.clone()))
+                                .copied()
+                                .unwrap_or_default()
+                        };
                         Some((duration - active_for).max(0.0))
                     })
             })
@@ -1277,6 +1359,7 @@ fn fire_after_transitions(
     step: &mut usize,
     max_steps: usize,
     events: &mut Vec<SimTraceEvent>,
+    current_time_s: f64,
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     for subject in subjects.iter_mut() {
@@ -1309,12 +1392,15 @@ fn fire_after_transitions(
                     else {
                         return false;
                     };
-                    elapsed
-                        .get(&(subject.subject_id.clone(), state_id.clone()))
-                        .copied()
-                        .unwrap_or_default()
-                        + f64::EPSILON
-                        >= duration
+                    let active_for = if transition.trigger.kind == SimulationTriggerKind::Time {
+                        current_time_s
+                    } else {
+                        elapsed
+                            .get(&(subject.subject_id.clone(), state_id.clone()))
+                            .copied()
+                            .unwrap_or_default()
+                    };
+                    active_for + f64::EPSILON >= duration
                 })
             })
             .cloned()
@@ -2444,6 +2530,16 @@ fn validate_machine(
                 Some(&transition.id),
             ));
         }
+        if matches!(transition.trigger.kind, SimulationTriggerKind::After | SimulationTriggerKind::Time)
+            && transition.trigger.value.as_deref().and_then(parse_duration_s).is_none()
+        {
+            findings.push(finding(
+                "transition.time_unsupported",
+                "Timed triggers require a finite nonnegative literal in seconds or milliseconds.",
+                Some(&machine.id),
+                Some(&transition.id),
+            ));
+        }
         let key = (
             transition.source.clone(),
             transition.trigger.kind.clone(),
@@ -2567,6 +2663,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn absolute_time_uses_mission_clock_instead_of_state_entry_time() {
+        for (absolute, expected) in [(3.0, 3.0), (1.0, 2.0), (0.0, 2.0)] {
+            let mut done = state("done", false);
+            done.is_final = true;
+            let mut after = transition("after", "a", "b", "2");
+            after.trigger.kind = SimulationTriggerKind::After;
+            let mut at = transition("at", "b", "done", &absolute.to_string());
+            at.trigger.kind = SimulationTriggerKind::Time;
+            let model = SimulationModel {
+                id: "clock".into(),
+                machines: vec![SimulationStateMachine {
+                    id: "machine".into(),
+                    label: "machine".into(),
+                    states: vec![state("a", true), state("b", false), done],
+                    transitions: vec![after, at],
+                }],
+                derived_rules: vec![],
+                binding_rules: vec![],
+            };
+            let scenario = ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
+                id: "clock".into(),
+                subjects: vec![ConcurrentSubjectScenario {
+                    subject_id: "subject".into(),
+                    machine_id: "machine".into(),
+                    initial_state_id: None,
+                    events: vec![],
+                }],
+                max_steps: 30,
+                step_duration_s: 1.0,
+                clock_config: None,
+                initial_values: BTreeMap::new(),
+                requirements: vec![],
+                objectives: vec![],
+            };
+            let trace =
+                run_concurrent_simulation_model(&model, scenario, SimulationClockConfig::default())
+                    .unwrap();
+            assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
+            assert_eq!(trace.timeline.last().unwrap().t, expected);
+        }
+    }
+
+    #[test]
     fn final_state_waits_for_every_subject_and_wins_over_step_budget() {
         let mut done = state("done", false);
         done.is_final = true;
@@ -2592,6 +2732,7 @@ mod tests {
             binding_rules: vec![],
         };
         let scenario = ConcurrentSimulationScenario {
+            termination_policy: Default::default(),
             id: "run".into(),
             subjects: vec![
                 ConcurrentSubjectScenario {
@@ -2676,6 +2817,7 @@ mod tests {
             binding_rules: vec![],
         };
         let scenario = ConcurrentSimulationScenario {
+            termination_policy: Default::default(),
             id: "run".into(),
             subjects: vec![ConcurrentSubjectScenario {
                 subject_id: "subject".into(),
@@ -2787,6 +2929,7 @@ mod tests {
         let error = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -2862,6 +3005,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![
                     ConcurrentSubjectScenario {
@@ -2943,6 +3087,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3010,6 +3155,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3127,6 +3273,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3192,6 +3339,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3284,6 +3432,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3362,6 +3511,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3474,6 +3624,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![
                     ConcurrentSubjectScenario {
@@ -3556,6 +3707,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3606,6 +3758,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3666,6 +3819,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3743,6 +3897,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3828,6 +3983,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![
                     ConcurrentSubjectScenario {

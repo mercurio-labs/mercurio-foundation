@@ -59,8 +59,20 @@ fn supported(expr: &Value, subject: &str, values: &BTreeMap<(String, String), Va
     }
 }
 pub fn evaluate_deadline_requirements(trace: &SimulationTrace) -> Vec<RequirementOutcome> {
-    trace
-        .requirements
+    evaluate_samples(
+        &trace.subject_id,
+        trace.status,
+        &trace.requirements,
+        &trace.timeline,
+    )
+}
+pub(super) fn evaluate_samples(
+    subject_id: &str,
+    status: SimulationStatus,
+    requirements: &[SimulationRequirement],
+    timeline: &[SimTraceEntry],
+) -> Vec<RequirementOutcome> {
+    requirements
         .iter()
         .map(|requirement| {
             let mut out = RequirementOutcome {
@@ -78,7 +90,7 @@ pub fn evaluate_deadline_requirements(trace: &SimulationTrace) -> Vec<Requiremen
                 out.reason_code = "invalid_deadline".into();
                 return out;
             }
-            if trace.status != SimulationStatus::Completed {
+            if status != SimulationStatus::Completed {
                 out.reason_code = "execution_not_completed".into();
                 return out;
             }
@@ -86,22 +98,21 @@ pub fn evaluate_deadline_requirements(trace: &SimulationTrace) -> Vec<Requiremen
                 out.reason_code = "missing_expression".into();
                 return out;
             };
-            if trace.timeline.is_empty()
-                || trace.timeline.iter().any(|f| !f.t.is_finite() || f.t < 0.0)
-                || trace.timeline.windows(2).any(|w| w[0].t > w[1].t)
+            if timeline.is_empty()
+                || timeline.iter().any(|f| !f.t.is_finite() || f.t < 0.0)
+                || timeline.windows(2).any(|w| w[0].t > w[1].t)
             {
                 out.reason_code = "invalid_or_empty_trace".into();
                 return out;
             }
             let mut witness = None;
             let mut observed_deadline = false;
-            for frame in trace.timeline.iter().filter(|f| f.t <= deadline) {
-                if !supported(expression, &trace.subject_id, &frame.values) {
+            for frame in timeline.iter().filter(|f| f.t <= deadline) {
+                if !supported(expression, subject_id, &frame.values) {
                     out.reason_code = "unsupported_or_unresolved_expression".into();
                     return out;
                 }
-                let Ok(Value::Bool(value)) =
-                    eval_value(expression, &trace.subject_id, &frame.values)
+                let Ok(Value::Bool(value)) = eval_value(expression, subject_id, &frame.values)
                 else {
                     out.reason_code = "non_boolean_or_invalid_expression".into();
                     return out;
@@ -136,6 +147,7 @@ mod tests {
     use serde_json::json;
     fn trace() -> SimulationTrace {
         SimulationTrace {
+            configuration: None,
             termination: None,
             scenario_id: "case".into(),
             subject_id: "chamber".into(),
@@ -163,6 +175,71 @@ mod tests {
                 .collect(),
         }
     }
+    #[test]
+    fn stopping_policy_requires_evaluated_evidence_and_respects_blocked_health() {
+        let mut trace = trace();
+        let mut scenario = ConcurrentSimulationScenario {
+            termination_policy: SimulationTerminationPolicy {
+                on_all_satisfied: true,
+                on_any_violated: true,
+                on_blocked: true,
+            },
+            id: "case".into(),
+            subjects: vec![ConcurrentSubjectScenario {
+                subject_id: "chamber".into(),
+                machine_id: "machine".into(),
+                initial_state_id: None,
+                events: vec![],
+            }],
+            max_steps: 100,
+            step_duration_s: 1.0,
+            clock_config: None,
+            initial_values: BTreeMap::new(),
+            requirements: trace.requirements.clone(),
+            objectives: vec![],
+        };
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline[..5]),
+            None
+        );
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            Some(SimulationTermination::RequirementViolated)
+        );
+        scenario.requirements[0].deadline_s = Some(6.0);
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            Some(SimulationTermination::RequirementsSatisfied)
+        );
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Blocked, &trace.timeline),
+            Some(SimulationTermination::Blocked)
+        );
+        scenario.termination_policy.on_blocked = false;
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Blocked, &trace.timeline),
+            None
+        );
+        trace.timeline[0].values.clear();
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            None
+        );
+        scenario.requirements.clear();
+        assert_eq!(
+            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            None
+        );
+        let mut legacy = serde_json::to_value(&scenario).unwrap();
+        legacy.as_object_mut().unwrap().remove("termination_policy");
+        assert_eq!(
+            serde_json::from_value::<ConcurrentSimulationScenario>(legacy)
+                .unwrap()
+                .termination_policy,
+            SimulationTerminationPolicy::default()
+        );
+    }
+
     #[test]
     fn deadline_boundaries_and_incomplete_runs() {
         let mut t = trace();

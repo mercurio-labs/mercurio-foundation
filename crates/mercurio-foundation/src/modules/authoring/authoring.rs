@@ -2584,13 +2584,20 @@ impl AuthoringProject {
     }
 }
 
+// ParsedModule keeps its first package both in package and in members.
+// Remove that duplicate only; additional top-level packages are independent.
+fn is_primary_package(member: &AstDeclaration, module: &ParsedModule) -> bool {
+    matches!(member, AstDeclaration::Package(package) if module.package.as_ref()
+        .is_some_and(|primary| primary.name == package.name && primary.span == package.span))
+}
+
 impl AuthoringModule {
     fn from_ast(module: &ParsedModule) -> Self {
         let members = if module.package.is_some() {
             module
                 .members
                 .iter()
-                .filter(|member| !matches!(member, AstDeclaration::Package(_)))
+                .filter(|member| !is_primary_package(member, module))
                 .map(Declaration::from_ast)
                 .collect()
         } else {
@@ -3073,8 +3080,10 @@ impl FileSourceMap {
                 &mut map.declarations,
             );
         }
-        if module.package.is_none() {
-            collect_source_nodes(&module.members, "", None, lines, &mut map.declarations);
+        for member in &module.members {
+            if !is_primary_package(member, module) {
+                collect_source_nodes(std::slice::from_ref(member), "", None, lines, &mut map.declarations);
+            }
         }
         map
     }
