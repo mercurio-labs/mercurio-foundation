@@ -641,7 +641,10 @@ impl Runtime {
                     )));
                 }
                 for feature_id in feature_ids {
-                    values.push(self.feature_value(&feature_id, current, context)?);
+                    match self.feature_value(&feature_id, current, context)? {
+                        Value::Array(items) => values.extend(items),
+                        value => values.push(value),
+                    }
                 }
             } else {
                 values.append(&mut related_values);
@@ -1016,6 +1019,26 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn compiled_sequence_features_are_flat_path_values() {
+        let runtime = Runtime::from_document(KirDocument {
+            metadata: [("kir_schema_version".into(), json!(KIR_SCHEMA_VERSION))].into_iter().collect(),
+            elements: vec![
+                KirElement { id: "owner".into(), kind: "Package".into(), layer: 2,
+                    properties: [("features".into(), json!(["items"]))].into_iter().collect() },
+                KirElement { id: "items".into(), kind: "AttributeUsage".into(), layer: 2,
+                    properties: [
+                        ("declared_name".into(), json!("items")),
+                        ("expression_ir".into(), json!({"kind":"literal","value":[1,2]})),
+                    ].into_iter().collect() },
+            ],
+        }).unwrap();
+        let context = ExecutionContext::default();
+        assert_eq!(runtime.resolve_path_segments("owner", &["items"], &context).unwrap(), vec![json!(1), json!(2)]);
+        let sum = json!({"kind":"call","function":"sum","args":[{"kind":"path","segments":["items"]}]});
+        assert_eq!(runtime.evaluate_expression_ir(&sum, "owner", &context).unwrap(), json!(3));
     }
 
     fn sample_runtime() -> Runtime {

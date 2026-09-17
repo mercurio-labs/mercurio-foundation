@@ -149,6 +149,9 @@ pub struct GenericDefinitionDecl {
     pub keyword: String,
     pub name: String,
     pub specializes: Vec<QualifiedName>,
+    /// Optional result expression, distinct from declared body members.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<Expr>,
     pub members: Vec<Declaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<CommentNote>,
