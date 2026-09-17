@@ -673,9 +673,10 @@ where
                     blocking_reasons,
                 );
                 if let Some(ty) = ty {
-                    if !exists(project, ty) {
+                    if !exists_in_scope(project, ty, Some(container)) {
                         if let Some(supporting_change) = self
                             .supporting_definition_for_missing_usage_type(
+                                project,
                                 container,
                                 &kind.metaclass,
                                 ty,
@@ -692,7 +693,7 @@ where
                         }
                     } else {
                         let definition_kind = self
-                            .semantic_declaration_kind_label(project, ty)
+                            .semantic_declaration_kind_label_in_scope(project, ty, Some(container))
                             .unwrap_or_else(|| "definition".to_string());
                         self.apply_legality_report(
                             self.legality
@@ -705,15 +706,16 @@ where
                     }
                 }
                 for target in specializes {
-                    self.require_existing(
+                    self.require_existing_in_scope(
                         project,
                         target,
+                        Some(container),
                         index,
                         "specialization",
                         blocking_reasons,
                     );
                     let target_kind = self
-                        .semantic_declaration_kind_label(project, target)
+                        .semantic_declaration_kind_label_in_scope(project, target, Some(container))
                         .unwrap_or_else(|| "specialization".to_string());
                     self.apply_legality_report(
                         self.legality
@@ -778,10 +780,13 @@ where
                     blocking_reasons,
                 );
                 if let Some(ty) = ty {
-                    if !exists(project, ty) {
+                    if !exists_in_scope(project, ty, Some(container)) {
                         if let Some(definition_keyword) = self
                             .legality
                             .supporting_definition_keyword_for_usage(keyword)
+                            .filter(|_| {
+                                supporting_definition_owner_is_known(project, container, ty)
+                            })
                         {
                             *requires_supporting_changes = true;
                             suggested_supporting_changes.push(SemanticMutation::AddDefinition {
@@ -799,8 +804,9 @@ where
                             self.require_existing(project, ty, index, "type", blocking_reasons);
                         }
                     } else {
-                        let definition_kind = declaration_kind_label(project, ty)
-                            .unwrap_or_else(|| "definition".to_string());
+                        let definition_kind =
+                            declaration_kind_label_in_scope(project, ty, Some(container))
+                                .unwrap_or_else(|| "definition".to_string());
                         self.apply_legality_report(
                             self.legality.check_usage_typing(keyword, &definition_kind),
                             index,
@@ -811,15 +817,17 @@ where
                     }
                 }
                 for target in specializes {
-                    self.require_existing(
+                    self.require_existing_in_scope(
                         project,
                         target,
+                        Some(container),
                         index,
                         "specialization",
                         blocking_reasons,
                     );
-                    let target_kind = declaration_kind_label(project, target)
-                        .unwrap_or_else(|| "specialization".to_string());
+                    let target_kind =
+                        declaration_kind_label_in_scope(project, target, Some(container))
+                            .unwrap_or_else(|| "specialization".to_string());
                     self.apply_legality_report(
                         self.legality.check_specialization(keyword, &target_kind),
                         index,
@@ -974,12 +982,21 @@ where
 
     fn supporting_definition_for_missing_usage_type(
         &self,
+        project: &AuthoringProject,
         container: &ElementRef,
         usage_metaclass: &str,
         ty: &ElementRef,
     ) -> Option<SemanticMutation> {
         let authoring = self.legality.authoring_for_element_kind(usage_metaclass)?;
         if authoring.form != SemanticElementForm::Usage {
+            return None;
+        }
+        if !supporting_definition_owner_is_known(project, container, ty) {
+            // The reference names an owner that does not exist, so we cannot
+            // honestly propose creating the definition inside it — the caller
+            // reports a resolution failure instead. This is what a raw KIR
+            // element id (`type.RoverParts.Chassis`) looks like here: the
+            // mutation API takes qualified names, not element ids.
             return None;
         }
 
@@ -1022,7 +1039,19 @@ where
         role: &str,
         blocking_reasons: &mut Vec<FeasibilityIssue>,
     ) {
-        if !exists(project, element) {
+        self.require_existing_in_scope(project, element, None, index, role, blocking_reasons);
+    }
+
+    fn require_existing_in_scope(
+        &self,
+        project: &AuthoringProject,
+        element: &ElementRef,
+        scope: Option<&ElementRef>,
+        index: usize,
+        role: &str,
+        blocking_reasons: &mut Vec<FeasibilityIssue>,
+    ) {
+        if !exists_in_scope(project, element, scope) {
             blocking_reasons.push(FeasibilityIssue {
                 kind: FeasibilityIssueKind::ResolutionFailure,
                 operation_index: Some(index),
@@ -1036,7 +1065,16 @@ where
         project: &AuthoringProject,
         element: &ElementRef,
     ) -> Option<String> {
-        let label = declaration_kind_label(project, element)?;
+        self.semantic_declaration_kind_label_in_scope(project, element, None)
+    }
+
+    fn semantic_declaration_kind_label_in_scope(
+        &self,
+        project: &AuthoringProject,
+        element: &ElementRef,
+        scope: Option<&ElementRef>,
+    ) -> Option<String> {
+        let label = declaration_kind_label_in_scope(project, element, scope)?;
         if label == "package" {
             return Some("Package".to_string());
         }
@@ -1085,10 +1123,27 @@ where
     }
 }
 
-fn exists(project: &AuthoringProject, element: &ElementRef) -> bool {
-    project
-        .semantic_attributes(&QualifiedName::parse(&element.qualified_name))
-        .is_ok()
+/// Resolve a proposal reference to the canonical name of a declared element.
+///
+/// `scope` is the operation's container, so a reference resolves through the
+/// same relative lookups and `import Other::*;` visibility the compiler uses.
+/// Both `Pkg::Name` and `Pkg.Name` spellings are accepted, as is a bare
+/// `Name` that is reachable from the scope (or unique project-wide).
+fn resolve_in_scope(
+    project: &AuthoringProject,
+    element: &ElementRef,
+    scope: Option<&ElementRef>,
+) -> Option<QualifiedName> {
+    let scope = scope.map(ElementRef::as_qualified_name);
+    project.resolve_element_name(&element.as_qualified_name(), scope.as_ref())
+}
+
+fn exists_in_scope(
+    project: &AuthoringProject,
+    element: &ElementRef,
+    scope: Option<&ElementRef>,
+) -> bool {
+    resolve_in_scope(project, element, scope).is_some()
 }
 
 fn container_selector_for(project: &AuthoringProject, element: &ElementRef) -> ContainerSelector {
@@ -1101,11 +1156,14 @@ fn container_selector_for(project: &AuthoringProject, element: &ElementRef) -> C
 }
 
 fn is_package(project: &AuthoringProject, element: &ElementRef) -> bool {
+    let canonical = resolve_in_scope(project, element, None)
+        .map(|name| name.as_dot_string())
+        .unwrap_or_else(|| element.as_qualified_name().as_dot_string());
     project.files().any(|(_, module)| {
         module
             .package
             .as_ref()
-            .is_some_and(|package| package.name.as_dot_string() == element.qualified_name)
+            .is_some_and(|package| package.name.as_dot_string() == canonical)
     })
 }
 
@@ -1113,11 +1171,36 @@ fn operation_requires_supporting_change(
     project: &AuthoringProject,
     operation: &SemanticMutation,
 ) -> bool {
-    matches!(
-        operation,
-        SemanticMutation::AddUsage { ty: Some(ty), .. }
-        | SemanticMutation::AddElement { ty: Some(ty), .. } if !exists(project, ty)
-    )
+    // The type is resolved in the container's scope, so a definition that is
+    // merely imported from another file is never mistaken for a missing one
+    // (which used to make the pipeline suggest creating a duplicate).
+    match operation {
+        SemanticMutation::AddUsage {
+            container,
+            ty: Some(ty),
+            ..
+        }
+        | SemanticMutation::AddElement {
+            container,
+            ty: Some(ty),
+            ..
+        } => !exists_in_scope(project, ty, Some(container)),
+        _ => false,
+    }
+}
+
+/// A supporting definition may only be proposed when we know where it would
+/// go: either the reference is a simple name (it lands in the operation's own
+/// container) or its owner is an element that actually exists.
+fn supporting_definition_owner_is_known(
+    project: &AuthoringProject,
+    container: &ElementRef,
+    ty: &ElementRef,
+) -> bool {
+    match parent_ref(ty) {
+        None => exists_in_scope(project, container, None),
+        Some(parent) => exists_in_scope(project, &parent, None),
+    }
 }
 
 fn parent_ref(element: &ElementRef) -> Option<ElementRef> {
@@ -1214,15 +1297,30 @@ fn repair_hint_message(kind: FeasibilityRepairHintKind, issue: &FeasibilityIssue
 }
 
 fn declaration_kind_label(project: &AuthoringProject, element: &ElementRef) -> Option<String> {
+    declaration_kind_label_in_scope(project, element, None)
+}
+
+/// Kind label for a reference, resolved through the same scope rules as
+/// [`resolve_in_scope`]. Resolving first is what makes `RoverParts::Chassis`
+/// and a bare, imported `Chassis` report `part def` rather than falling back
+/// to the literal `"definition"` label (which then failed the typing legality
+/// check with a bogus `MetamodelViolation`).
+fn declaration_kind_label_in_scope(
+    project: &AuthoringProject,
+    element: &ElementRef,
+    scope: Option<&ElementRef>,
+) -> Option<String> {
+    let resolved = resolve_in_scope(project, element, scope)?;
+    let canonical = resolved.as_dot_string();
     for (_, module) in project.files() {
         if module
             .package
             .as_ref()
-            .is_some_and(|package| package.name.as_dot_string() == element.qualified_name)
+            .is_some_and(|package| package.name.as_dot_string() == canonical)
         {
             return Some("package".to_string());
         }
-        if let Some(kind) = declaration_kind_label_in_module(module, &element.qualified_name) {
+        if let Some(kind) = declaration_kind_label_in_module(module, &canonical) {
             return Some(kind);
         }
     }

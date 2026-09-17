@@ -4,7 +4,6 @@
 //! and render functions for model-backed views.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,9 +23,6 @@ pub use expose::{
     ExposeResolution, exposed_elements, inherited_filter_conditions, qualified_name,
     resolve_exposed_elements, scope_base, scope_is_wildcard,
 };
-pub use reify::{
-    ExposeDraft, NotReifiable, ViewUsageDraft, usage_from_view_spec, view_spec_from_usage,
-};
 pub use model_views::{
     ElementDetailsDto, ElementPropertyRowDto, ElementPropertyTableDto, ElementSummaryDto,
     ExplorerAttributeDto, GraphDto, GraphEdgeDto, GraphNodeDto, GraphScope, InheritedPropertiesDto,
@@ -37,12 +33,14 @@ pub use model_views::{
     library_tree_view, library_tree_view_from_document, metatype_explorer_view,
     model_explorer_view, model_metadata_view, search_view,
 };
+pub use reify::{
+    ExposeDraft, NotReifiable, ViewUsageDraft, usage_from_view_spec, view_spec_from_usage,
+};
 
 const DEFAULT_MAX_DEPTH: usize = 8;
 const DEFAULT_MAX_NODES: usize = 350;
 const DEFAULT_MAX_EDGES: usize = 900;
 const MAX_RELATION_FANOUT_PER_NODE: usize = 250;
-const TIMING_WARNING_THRESHOLD_MS: u128 = 250;
 pub const VIEW_SCHEMA: &str = "mercurio.view.v1";
 pub const VIEW_SPEC_VERSION: u8 = 1;
 
@@ -2467,6 +2465,10 @@ pub fn merge_view_overlay(
             ));
             continue;
         };
+        if let Some(symbol) = decorated.symbols.iter_mut().find(|symbol| symbol.id == edge.symbol) {
+            push_property_array_value(&mut symbol.properties, "overlay_marks",
+                serde_json::to_value(mark).unwrap_or(Value::Null));
+        }
         let label = mark.label.as_deref().unwrap_or(&mark.kind);
         if !edge.label.contains(label) {
             edge.label = format!("{} [{}]", edge.label, label);
@@ -2535,10 +2537,16 @@ fn render_bdd_diagram(
         ];
     }
 
+    // The passes below reach past the structure traversal straight into the
+    // graph, so they carry the query envelope themselves — otherwise the
+    // block-growth pass walks `specializes` into the standard library that
+    // `include_libraries: false` asked to leave out.
+    let query = spec.query.clone();
     let mut view = render_structure_diagram(graph, metamodel_registry, spec)?;
-    add_bdd_block_nodes(graph, metamodel_registry, &mut view);
-    add_derived_bdd_edges(graph, &mut view);
+    add_bdd_block_nodes(graph, metamodel_registry, &query, &mut view);
+    add_derived_bdd_edges(graph, &query, &mut view);
     retain_bdd_display_nodes(&mut view);
+    add_bdd_attribute_rows(graph, &query, &mut view);
     normalize_bdd_edges(&mut view);
     sync_diagram_symbols(&mut view);
     Ok(view)
@@ -2547,8 +2555,18 @@ fn render_bdd_diagram(
 fn add_bdd_block_nodes(
     graph: &Graph,
     metamodel_registry: &MetamodelAttributeRegistry,
+    query: &DiagramQueryOptionsDto,
     view: &mut DiagramViewDto,
 ) {
+    // A block is growth material only when the query envelope admits it:
+    // every user part definition implicitly specializes `Parts::Part`, so an
+    // ungated walk drags the stdlib base — and its own self-composition
+    // members — onto every user-package bdd.
+    let growable_block = |id: &str| {
+        graph.element_by_element_id(id).is_some_and(|element| {
+            is_bdd_block_definition(element) && include_element(element, query)
+        })
+    };
     let root_id = view.spec.root.as_deref();
     let root_element = root_id.and_then(|id| graph.element_by_element_id(id));
     let mut block_ids = view
@@ -2570,6 +2588,7 @@ fn add_bdd_block_nodes(
                 .elements()
                 .iter()
                 .filter(|element| is_bdd_block_definition(element))
+                .filter(|element| include_element(element, query))
                 .filter(|element| state_diagram_owner_id(element).as_deref() == Some(root_id))
                 .map(|element| element.element_id.clone()),
         );
@@ -2579,33 +2598,29 @@ fn add_bdd_block_nodes(
     while changed {
         changed = false;
         for element in graph.elements() {
+            if !include_element(element, query) {
+                continue;
+            }
+
             if block_ids.contains(&element.element_id) {
                 for target_id in diagram_string_property_values(
                     element,
                     &["specializes", "specialization", "generalizes"],
                 ) {
-                    if graph
-                        .element_by_element_id(&target_id)
-                        .is_some_and(is_bdd_block_definition)
-                        && block_ids.insert(target_id)
-                    {
+                    if growable_block(&target_id) && block_ids.insert(target_id) {
                         changed = true;
                     }
                 }
             }
 
             if !is_bdd_part_usage(element)
-                || !state_diagram_owner_id(element)
+                || !bdd_enclosing_definition_id(graph, element)
                     .is_some_and(|owner_id| block_ids.contains(&owner_id))
             {
                 continue;
             }
             for target_id in bdd_usage_definition_ids(element) {
-                if graph
-                    .element_by_element_id(&target_id)
-                    .is_some_and(is_bdd_block_definition)
-                    && block_ids.insert(target_id)
-                {
+                if growable_block(&target_id) && block_ids.insert(target_id) {
                     changed = true;
                 }
             }
@@ -2629,13 +2644,52 @@ fn add_bdd_block_nodes(
     view.nodes.sort_by(|left, right| left.id.cmp(&right.id));
 }
 
-fn add_derived_bdd_edges(graph: &Graph, view: &mut DiagramViewDto) {
+fn add_derived_bdd_edges(graph: &Graph, query: &DiagramQueryOptionsDto, view: &mut DiagramViewDto) {
     let retained_ids = view
         .nodes
         .iter()
         .filter(|node| bdd_node_symbol(node).0 == "block")
         .map(|node| node.id.clone())
         .collect::<BTreeSet<_>>();
+
+    // Roll part usages up to their nearest enclosing definition: every part
+    // usage owned (transitively through the definition body) by definition A
+    // and typed by definition B contributes to a single A -> B composition.
+    //
+    // Keyed by the contributing USAGE element id, so the multiplicity the
+    // rolled-up edge reports counts distinct usages: a usage names its type
+    // through several aliased properties at once (`definition` and `type`),
+    // and keying by the usage keeps that from reading as two declarations.
+    let mut compositions: BTreeMap<(String, String), BTreeMap<String, String>> = BTreeMap::new();
+    for part in graph
+        .elements()
+        .iter()
+        .filter(|element| is_bdd_part_usage(element))
+        .filter(|element| include_element(element, query))
+    {
+        let Some(source_id) = bdd_enclosing_definition_id(graph, part)
+            .filter(|owner_id| retained_ids.contains(owner_id))
+        else {
+            continue;
+        };
+        for target_id in bdd_usage_definition_ids(part) {
+            if !retained_ids.contains(&target_id) {
+                continue;
+            }
+            compositions
+                .entry((source_id.clone(), target_id))
+                .or_default()
+                .insert(part.element_id.clone(), bdd_usage_display(part));
+        }
+    }
+
+    // The aggregated definition-level edges are authoritative for their pairs;
+    // drop any usage-graph `part` edges the structure pass emitted for them.
+    view.edges.retain(|edge| {
+        edge.relation != "part"
+            || !compositions.contains_key(&(edge.source.clone(), edge.target.clone()))
+    });
+
     let mut existing_edge_ids = view
         .edges
         .iter()
@@ -2684,39 +2738,33 @@ fn add_derived_bdd_edges(graph: &Graph, view: &mut DiagramViewDto) {
         }
     }
 
-    for part in graph
-        .elements()
-        .iter()
-        .filter(|element| is_bdd_part_usage(element))
-    {
-        let Some(source_id) =
-            state_diagram_owner_id(part).filter(|owner_id| retained_ids.contains(owner_id))
-        else {
-            continue;
-        };
-        for target_id in bdd_usage_definition_ids(part) {
-            if !retained_ids.contains(&target_id) {
-                continue;
-            }
-            let edge_id = format!("{}:part:{}:{}", part.element_id, source_id, target_id);
-            if !existing_edge_ids.insert(edge_id.clone())
-                || !existing_semantic_edges.insert((
-                    "part".to_string(),
-                    source_id.clone(),
-                    target_id.clone(),
-                ))
-            {
-                continue;
-            }
-            view.edges.push(DiagramEdgeDto {
-                id: edge_id,
-                symbol: symbol_id_for_edge("part", &source_id, &target_id),
-                source: source_id.clone(),
-                target: target_id,
-                relation: "part".to_string(),
-                label: state_diagram_label(part),
-            });
+    for ((source_id, target_id), usages) in compositions {
+        let count = usages.len();
+        let mut names = usages.into_values().collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        let mut label = names.join(", ");
+        if count > 1 {
+            label.push_str(&format!(" ({count})"));
         }
+        let edge_id = format!("{source_id}:part:{target_id}");
+        if !existing_edge_ids.insert(edge_id.clone())
+            || !existing_semantic_edges.insert((
+                "part".to_string(),
+                source_id.clone(),
+                target_id.clone(),
+            ))
+        {
+            continue;
+        }
+        view.edges.push(DiagramEdgeDto {
+            id: edge_id,
+            symbol: symbol_id_for_edge("part", &source_id, &target_id),
+            source: source_id,
+            target: target_id,
+            relation: "part".to_string(),
+            label,
+        });
     }
     view.edges.sort_by(|left, right| left.id.cmp(&right.id));
 }
@@ -2777,7 +2825,138 @@ fn is_bdd_part_usage(element: &Element) -> bool {
 }
 
 fn bdd_usage_definition_ids(element: &Element) -> Vec<String> {
-    diagram_string_property_values(element, &["definition", "type", "typed_by", "typedBy"])
+    // `definition`, `type` and `typed_by` are aliases — the compiler writes
+    // the same target under several of them, so a usage typed once must yield
+    // one id, not one per alias it happens to carry.
+    let mut seen = BTreeSet::new();
+    let mut ids =
+        diagram_string_property_values(element, &["definition", "type", "typed_by", "typedBy"]);
+    ids.retain(|id| seen.insert(id.clone()));
+    ids
+}
+
+/// Walk the owner chain of a usage up to the nearest enclosing block
+/// definition, so usages nested anywhere inside a definition body roll up to
+/// that definition. Returns `None` for usages outside any block definition
+/// (or on an ownership cycle).
+fn bdd_enclosing_definition_id(graph: &Graph, element: &Element) -> Option<String> {
+    let mut visited = BTreeSet::new();
+    let mut current = state_diagram_owner_id(element)?;
+    loop {
+        if !visited.insert(current.clone()) {
+            return None;
+        }
+        let owner = graph.element_by_element_id(&current)?;
+        if is_bdd_block_definition(owner) {
+            return Some(current);
+        }
+        current = state_diagram_owner_id(owner)?;
+    }
+}
+
+fn bdd_usage_display(element: &Element) -> String {
+    let mut display = state_diagram_label(element);
+    if let Some(multiplicity) = state_diagram_string_property(element, &["multiplicity"]) {
+        display.push(' ');
+        if multiplicity.starts_with('[') {
+            display.push_str(&multiplicity);
+        } else {
+            display.push('[');
+            display.push_str(&multiplicity);
+            display.push(']');
+        }
+    }
+    display
+}
+
+fn is_bdd_attribute_usage(element: &Element) -> bool {
+    element_semantic_text(element).contains("attributeusage")
+}
+
+/// Fold attribute usages onto the attribute rows of their enclosing block
+/// definition node (BDDs render attributes as compartment rows, never as
+/// standalone nodes), carrying declared default values where present.
+///
+/// These rows REPLACE the reflective metamodel rows `diagram_node` attaches to
+/// every node: a block's attribute compartment is the block's own declared
+/// attributes, not the metaclass's feature list.
+fn add_bdd_attribute_rows(
+    graph: &Graph,
+    query: &DiagramQueryOptionsDto,
+    view: &mut DiagramViewDto,
+) {
+    let mut rows_by_definition: BTreeMap<String, Vec<DiagramAttributeDto>> = BTreeMap::new();
+    for attribute in graph
+        .elements()
+        .iter()
+        .filter(|element| is_bdd_attribute_usage(element))
+        .filter(|element| include_element(element, query))
+    {
+        let Some(definition_id) = bdd_enclosing_definition_id(graph, attribute) else {
+            continue;
+        };
+        rows_by_definition
+            .entry(definition_id)
+            .or_default()
+            .push(DiagramAttributeDto {
+                name: state_diagram_label(attribute),
+                type_label: bdd_attribute_type_label(attribute),
+            });
+    }
+    for node in &mut view.nodes {
+        let mut rows = rows_by_definition.remove(&node.id).unwrap_or_default();
+        rows.sort_by(|left, right| left.name.cmp(&right.name));
+        rows.dedup_by(|left, right| left.name == right.name);
+        node.attributes = rows;
+    }
+}
+
+fn bdd_attribute_type_label(element: &Element) -> Option<String> {
+    let type_name = bdd_usage_definition_ids(element)
+        .into_iter()
+        .next()
+        .map(|id| label_for_id(&id));
+    let value = bdd_attribute_value_text(element);
+    match (type_name, value) {
+        (Some(type_name), Some(value)) => Some(format!("{type_name} = {value}")),
+        (Some(type_name), None) => Some(type_name),
+        (None, Some(value)) => Some(format!("= {value}")),
+        (None, None) => None,
+    }
+}
+
+/// The declared default of an attribute usage, as compartment-row text.
+///
+/// A hand-built or already-evaluated document carries the default as a plain
+/// `value`-family property, but the SysML compiler lowers `attribute mass_kg :
+/// Real = 12.0` into an initializer expression — so the literal case has to be
+/// read back off `expression_ir` for any value to reach the row at all.
+fn bdd_attribute_value_text(element: &Element) -> Option<String> {
+    let declared = ["value", "declared_value", "default_value", "default"]
+        .iter()
+        .find_map(|key| element.properties.get(*key))
+        .filter(|value| !value.is_null())
+        .map(value_to_text)
+        .filter(|text| !text.trim().is_empty());
+    if declared.is_some() {
+        return declared;
+    }
+    bdd_literal_expression_text(element.properties.get("expression_ir")?)
+}
+
+/// Stringify a simple-literal initializer. Anything that needs evaluating
+/// (paths, operators, calls) has no honest row text and is left off.
+fn bdd_literal_expression_text(expression: &Value) -> Option<String> {
+    let expression = expression.as_object()?;
+    if expression.get("kind").and_then(Value::as_str) != Some("literal") {
+        return None;
+    }
+    match expression.get("value")? {
+        value @ (Value::Bool(_) | Value::Number(_) | Value::String(_)) => {
+            Some(value_to_text(value)).filter(|text| !text.trim().is_empty())
+        }
+        _ => None,
+    }
 }
 
 fn bdd_node_symbol(node: &DiagramNodeDto) -> (String, serde_json::Map<String, Value>) {
@@ -4031,35 +4210,36 @@ fn symbol_id_for_transition_edge(id: &str) -> String {
 fn render_structure_diagram(
     graph: &Graph,
     metamodel_registry: &MetamodelAttributeRegistry,
-    spec: DiagramSpecDto,
+    mut spec: DiagramSpecDto,
 ) -> Result<DiagramViewDto, DiagramError> {
-    let total_start = Instant::now();
-    let mut timings = Vec::new();
     let mut warnings = Vec::new();
 
-    let relation_start = Instant::now();
     let relations = if spec.query.relations.is_empty() {
         default_diagram_relations()
     } else {
         spec.query.relations.clone()
     };
-    timings.push(("relations", relation_start.elapsed()));
 
-    let traversal_start = Instant::now();
-    let traversal = if let Some(root) = spec.root.as_deref().filter(|root| !root.trim().is_empty())
-    {
-        let root_start = Instant::now();
-        let root = resolve_root(graph, root)
-            .ok_or_else(|| DiagramError::RootNotFound(root.to_string()))?;
-        timings.push(("root", root_start.elapsed()));
+    let requested_root = spec
+        .root
+        .as_deref()
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string);
+    let traversal = if let Some(root_query) = requested_root {
+        let root = resolve_root(graph, &root_query)
+            .ok_or_else(|| DiagramError::RootNotFound(root_query.clone()))?;
+        // BDD expansion looks the root up by exact id after this traversal.
+        spec.root = Some(root.element_id.clone());
         collect_structure_ids(graph, root.id, &spec.query, &relations)
+    } else if spec.kind == DiagramKindDto::Bdd {
+        collect_unrooted_bdd_ids(graph, &spec.query)
     } else {
         collect_unrooted_structure_ids(graph, &spec.query)
     };
-    timings.push(("traversal", traversal_start.elapsed()));
+
     warnings.extend(traversal.warnings);
 
-    let node_start = Instant::now();
     let mut nodes = traversal
         .visible_ids
         .iter()
@@ -4069,7 +4249,6 @@ fn render_structure_diagram(
         .map(|element| diagram_node(graph, metamodel_registry, element))
         .collect::<Vec<_>>();
     nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    timings.push(("nodes", node_start.elapsed()));
 
     if nodes.is_empty() {
         warnings.push("No diagram nodes matched the requested filters.".to_string());
@@ -4082,7 +4261,6 @@ fn render_structure_diagram(
         ));
     }
 
-    let edge_start = Instant::now();
     let retained_ids = nodes
         .iter()
         .map(|node| node.id.as_str())
@@ -4123,20 +4301,6 @@ fn render_structure_diagram(
     }
     edges.sort_by(|left, right| left.id.cmp(&right.id));
     edges.dedup_by(|left, right| left.id == right.id);
-    timings.push(("edges", edge_start.elapsed()));
-
-    timings.push(("total", total_start.elapsed()));
-    let slow_phases = timings
-        .iter()
-        .filter(|(_, elapsed)| elapsed.as_millis() >= TIMING_WARNING_THRESHOLD_MS)
-        .map(|(phase, elapsed)| format!("{phase}={}ms", elapsed.as_millis()))
-        .collect::<Vec<_>>();
-    if !slow_phases.is_empty() {
-        warnings.push(format!(
-            "Diagram render timing: {}.",
-            slow_phases.join(", ")
-        ));
-    }
 
     Ok(DiagramViewDto {
         spec,
@@ -4269,6 +4433,33 @@ fn child_node_ids<'a>(
     }
 }
 
+// A BDD's node budget applies to blocks, not the library's unrelated
+// packages and metamodel elements that a generic structure traversal visits.
+fn collect_unrooted_bdd_ids(graph: &Graph, query: &DiagramQueryOptionsDto) -> StructureTraversal {
+    let max_nodes = effective_max_nodes(query);
+    let blocks = graph
+        .elements()
+        .iter()
+        .filter(|element| include_element(element, query) && is_bdd_block_definition(element))
+        .collect::<Vec<_>>();
+    let visible_ids = blocks
+        .iter()
+        .take(max_nodes)
+        .map(|element| element.id)
+        .collect();
+    let warnings = if blocks.len() > max_nodes {
+        vec![format!(
+            "Diagram node limit reached; showing first {max_nodes} matching blocks."
+        )]
+    } else {
+        Vec::new()
+    };
+    StructureTraversal {
+        visible_ids,
+        warnings,
+    }
+}
+
 fn collect_unrooted_structure_ids(
     graph: &Graph,
     query: &DiagramQueryOptionsDto,
@@ -4395,19 +4586,34 @@ fn resolve_root<'a>(graph: &'a Graph, root: &str) -> Option<&'a Element> {
     }
 
     let normalized_root = root.trim().to_ascii_lowercase();
-    graph.elements().iter().find(|element| {
-        label_for_id(&element.element_id).to_ascii_lowercase() == normalized_root
-            || element
+    // Qualified names ("RoverParts::Wheel") address dotted element ids whose
+    // leading segment is a sort tag ("type.RoverParts.Wheel"), so compare the
+    // tag-stripped id in qualified spelling as well.
+    let qualified_root = normalized_root.replace("::", ".");
+    graph
+        .elements()
+        .iter()
+        .find(|element| {
+            element
                 .element_id
-                .rsplit("::")
-                .next()
-                .is_some_and(|name| name.eq_ignore_ascii_case(root))
-            || element
-                .element_id
-                .rsplit('.')
-                .next()
-                .is_some_and(|name| name.eq_ignore_ascii_case(root))
-    })
+                .split_once('.')
+                .is_some_and(|(_, path)| path.eq_ignore_ascii_case(&qualified_root))
+        })
+        .or_else(|| {
+            graph.elements().iter().find(|element| {
+                label_for_id(&element.element_id).to_ascii_lowercase() == normalized_root
+                    || element
+                        .element_id
+                        .rsplit("::")
+                        .next()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(root))
+                    || element
+                        .element_id
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(root))
+            })
+        })
 }
 
 fn include_element(element: &Element, query: &DiagramQueryOptionsDto) -> bool {
@@ -4577,6 +4783,21 @@ fn default_layout_direction() -> String {
     "LR".to_string()
 }
 
+// Fixed vocabulary and colors: arbitrary overlay strings never become SVG styles.
+fn playback_mark(properties: &serde_json::Map<String, Value>) -> Option<(&'static str, &'static str)> {
+    let marks = properties.get("overlay_marks")?.as_array()?;
+    for (kinds, mark, color) in [
+        (&["violating", "violating_state"][..], "violating", "#b91c1c"),
+        (&["active", "active_state", "active_transition"][..], "active", "#15803d"),
+        (&["visited", "visited_state", "visited_transition"][..], "visited", "#2563eb"),
+    ] {
+        if marks.iter().any(|value| value.get("kind").and_then(Value::as_str).is_some_and(|kind| kinds.contains(&kind))) {
+            return Some((mark, color));
+        }
+    }
+    None
+}
+
 /// Render a diagram view DTO to a deterministic, lossless SVG artifact.
 ///
 /// This is intentionally a small built-in renderer for harnesses, exports, and
@@ -4644,14 +4865,19 @@ pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
             .unwrap_or_else(|| default_route(edge.relation.as_str()).to_string());
         let path = svg_routed_path(&route, x1, y1, x2, y2);
         rendered_edges.push((edge.relation.clone(), edge.symbol.clone(), x1, y1, x2, y2));
+        let mark = symbol.and_then(|symbol| playback_mark(&symbol.properties));
+        let color = mark.map(|(_, color)| color).unwrap_or("#334155");
+        let stroke_width = if mark.is_some() { "3" } else { "1.8" };
         svg.push_str(&format!(
-            r##"<path d="{}" fill="none" stroke="#334155" stroke-width="1.8"/>
+            r##"<path data-element-id="{element_id}" data-playback-mark="{mark_name}" d="{}" fill="none" stroke="{color}" stroke-width="{stroke_width}"/>
 <text x="{}" y="{}" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600" fill="#334155">{}</text>
 "##,
             path,
             (x1 + x2) / 2 + 8,
             (y1 + y2) / 2 - 14 + ((edge_index % 4) as isize * 12),
-            svg_escape(&edge.label)
+            svg_escape(&edge.label),
+            element_id = svg_escape(&edge.id),
+            mark_name = mark.map(|(name, _)| name).unwrap_or("")
         ));
     }
 
@@ -4664,6 +4890,13 @@ pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
             .map(|symbol| symbol.role.as_str())
             .unwrap_or("element");
         let shape = svg_symbol_property(symbol, "shape").unwrap_or_else(|| "node".to_string());
+        let mark = playback_mark(&node.properties);
+        svg.push_str(&format!(r##"<g data-element-id="{}" data-playback-mark="{}">"##,
+            svg_escape(&node.id), mark.map(|(name, _)| name).unwrap_or("")));
+        if let Some((_, color)) = mark {
+            svg.push_str(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" rx="8" fill="none" stroke="{color}" stroke-width="3"/>"##,
+                x.saturating_sub(3), y.saturating_sub(3), node_width + 6, node_height + 6));
+        }
         svg.push_str(&svg_node_shape(
             role,
             &shape,
@@ -4687,6 +4920,7 @@ pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
             y + 64,
             svg_escape(&node.badges.join(" "))
         ));
+        svg.push_str("</g>");
     }
 
     for (relation, symbol_id, x1, y1, x2, y2) in rendered_edges {
@@ -5173,6 +5407,345 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn unrooted_bdd_selects_blocks_before_applying_the_node_budget() {
+        let mut elements = (0..400)
+            .map(|index| KirElement {
+                id: format!("comment.{index}"),
+                kind: "Comment".to_string(),
+                layer: 2,
+                properties: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>();
+        elements.push(KirElement {
+            id: "type.Demo.Block".to_string(),
+            kind: "PartDefinition".to_string(),
+            layer: 2,
+            properties: BTreeMap::new(),
+        });
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements,
+        })
+        .unwrap();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        let spec = DiagramSpecDto {
+            kind: DiagramKindDto::Bdd,
+            ..structure_spec(None, Vec::new())
+        };
+        let view = render_diagram(&graph, &registry, spec).unwrap();
+        assert_eq!(view.nodes.len(), 1);
+        assert_eq!(view.nodes[0].id, "type.Demo.Block");
+        assert!(view.warnings.is_empty(), "{:?}", view.warnings);
+    }
+
+    #[test]
+    fn bdd_canonicalizes_package_and_definition_root_names() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "pkg.Example".to_string(),
+                    kind: "Package".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "type.Example.Block".to_string(),
+                    kind: "PartDefinition".to_string(),
+                    layer: 2,
+                    properties: BTreeMap::from([("owner".to_string(), json!("pkg.Example"))]),
+                },
+            ],
+        })
+        .unwrap();
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        for (root, canonical) in [
+            ("Example", "pkg.Example"),
+            ("Example::Block", "type.Example.Block"),
+            ("Block", "type.Example.Block"),
+        ] {
+            let view = render_diagram(&graph, &registry, bdd_spec(root)).unwrap();
+            assert_eq!(view.spec.root.as_deref(), Some(canonical));
+            assert!(
+                view.nodes
+                    .iter()
+                    .any(|node| node.id == "type.Example.Block")
+            );
+        }
+    }
+
+    fn bdd_spec(root: &str) -> DiagramSpecDto {
+        DiagramSpecDto {
+            kind: DiagramKindDto::Bdd,
+            ..structure_spec(Some(root), Vec::new())
+        }
+    }
+
+    /// A graph shaped like the SysML compiler's own output, verified against a
+    /// compiled `part def` package: every part definition implicitly
+    /// `specializes` the stdlib `Parts::Part` (whose members compose it with
+    /// itself), a part usage names its type through BOTH `definition` and
+    /// `type`, and a declared attribute default rides `expression_ir` rather
+    /// than a literal `value` property.
+    fn bdd_compiled_rover_fixture_graph() -> (Graph, MetamodelAttributeRegistry) {
+        fn element(
+            id: &str,
+            kind: &str,
+            layer: u8,
+            properties: BTreeMap<String, Value>,
+        ) -> KirElement {
+            KirElement {
+                id: id.to_string(),
+                kind: kind.to_string(),
+                layer,
+                properties,
+            }
+        }
+
+        fn library_metadata(name: &str) -> Value {
+            json!({ "declared_name": name, "name": name, "is_library_element": true })
+        }
+
+        let document = KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                element(
+                    "ScalarValues::Real",
+                    "DataType",
+                    0,
+                    BTreeMap::from([("metadata".to_string(), library_metadata("Real"))]),
+                ),
+                element(
+                    "Parts::Part",
+                    "PartDefinition",
+                    1,
+                    BTreeMap::from([
+                        ("metadata".to_string(), library_metadata("Part")),
+                        (
+                            "members".to_string(),
+                            json!(["Parts::Part::done", "Parts::Part::start"]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "Parts::Part::done",
+                    "PartUsage",
+                    1,
+                    BTreeMap::from([
+                        ("metadata".to_string(), library_metadata("done")),
+                        ("owner".to_string(), json!("Parts::Part")),
+                        ("type".to_string(), json!(["Parts::Part"])),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                element(
+                    "Parts::Part::start",
+                    "PartUsage",
+                    1,
+                    BTreeMap::from([
+                        ("metadata".to_string(), library_metadata("start")),
+                        ("owner".to_string(), json!("Parts::Part")),
+                        ("type".to_string(), json!(["Parts::Part"])),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                element(
+                    "pkg.Rover",
+                    "SysML::Package",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Rover")),
+                        (
+                            "members".to_string(),
+                            json!(["type.Rover.Chassis", "type.Rover.Rover"]),
+                        ),
+                    ]),
+                ),
+                element(
+                    "type.Rover.Rover",
+                    "SysML::Systems::PartDefinition",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Rover")),
+                        ("owner".to_string(), json!("pkg.Rover")),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                element(
+                    "type.Rover.Chassis",
+                    "SysML::Systems::PartDefinition",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("Chassis")),
+                        ("owner".to_string(), json!("pkg.Rover")),
+                        ("specializes".to_string(), json!(["Parts::Part"])),
+                    ]),
+                ),
+                // One `part chassis : Chassis;` — the compiler records the type
+                // under `definition` AND `type`.
+                element(
+                    "feature.Rover.Rover.chassis",
+                    "SysML::PartUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("chassis")),
+                        ("owner".to_string(), json!("type.Rover.Rover")),
+                        ("owning_definition".to_string(), json!("type.Rover.Rover")),
+                        ("definition".to_string(), json!("type.Rover.Chassis")),
+                        ("type".to_string(), json!("type.Rover.Chassis")),
+                        (
+                            "specializes".to_string(),
+                            json!(["type.Rover.Chassis", "Items::Item::subparts"]),
+                        ),
+                    ]),
+                ),
+                // `attribute mass_kg : Real = 12.0;` — the default is lowered
+                // to an initializer expression, not a literal property.
+                element(
+                    "feature.Rover.Chassis.mass_kg",
+                    "SysML::AttributeUsage",
+                    2,
+                    BTreeMap::from([
+                        ("declared_name".to_string(), json!("mass_kg")),
+                        ("owner".to_string(), json!("type.Rover.Chassis")),
+                        ("owning_definition".to_string(), json!("type.Rover.Chassis")),
+                        ("definition".to_string(), json!("ScalarValues::Real")),
+                        ("type".to_string(), json!("ScalarValues::Real")),
+                        (
+                            "expression_ir".to_string(),
+                            json!({ "kind": "literal", "value": 12.0 }),
+                        ),
+                    ]),
+                ),
+            ],
+        };
+        let graph = Graph::from_document(document).expect("bdd fixture graph should be valid");
+        let registry = MetamodelAttributeRegistry::build(&graph);
+        (graph, registry)
+    }
+
+    fn bdd_spec_including_libraries(root: &str) -> DiagramSpecDto {
+        let mut spec = bdd_spec(root);
+        spec.query.include_libraries = true;
+        spec
+    }
+
+    #[test]
+    fn bdd_diagram_honors_library_exclusion() {
+        let (graph, registry) = bdd_compiled_rover_fixture_graph();
+        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
+            .expect("bdd diagram should render");
+
+        assert_eq!(
+            view.nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["type.Rover.Chassis", "type.Rover.Rover"],
+            "`include_libraries: false` keeps the implicitly specialized stdlib \
+             base off a user-package bdd"
+        );
+        assert!(
+            view.edges
+                .iter()
+                .all(|edge| edge.source != "Parts::Part" && edge.target != "Parts::Part"),
+            "no edge may reach an excluded library block, got {:?}",
+            view.edges
+                .iter()
+                .map(|edge| (
+                    edge.source.as_str(),
+                    edge.relation.as_str(),
+                    edge.target.as_str()
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        // Positive control: the query flag is what excludes the base, not a
+        // hard-coded blocklist — asking for libraries brings it (and its own
+        // self-composition members) back.
+        let with_libraries =
+            render_diagram(&graph, &registry, bdd_spec_including_libraries("pkg.Rover"))
+                .expect("bdd diagram should render with libraries included");
+        assert!(
+            with_libraries
+                .nodes
+                .iter()
+                .any(|node| node.id == "Parts::Part"),
+            "`include_libraries: true` restores the library base"
+        );
+        assert!(
+            with_libraries
+                .edges
+                .iter()
+                .any(|edge| edge.relation == "part"
+                    && edge.source == "Parts::Part"
+                    && edge.target == "Parts::Part"),
+            "…together with the self-composition the exclusion was hiding"
+        );
+    }
+
+    #[test]
+    fn bdd_composition_label_counts_distinct_usages() {
+        let (graph, registry) = bdd_compiled_rover_fixture_graph();
+        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
+            .expect("bdd diagram should render");
+
+        let compositions = view
+            .edges
+            .iter()
+            .filter(|edge| edge.relation == "part")
+            .map(|edge| {
+                (
+                    edge.source.as_str(),
+                    edge.target.as_str(),
+                    edge.label.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compositions,
+            vec![("type.Rover.Rover", "type.Rover.Chassis", "chassis")],
+            "a single `part chassis : Chassis` is one usage: the aggregation \
+             counts distinct usages, so the label carries no `(N)` suffix even \
+             though the usage names its type under two aliased properties"
+        );
+    }
+
+    #[test]
+    fn bdd_attribute_row_carries_compiled_literal_default() {
+        let (graph, registry) = bdd_compiled_rover_fixture_graph();
+        let view = render_diagram(&graph, &registry, bdd_spec("pkg.Rover"))
+            .expect("bdd diagram should render");
+
+        let chassis = view
+            .nodes
+            .iter()
+            .find(|node| node.id == "type.Rover.Chassis")
+            .expect("chassis definition node is present");
+        assert_eq!(
+            chassis
+                .attributes
+                .iter()
+                .map(|attribute| attribute.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["mass_kg"],
+            "a block's compartment is its own declared attributes, not the \
+             metaclass feature list `diagram_node` attaches to every node"
+        );
+        let mass_row = chassis
+            .attributes
+            .iter()
+            .find(|attribute| attribute.name == "mass_kg")
+            .expect("the definition's attribute usage rides its node as a row");
+        assert_eq!(
+            mass_row.type_label.as_deref(),
+            Some("Real = 12.0"),
+            "`attribute mass_kg : Real = 12.0` lowers its default onto \
+             `expression_ir`, and the row must still carry the value"
+        );
+    }
+
     fn sample_graph() -> (Graph, MetamodelAttributeRegistry) {
         let document = view_fixture_document();
         let graph = Graph::from_document(document).expect("sample graph should be valid");
@@ -5565,7 +6138,12 @@ mod tests {
                 && edge.label.contains("visited")
         }));
         assert_eq!(render_diagram_svg(&base), base_svg);
-        assert_ne!(render_diagram_svg(&decorated), base_svg);
+        let svg = render_diagram_svg(&decorated);
+        assert!(svg.contains(r##"data-element-id="state.Example.Driving" data-playback-mark="active""##));
+        assert!(svg.contains(r##"data-element-id="transition.Example.DriveMode.ParkedToDriving" data-playback-mark="visited""##));
+        assert!(svg.contains(r##"stroke="#15803d""##));
+        assert!(svg.contains(r##"stroke="#2563eb""##));
+        assert_ne!(svg, base_svg);
     }
 
     #[test]

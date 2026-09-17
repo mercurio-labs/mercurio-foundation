@@ -21,6 +21,7 @@ pub enum ExpressionIr {
     },
     Unary {
         op: UnaryExpressionOp,
+        #[serde(alias = "operand")]
         expr: Box<ExpressionIr>,
     },
     Binary {
@@ -55,25 +56,40 @@ pub enum ExpressionPathSegment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnaryExpressionOp {
+    #[serde(alias = "-")]
     Negate,
+    #[serde(alias = "!")]
     Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BinaryExpressionOp {
+    #[serde(alias = "+", alias = "plus")]
     Add,
+    #[serde(alias = "-", alias = "sub", alias = "minus")]
     Subtract,
+    #[serde(alias = "*", alias = "mul")]
     Multiply,
+    #[serde(alias = "/", alias = "div")]
     Divide,
+    #[serde(alias = "^", alias = "**")]
     Power,
+    #[serde(alias = "==")]
     Equal,
+    #[serde(alias = "!=")]
     NotEqual,
+    #[serde(alias = "<")]
     Less,
+    #[serde(alias = "<=")]
     LessEqual,
+    #[serde(alias = ">")]
     Greater,
+    #[serde(alias = ">=")]
     GreaterEqual,
+    #[serde(alias = "&&")]
     And,
+    #[serde(alias = "||")]
     Or,
 }
 
@@ -178,7 +194,7 @@ impl ExpressionIr {
                         root.as_str().to_string(),
                     ));
                 }
-                if segments.is_empty() {
+                if segments.is_empty() || segments.iter().any(|segment| segment.name().is_empty()) {
                     return Err(ExpressionValidationError::EmptyPath);
                 }
                 Ok(())
@@ -375,7 +391,10 @@ fn normalize_expression_ir_value(value: &Value) -> Value {
                 .or_insert_with(|| Value::String("self".to_string()));
         }
         Some("tuple") => normalize_array_field(&mut normalized, "items"),
-        Some("unary") => normalize_object_field(&mut normalized, "expr"),
+        Some("unary") => {
+            normalize_object_field(&mut normalized, "expr");
+            normalize_object_field(&mut normalized, "operand");
+        }
         Some("binary") => {
             normalize_object_field(&mut normalized, "left");
             normalize_object_field(&mut normalized, "right");
@@ -428,6 +447,9 @@ pub trait ExpressionEvaluationContext {
 #[derive(Debug)]
 pub enum ExpressionEvaluationError {
     InvalidExpression(String),
+    MissingBinding(String),
+    DivisionByZero,
+    NonFiniteResult,
     UnsupportedAggregation {
         expression: String,
     },
@@ -445,6 +467,9 @@ impl fmt::Display for ExpressionEvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidExpression(expression) => write!(f, "invalid expression: {expression}"),
+            Self::MissingBinding(path) => write!(f, "unresolved expression path: {path}"),
+            Self::DivisionByZero => write!(f, "division by zero"),
+            Self::NonFiniteResult => write!(f, "non-finite expression result"),
             Self::UnsupportedAggregation { expression } => {
                 write!(f, "unsupported aggregation expression: {expression}")
             }
@@ -477,7 +502,12 @@ fn evaluate_binary_expression(
         BinaryExpressionOp::Add => numeric_binary(left, right, expression, |a, b| a + b),
         BinaryExpressionOp::Subtract => numeric_binary(left, right, expression, |a, b| a - b),
         BinaryExpressionOp::Multiply => numeric_binary(left, right, expression, |a, b| a * b),
-        BinaryExpressionOp::Divide => numeric_binary(left, right, expression, |a, b| a / b),
+        BinaryExpressionOp::Divide => {
+            if value_as_f64(right, expression)? == 0.0 {
+                return Err(ExpressionEvaluationError::DivisionByZero);
+            }
+            numeric_binary(left, right, expression, |a, b| a / b)
+        }
         BinaryExpressionOp::Power => numeric_binary(left, right, expression, f64::powf),
         BinaryExpressionOp::Less => numeric_compare(left, right, expression, |a, b| a < b),
         BinaryExpressionOp::LessEqual => numeric_compare(left, right, expression, |a, b| a <= b),
@@ -568,13 +598,11 @@ fn aggregation_value_as_f64(
 
 fn number_from_f64(
     value: f64,
-    expression: &ExpressionIr,
+    _expression: &ExpressionIr,
 ) -> Result<Value, ExpressionEvaluationError> {
-    Number::from_f64(value).map(Value::Number).ok_or_else(|| {
-        ExpressionEvaluationError::UnsupportedAggregation {
-            expression: format!("{expression:?}"),
-        }
-    })
+    Number::from_f64(value)
+        .map(Value::Number)
+        .ok_or(ExpressionEvaluationError::NonFiniteResult)
 }
 
 fn numeric_binary(

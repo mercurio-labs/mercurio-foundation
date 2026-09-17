@@ -278,7 +278,7 @@ impl RulePack {
 pub fn load_default_rulepacks() -> Result<Vec<RulePack>, DatalogError> {
     #[cfg(target_arch = "wasm32")]
     {
-        return Ok(vec![RulePack::structural_core()]);
+        return embedded_default_rulepacks();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -290,6 +290,17 @@ pub fn load_default_rulepacks() -> Result<Vec<RulePack>, DatalogError> {
 
         Ok(vec![RulePack::from_path(&path)?])
     }
+}
+
+// Embed the same source-neutral pack that native loads from disk. Returning
+// structural_core here selects the generic rule evaluator (and duplicates its
+// structural rules), bypassing the optimized built-in index materialization.
+#[cfg(any(target_arch = "wasm32", test))]
+fn embedded_default_rulepacks() -> Result<Vec<RulePack>, DatalogError> {
+    Ok(vec![RulePack::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/resources/foundation/core.rulepack.json"
+    )))?])
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1186,6 +1197,17 @@ mod tests {
         .unwrap();
 
         let indexes = materialize_core_indexes(&graph, &[]).unwrap();
+        let embedded = super::embedded_default_rulepacks().unwrap();
+        assert_eq!(
+            materialize_core_indexes(&graph, &embedded).unwrap(),
+            indexes
+        );
+        let native_pack = RulePack::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/resources/foundation/core.rulepack.json"
+        )))
+        .unwrap();
+        assert_eq!(embedded, vec![native_pack]);
 
         assert!(
             indexes

@@ -1,3 +1,7 @@
+mod deadline;
+mod expression;
+pub use deadline::{RequirementOutcome, evaluate_deadline_requirements};
+use expression::{ExpressionEvaluator, legacy_guard_ir};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
@@ -23,8 +27,18 @@ impl Default for SimulationClockConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SimulationTerminationPolicy {
+    pub on_all_satisfied: bool,
+    pub on_any_violated: bool,
+    pub on_blocked: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConcurrentSimulationScenario {
+    #[serde(default)]
+    pub termination_policy: SimulationTerminationPolicy,
     pub id: String,
     pub subjects: Vec<ConcurrentSubjectScenario>,
     pub max_steps: usize,
@@ -58,6 +72,8 @@ pub struct SimulationEvent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimulationRequirement {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_s: Option<f64>,
     pub id: String,
     pub label: String,
     pub expression: Option<Value>,
@@ -80,12 +96,25 @@ pub struct AnalysisCaseInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SimulationRunConfiguration {
+    pub schema_version: u32,
+    pub max_steps: usize,
+    pub clock: SimulationClockConfig,
+    pub termination_policy: SimulationTerminationPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimulationTrace {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<SimulationRunConfiguration>,
     pub scenario_id: String,
     pub subject_id: String,
     pub channels: Vec<SimTraceChannel>,
     pub timeline: Vec<SimTraceEntry>,
     pub status: SimulationStatus,
+    /// Why execution stopped; absent in traces recorded before this contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination: Option<SimulationTermination>,
     #[serde(default)]
     pub requirements: Vec<SimulationRequirement>,
     #[serde(default)]
@@ -139,6 +168,19 @@ pub enum SimulationStatus {
     Completed,
     Blocked,
     Failed,
+}
+
+/// Execution limits are independent of sampled requirement outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimulationTermination {
+    RequirementsSatisfied,
+    RequirementViolated,
+    Blocked,
+    FinalState,
+    StepBudgetExhausted,
+    TimeBudgetExhausted,
+    Quiescent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -234,6 +276,7 @@ pub enum SimulationGuard {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SimulationEffect {
     Assign(AssignEffect),
+    AssignExpression { feature: String, expression: Value },
     EmitSignal(SignalEffect),
     Log(LogEffect),
 }
@@ -375,11 +418,79 @@ struct CorePendingSignal {
     target: Option<String>,
 }
 
+// Only completion of the machine itself ends a subject. A nested region's
+// final state does not imply completion of its enclosing machine.
+fn configuration_is_final(machine: &SimulationStateMachine, active: &[String]) -> bool {
+    let leaves = active
+        .iter()
+        .filter(|id| {
+            !active.iter().any(|other| {
+                machine
+                    .states
+                    .iter()
+                    .any(|state| state.id == *other && state.parent_state_id.as_ref() == Some(*id))
+            })
+        })
+        .collect::<Vec<_>>();
+    !leaves.is_empty()
+        && leaves.into_iter().all(|id| {
+            machine
+                .states
+                .iter()
+                .find(|state| state.id == *id)
+                .is_some_and(|state| {
+                    state.is_final
+                        && state.parent_state_id.as_ref().is_none_or(|parent| {
+                            machine
+                                .states
+                                .iter()
+                                .any(|root| root.id == *parent && root.parent_state_id.is_none())
+                        })
+                })
+        })
+}
+
+fn all_subjects_final(subjects: &[CoreSubjectRunState<'_>]) -> bool {
+    !subjects.is_empty()
+        && subjects
+            .iter()
+            .all(|subject| configuration_is_final(subject.machine, &subject.active))
+}
+
+fn policy_stop_reason(
+    evaluator: &ExpressionEvaluator,
+    scenario: &ConcurrentSimulationScenario,
+    status: SimulationStatus,
+    timeline: &[SimTraceEntry],
+) -> Option<SimulationTermination> {
+    let policy = &scenario.termination_policy;
+    if policy.on_blocked && status == SimulationStatus::Blocked {
+        return Some(SimulationTermination::Blocked);
+    }
+    if !policy.on_all_satisfied && !policy.on_any_violated {
+        return None;
+    }
+    let subject = scenario.subjects.first()?.subject_id.as_str();
+    let outcomes =
+        deadline::evaluate_samples(evaluator, subject, status, &scenario.requirements, timeline);
+    if policy.on_any_violated && outcomes.iter().any(|outcome| outcome.status == "violated") {
+        return Some(SimulationTermination::RequirementViolated);
+    }
+    if policy.on_all_satisfied
+        && !outcomes.is_empty()
+        && outcomes.iter().all(|outcome| outcome.status == "satisfied")
+    {
+        return Some(SimulationTermination::RequirementsSatisfied);
+    }
+    None
+}
+
 pub fn run_concurrent_simulation_model(
     model: &SimulationModel,
     scenario: ConcurrentSimulationScenario,
     clock: SimulationClockConfig,
 ) -> Result<SimulationTrace, CoreSimulationError> {
+    let evaluator = &ExpressionEvaluator::default();
     validate_simulation_model(model)?;
     let mut subjects = Vec::<CoreSubjectRunState<'_>>::new();
     for subject in &scenario.subjects {
@@ -415,12 +526,13 @@ pub fn run_concurrent_simulation_model(
         for state_id in &subject.active {
             elapsed.insert((subject.subject_id.clone(), state_id.clone()), 0.0);
             apply_state_behavior(
+                evaluator,
                 subject.machine,
                 state_id,
                 &subject.subject_id,
                 &mut values,
                 &mut pending_signals,
-            );
+            )?;
             apply_state_lookup_tables(
                 subject.machine,
                 state_id,
@@ -430,15 +542,22 @@ pub fn run_concurrent_simulation_model(
             )?;
         }
     }
-    propagate_model_values(model, &subjects, &mut values)?;
+    propagate_model_values(evaluator, model, &subjects, &mut values)?;
 
     let mut timeline = vec![make_core_entry(t, &subjects, &values, Vec::new())];
     let max_steps = scenario.max_steps.max(1);
+    let mut termination = SimulationTermination::TimeBudgetExhausted;
     while step < max_steps && t <= clock.max_time_s {
+        if all_subjects_final(&subjects)
+            || policy_stop_reason(evaluator, &scenario, status, &timeline).is_some()
+        {
+            break;
+        }
         let mut fired = false;
         let mut events = Vec::<SimTraceEvent>::new();
 
         if fire_immediate_transitions(
+            evaluator,
             &mut subjects,
             &mut values,
             &mut pending_signals,
@@ -449,25 +568,29 @@ pub fn run_concurrent_simulation_model(
             clock.change_loop_limit,
             &mut events,
         )? {
-            propagate_model_values(model, &subjects, &mut values)?;
+            propagate_model_values(evaluator, model, &subjects, &mut values)?;
             fired = true;
         }
 
         let mut scripted_event_fired = false;
         for subject in subjects.iter_mut() {
-            if step >= max_steps || subject.event_index >= subject.events.len() {
+            if configuration_is_final(subject.machine, &subject.active)
+                || step >= max_steps
+                || subject.event_index >= subject.events.len()
+            {
                 continue;
             }
             let event = subject.events[subject.event_index].clone();
             subject.event_index += 1;
             let Some(transition) = select_transition(
+                evaluator,
                 subject.machine,
                 &subject.active,
                 SimulationTriggerKind::Event,
                 &event.trigger,
                 &subject.subject_id,
                 &values,
-            )
+            )?
             .cloned() else {
                 events.push(SimTraceEvent {
                     kind: "event.dropped".to_string(),
@@ -483,12 +606,14 @@ pub fn run_concurrent_simulation_model(
             step += 1;
             let before = subject.active.clone();
             apply_effects(
+                evaluator,
                 &transition.effects,
                 &subject.subject_id,
                 &mut values,
                 &mut pending_signals,
-            );
+            )?;
             subject.active = apply_state_change(
+                evaluator,
                 subject.machine,
                 &subject.subject_id,
                 &before,
@@ -510,10 +635,11 @@ pub fn run_concurrent_simulation_model(
             fired = true;
         }
         if scripted_event_fired {
-            propagate_model_values(model, &subjects, &mut values)?;
+            propagate_model_values(evaluator, model, &subjects, &mut values)?;
         }
 
         if fire_immediate_transitions(
+            evaluator,
             &mut subjects,
             &mut values,
             &mut pending_signals,
@@ -524,13 +650,31 @@ pub fn run_concurrent_simulation_model(
             clock.change_loop_limit,
             &mut events,
         )? {
-            propagate_model_values(model, &subjects, &mut values)?;
+            propagate_model_values(evaluator, model, &subjects, &mut values)?;
             fired = true;
         }
 
-        if !fired && step < max_steps {
-            let next_after = next_after_duration(&subjects, &elapsed, &values);
-            let next_change = next_change_crossing_duration(&subjects, &values)?;
+        // Process already-due absolute times and zero-duration after triggers
+        // before advancing the clock; scripted events retain their priority.
+        if fire_after_transitions(
+            evaluator,
+            &mut subjects,
+            &mut values,
+            &mut pending_signals,
+            &mut history,
+            &mut elapsed,
+            &mut step,
+            max_steps,
+            &mut events,
+            t,
+        )? {
+            propagate_model_values(evaluator, model, &subjects, &mut values)?;
+            fired = true;
+        }
+
+        if !fired && step < max_steps && !all_subjects_final(&subjects) {
+            let next_after = next_after_duration(evaluator, &subjects, &elapsed, &values, t)?;
+            let next_change = next_change_crossing_duration(evaluator, &subjects, &values)?;
             let fixed_step = clock.fixed_step_s.max(0.0);
             let mut duration = [Some(fixed_step), next_after, next_change]
                 .into_iter()
@@ -544,8 +688,14 @@ pub fn run_concurrent_simulation_model(
             if duration <= 0.0 {
                 duration = fixed_step;
             }
+            termination = if duration > 0.0 {
+                SimulationTermination::TimeBudgetExhausted
+            } else {
+                SimulationTermination::Quiescent
+            };
             if duration > 0.0 && t + duration <= clock.max_time_s {
                 integrate_active_state_behaviors(
+                    evaluator,
                     &subjects,
                     &mut values,
                     &mut elapsed,
@@ -554,11 +704,12 @@ pub fn run_concurrent_simulation_model(
                     &mut timeline,
                     t,
                 )?;
-                propagate_model_values(model, &subjects, &mut values)?;
+                propagate_model_values(evaluator, model, &subjects, &mut values)?;
                 t += duration;
                 step += 1;
                 fired = true;
                 fire_after_transitions(
+                    evaluator,
                     &mut subjects,
                     &mut values,
                     &mut pending_signals,
@@ -567,9 +718,11 @@ pub fn run_concurrent_simulation_model(
                     &mut step,
                     max_steps,
                     &mut events,
+                    t,
                 )?;
-                propagate_model_values(model, &subjects, &mut values)?;
+                propagate_model_values(evaluator, model, &subjects, &mut values)?;
                 fire_immediate_transitions(
+                    evaluator,
                     &mut subjects,
                     &mut values,
                     &mut pending_signals,
@@ -580,7 +733,7 @@ pub fn run_concurrent_simulation_model(
                     clock.change_loop_limit,
                     &mut events,
                 )?;
-                propagate_model_values(model, &subjects, &mut values)?;
+                propagate_model_values(evaluator, model, &subjects, &mut values)?;
             }
         }
 
@@ -589,6 +742,14 @@ pub fn run_concurrent_simulation_model(
         } else {
             break;
         }
+    }
+
+    if all_subjects_final(&subjects) {
+        termination = SimulationTermination::FinalState;
+    } else if let Some(reason) = policy_stop_reason(evaluator, &scenario, status, &timeline) {
+        termination = reason;
+    } else if step >= max_steps {
+        termination = SimulationTermination::StepBudgetExhausted;
     }
 
     let primary_subject_id = scenario
@@ -609,11 +770,18 @@ pub fn run_concurrent_simulation_model(
         })
         .collect();
     Ok(SimulationTrace {
+        configuration: Some(SimulationRunConfiguration {
+            schema_version: 1,
+            max_steps,
+            clock,
+            termination_policy: scenario.termination_policy.clone(),
+        }),
         scenario_id: scenario.id,
         subject_id: primary_subject_id,
         channels,
         timeline,
         status,
+        termination: Some(termination),
         requirements: scenario.requirements,
         objectives: scenario.objectives,
     })
@@ -637,15 +805,17 @@ fn make_core_entry(
 }
 
 fn propagate_model_values(
+    evaluator: &ExpressionEvaluator,
     model: &SimulationModel,
     subjects: &[CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
-    propagate_derived_values(&model.derived_rules, subjects, values)?;
+    propagate_derived_values(evaluator, &model.derived_rules, subjects, values)?;
     propagate_binding_values(&model.binding_rules, subjects, values)
 }
 
 fn propagate_derived_values(
+    evaluator: &ExpressionEvaluator,
     rules: &[SimulationDerivedFeatureRule],
     subjects: &[CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
@@ -661,16 +831,9 @@ fn propagate_derived_values(
             {
                 continue;
             }
-            match eval_value(&rule.expression, &subject.subject_id, values) {
-                Ok(Value::Null) => continue,
+            match eval_value(evaluator, &rule.expression, &subject.subject_id, values) {
                 Ok(value) => {
                     values.insert((subject.subject_id.clone(), rule.feature.clone()), value);
-                }
-                Err(error) if rule.subject_id.is_none() => {
-                    if matches!(error, CoreSimulationError::InvalidExpression(_)) {
-                        continue;
-                    }
-                    return Err(error);
                 }
                 Err(error) => return Err(error),
             }
@@ -865,6 +1028,7 @@ fn generated_continuous_channels(
 }
 
 fn fire_immediate_transitions(
+    evaluator: &ExpressionEvaluator,
     subjects: &mut [CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
@@ -877,6 +1041,7 @@ fn fire_immediate_transitions(
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     if deliver_pending_signals(
+        evaluator,
         subjects,
         values,
         pending_signals,
@@ -895,23 +1060,26 @@ fn fire_immediate_transitions(
                 break;
             }
             let Some(transition) = select_completion_or_change_transition(
+                evaluator,
                 subject.machine,
                 &subject.active,
                 &subject.subject_id,
                 values,
-            )
+            )?
             .cloned() else {
                 continue;
             };
             *step += 1;
             let before = subject.active.clone();
             apply_effects(
+                evaluator,
                 &transition.effects,
                 &subject.subject_id,
                 values,
                 pending_signals,
-            );
+            )?;
             subject.active = apply_state_change(
+                evaluator,
                 subject.machine,
                 &subject.subject_id,
                 &before,
@@ -941,17 +1109,23 @@ fn fire_immediate_transitions(
             loop_fired = true;
             fired = true;
         }
-        let limit_reached_with_pending_transition = loop_fired
-            && iteration + 1 == change_loop_limit
-            && subjects.iter().any(|subject| {
-                select_completion_or_change_transition(
+        let mut limit_reached_with_pending_transition = false;
+        if loop_fired && iteration + 1 == change_loop_limit {
+            for subject in subjects.iter() {
+                if select_completion_or_change_transition(
+                    evaluator,
                     subject.machine,
                     &subject.active,
                     &subject.subject_id,
                     values,
-                )
+                )?
                 .is_some()
-            });
+                {
+                    limit_reached_with_pending_transition = true;
+                    break;
+                }
+            }
+        }
         if limit_reached_with_pending_transition {
             events.push(SimTraceEvent {
                 kind: "change.loop.limit".to_string(),
@@ -971,6 +1145,7 @@ fn fire_immediate_transitions(
 }
 
 fn deliver_pending_signals(
+    evaluator: &ExpressionEvaluator,
     subjects: &mut [CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
@@ -995,25 +1170,28 @@ fn deliver_pending_signals(
                 continue;
             }
             let Some(transition) = select_transition(
+                evaluator,
                 subject.machine,
                 &subject.active,
                 SimulationTriggerKind::Signal,
                 &signal.signal_type,
                 &subject.subject_id,
                 values,
-            )
+            )?
             .cloned() else {
                 continue;
             };
             *step += 1;
             let before = subject.active.clone();
             apply_effects(
+                evaluator,
                 &transition.effects,
                 &subject.subject_id,
                 values,
                 pending_signals,
-            );
+            )?;
             subject.active = apply_state_change(
+                evaluator,
                 subject.machine,
                 &subject.subject_id,
                 &before,
@@ -1052,45 +1230,74 @@ fn signal_targets_subject(signal: &CorePendingSignal, subject_id: &str) -> bool 
 }
 
 fn select_transition<'a>(
+    evaluator: &ExpressionEvaluator,
     machine: &'a SimulationStateMachine,
     active: &[String],
     kind: SimulationTriggerKind,
     trigger: &str,
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
-) -> Option<&'a SimulationTransition> {
-    active.iter().rev().find_map(|state_id| {
-        machine.transitions.iter().find(|transition| {
-            transition.source == *state_id
+) -> Result<Option<&'a SimulationTransition>, CoreSimulationError> {
+    if configuration_is_final(machine, active) {
+        return Ok(None);
+    }
+    for state in active.iter().rev() {
+        for transition in &machine.transitions {
+            if transition.source == *state
                 && transition.trigger.kind == kind
                 && transition.trigger.value.as_deref() == Some(trigger)
-                && guard_allows(&transition.guard, subject_id, values)
-        })
-    })
+                && guard_allows(evaluator, &transition.guard, subject_id, values)?
+            {
+                return Ok(Some(transition));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn select_completion_or_change_transition<'a>(
+    evaluator: &ExpressionEvaluator,
     machine: &'a SimulationStateMachine,
     active: &[String],
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
-) -> Option<&'a SimulationTransition> {
-    active.iter().rev().find_map(|state_id| {
-        machine.transitions.iter().find(|transition| {
-            transition.source == *state_id
-                && matches!(
+) -> Result<Option<&'a SimulationTransition>, CoreSimulationError> {
+    if configuration_is_final(machine, active) {
+        return Ok(None);
+    }
+    for state in active.iter().rev() {
+        for transition in &machine.transitions {
+            if transition.source != *state
+                || !matches!(
                     transition.trigger.kind,
                     SimulationTriggerKind::Completion | SimulationTriggerKind::Change
                 )
-                && guard_allows(&transition.guard, subject_id, values)
-                && transition.trigger.value.as_deref().is_none_or(|value| {
-                    value.is_empty() || bool_expression_string(value, subject_id, values)
-                })
-        })
-    })
+            {
+                continue;
+            }
+            if !guard_allows(evaluator, &transition.guard, subject_id, values)? {
+                continue;
+            }
+            // Typed change guards are authoritative. The string is display/legacy input.
+            if transition.trigger.kind == SimulationTriggerKind::Change
+                && transition.guard.is_none()
+                && let Some(text) = transition
+                    .trigger
+                    .value
+                    .as_deref()
+                    .filter(|text| !text.is_empty())
+                && !eval_bool(evaluator, &legacy_guard_ir(text)?, subject_id, values)?
+            {
+                continue;
+            }
+            return Ok(Some(transition));
+        }
+    }
+    Ok(None)
 }
 
 fn apply_state_change(
+    evaluator: &ExpressionEvaluator,
     machine: &SimulationStateMachine,
     subject_id: &str,
     before: &[String],
@@ -1140,53 +1347,81 @@ fn apply_state_change(
     after.extend(entry_states.clone());
 
     for state_id in exit_states.iter().rev() {
-        apply_exit_behavior(machine, state_id, subject_id, values, pending_signals);
+        apply_exit_behavior(
+            evaluator,
+            machine,
+            state_id,
+            subject_id,
+            values,
+            pending_signals,
+        )?;
         record_shallow_history(machine, subject_id, state_id, history);
     }
     for state_id in &entry_states {
         elapsed.insert((subject_id.to_string(), state_id.clone()), 0.0);
-        apply_state_behavior(machine, state_id, subject_id, values, pending_signals);
+        apply_state_behavior(
+            evaluator,
+            machine,
+            state_id,
+            subject_id,
+            values,
+            pending_signals,
+        )?;
         apply_state_lookup_tables(machine, state_id, subject_id, values, 0.0)?;
     }
     Ok(after)
 }
 
 fn next_after_duration(
+    evaluator: &ExpressionEvaluator,
     subjects: &[CoreSubjectRunState<'_>],
     elapsed: &BTreeMap<(String, String), f64>,
     values: &BTreeMap<(String, String), Value>,
-) -> Option<f64> {
-    subjects
-        .iter()
-        .flat_map(|subject| {
-            subject.active.iter().rev().flat_map(move |state_id| {
-                subject
-                    .machine
-                    .transitions
-                    .iter()
-                    .filter_map(move |transition| {
-                        if transition.source != *state_id
-                            || !matches!(
-                                transition.trigger.kind,
-                                SimulationTriggerKind::After | SimulationTriggerKind::Time
-                            )
-                            || !guard_allows(&transition.guard, &subject.subject_id, values)
-                        {
-                            return None;
-                        }
-                        let duration = parse_duration_s(transition.trigger.value.as_deref()?)?;
-                        let active_for = elapsed
-                            .get(&(subject.subject_id.clone(), state_id.clone()))
+    current_time_s: f64,
+) -> Result<Option<f64>, CoreSimulationError> {
+    let mut earliest: Option<f64> = None;
+    for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
+        for state in subject.active.iter().rev() {
+            for transition in &subject.machine.transitions {
+                if transition.source != *state
+                    || !matches!(
+                        transition.trigger.kind,
+                        SimulationTriggerKind::After | SimulationTriggerKind::Time
+                    )
+                {
+                    continue;
+                }
+                if !guard_allows(evaluator, &transition.guard, &subject.subject_id, values)? {
+                    continue;
+                }
+                if let Some(duration) = transition
+                    .trigger
+                    .value
+                    .as_deref()
+                    .and_then(parse_duration_s)
+                {
+                    let active_for = if transition.trigger.kind == SimulationTriggerKind::Time {
+                        current_time_s
+                    } else {
+                        elapsed
+                            .get(&(subject.subject_id.clone(), state.clone()))
                             .copied()
-                            .unwrap_or_default();
-                        Some((duration - active_for).max(0.0))
-                    })
-            })
-        })
-        .min_by(|left, right| left.total_cmp(right))
+                            .unwrap_or_default()
+                    };
+                    let remaining = (duration - active_for).max(0.0);
+                    earliest = Some(earliest.map_or(remaining, |old| old.min(remaining)));
+                }
+            }
+        }
+    }
+    Ok(earliest)
 }
 
 fn fire_after_transitions(
+    evaluator: &ExpressionEvaluator,
     subjects: &mut [CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
@@ -1195,56 +1430,66 @@ fn fire_after_transitions(
     step: &mut usize,
     max_steps: usize,
     events: &mut Vec<SimTraceEvent>,
+    current_time_s: f64,
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     for subject in subjects.iter_mut() {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         if *step >= max_steps {
             break;
         }
-        let Some(transition) = subject
-            .active
-            .iter()
-            .rev()
-            .find_map(|state_id| {
-                subject.machine.transitions.iter().find(|transition| {
-                    if transition.source != *state_id
-                        || !matches!(
-                            transition.trigger.kind,
-                            SimulationTriggerKind::After | SimulationTriggerKind::Time
-                        )
-                        || !guard_allows(&transition.guard, &subject.subject_id, values)
-                    {
-                        return false;
-                    }
-                    let Some(duration) = transition
-                        .trigger
-                        .value
-                        .as_deref()
-                        .and_then(parse_duration_s)
-                    else {
-                        return false;
-                    };
+        let mut selected = None;
+        'states: for state_id in subject.active.iter().rev() {
+            for transition in &subject.machine.transitions {
+                if transition.source != *state_id
+                    || !matches!(
+                        transition.trigger.kind,
+                        SimulationTriggerKind::After | SimulationTriggerKind::Time
+                    )
+                {
+                    continue;
+                }
+                if !guard_allows(evaluator, &transition.guard, &subject.subject_id, values)? {
+                    continue;
+                }
+                let Some(duration) = transition
+                    .trigger
+                    .value
+                    .as_deref()
+                    .and_then(parse_duration_s)
+                else {
+                    continue;
+                };
+                let active_for = if transition.trigger.kind == SimulationTriggerKind::Time {
+                    current_time_s
+                } else {
                     elapsed
                         .get(&(subject.subject_id.clone(), state_id.clone()))
                         .copied()
                         .unwrap_or_default()
-                        + f64::EPSILON
-                        >= duration
-                })
-            })
-            .cloned()
-        else {
+                };
+                if active_for + f64::EPSILON >= duration {
+                    selected = Some(transition.clone());
+                    break 'states;
+                }
+            }
+        }
+        let Some(transition) = selected else {
             continue;
         };
         *step += 1;
         let before = subject.active.clone();
         apply_effects(
+            evaluator,
             &transition.effects,
             &subject.subject_id,
             values,
             pending_signals,
-        );
+        )?;
         subject.active = apply_state_change(
+            evaluator,
             subject.machine,
             &subject.subject_id,
             &before,
@@ -1275,6 +1520,7 @@ fn fire_after_transitions(
 }
 
 fn integrate_active_state_behaviors(
+    evaluator: &ExpressionEvaluator,
     subjects: &[CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
     elapsed: &mut BTreeMap<(String, String), f64>,
@@ -1295,7 +1541,7 @@ fn integrate_active_state_behaviors(
         } else {
             remaining
         };
-        integrate_active_rates_once(subjects, values, dt)?;
+        integrate_active_rates_once(evaluator, subjects, values, dt)?;
         for subject in subjects {
             for state_id in &subject.active {
                 *elapsed
@@ -1314,6 +1560,7 @@ fn integrate_active_state_behaviors(
 }
 
 fn integrate_active_rates_once(
+    evaluator: &ExpressionEvaluator,
     subjects: &[CoreSubjectRunState<'_>],
     values: &mut BTreeMap<(String, String), Value>,
     duration: f64,
@@ -1324,11 +1571,26 @@ fn integrate_active_rates_once(
         return Ok(());
     }
 
-    let k1 = evaluate_rate_vector(&active_rates, &snapshot, &BTreeMap::new())?;
+    let k1 = evaluate_rate_vector(evaluator, &active_rates, &snapshot, &BTreeMap::new())?;
     let half_dt = duration / 2.0;
-    let k2 = evaluate_rate_vector(&active_rates, &snapshot, &scaled_increments(&k1, half_dt))?;
-    let k3 = evaluate_rate_vector(&active_rates, &snapshot, &scaled_increments(&k2, half_dt))?;
-    let k4 = evaluate_rate_vector(&active_rates, &snapshot, &scaled_increments(&k3, duration))?;
+    let k2 = evaluate_rate_vector(
+        evaluator,
+        &active_rates,
+        &snapshot,
+        &scaled_increments(&k1, half_dt),
+    )?;
+    let k3 = evaluate_rate_vector(
+        evaluator,
+        &active_rates,
+        &snapshot,
+        &scaled_increments(&k2, half_dt),
+    )?;
+    let k4 = evaluate_rate_vector(
+        evaluator,
+        &active_rates,
+        &snapshot,
+        &scaled_increments(&k3, duration),
+    )?;
 
     for active_rate in active_rates {
         let current = snapshot
@@ -1341,7 +1603,14 @@ fn integrate_active_rates_once(
                 + 2.0 * k3.get(&active_rate.key).copied().unwrap_or_default()
                 + k4.get(&active_rate.key).copied().unwrap_or_default())
             / 6.0;
-        values.insert(active_rate.key, Value::from(current + delta));
+        let next = current + delta;
+        if !next.is_finite() {
+            return Err(CoreSimulationError::InvalidExpression(format!(
+                "non-finite integrated value for {:?}",
+                active_rate.key
+            )));
+        }
+        values.insert(active_rate.key, Value::from(next));
     }
     Ok(())
 }
@@ -1352,6 +1621,9 @@ fn apply_active_lookup_tables(
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
     for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         for state_id in &subject.active {
             let active_for = elapsed
                 .get(&(subject.subject_id.clone(), state_id.clone()))
@@ -1455,6 +1727,9 @@ struct ActiveRate<'a> {
 fn active_rates<'model>(subjects: &[CoreSubjectRunState<'model>]) -> Vec<ActiveRate<'model>> {
     let mut active = Vec::new();
     for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         for state_id in &subject.active {
             let Some(state) = subject
                 .machine
@@ -1480,6 +1755,7 @@ fn active_rates<'model>(subjects: &[CoreSubjectRunState<'model>]) -> Vec<ActiveR
 }
 
 fn evaluate_rate_vector(
+    evaluator: &ExpressionEvaluator,
     active_rates: &[ActiveRate<'_>],
     base_values: &BTreeMap<(String, String), Value>,
     increments: &BTreeMap<(String, String), f64>,
@@ -1489,7 +1765,12 @@ fn evaluate_rate_vector(
     for active_rate in active_rates {
         vector.insert(
             active_rate.key.clone(),
-            rate_value(active_rate.source, &active_rate.subject_id, &values)?,
+            rate_value(
+                evaluator,
+                active_rate.source,
+                &active_rate.subject_id,
+                &values,
+            )?,
         );
     }
     Ok(vector)
@@ -1518,11 +1799,15 @@ fn values_with_increments(
 }
 
 fn next_change_crossing_duration(
+    evaluator: &ExpressionEvaluator,
     subjects: &[CoreSubjectRunState<'_>],
     values: &BTreeMap<(String, String), Value>,
 ) -> Result<Option<f64>, CoreSimulationError> {
     let mut earliest: Option<f64> = None;
     for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         for state_id in subject.active.iter().rev() {
             for transition in subject.machine.transitions.iter().filter(|transition| {
                 transition.source == *state_id
@@ -1549,11 +1834,17 @@ fn next_change_crossing_duration(
                 else {
                     continue;
                 };
-                if compare_numbers(current, threshold, op) {
+                if eval_bool(
+                    evaluator,
+                    &serde_json::json!({"kind":"binary","op":op,"left":{"kind":"literal","value":current},"right":{"kind":"literal","value":threshold}}),
+                    &subject.subject_id,
+                    values,
+                )? {
                     earliest = Some(0.0);
                     continue;
                 }
-                let Some(rate) = active_rate_for_feature(subject, state_id, &feature, values)?
+                let Some(rate) =
+                    active_rate_for_feature(evaluator, subject, state_id, &feature, values)?
                 else {
                     continue;
                 };
@@ -1563,7 +1854,12 @@ fn next_change_crossing_duration(
                 let duration = (threshold - current) / rate;
                 if duration.is_finite()
                     && duration >= 0.0
-                    && compare_numbers(current + rate * duration, threshold, op)
+                    && eval_bool(
+                        evaluator,
+                        &serde_json::json!({"kind":"binary","op":op,"left":{"kind":"literal","value":current + rate * duration},"right":{"kind":"literal","value":threshold}}),
+                        &subject.subject_id,
+                        values,
+                    )?
                 {
                     earliest = Some(
                         earliest
@@ -1578,6 +1874,7 @@ fn next_change_crossing_duration(
 }
 
 fn active_rate_for_feature(
+    evaluator: &ExpressionEvaluator,
     subject: &CoreSubjectRunState<'_>,
     state_id: &str,
     feature: &str,
@@ -1597,7 +1894,7 @@ fn active_rate_for_feature(
     rates
         .iter()
         .find(|rate| rate.feature == feature)
-        .map(|rate| rate_value(&rate.source, &subject.subject_id, values))
+        .map(|rate| rate_value(evaluator, &rate.source, &subject.subject_id, values))
         .transpose()
 }
 
@@ -1632,182 +1929,87 @@ fn comparison_against_threshold(
     None
 }
 
-fn compare_numbers(left: f64, right: f64, op: &str) -> bool {
-    match op {
-        ">=" => left >= right,
-        "<=" => left <= right,
-        "==" => (left - right).abs() <= f64::EPSILON,
-        "!=" => (left - right).abs() > f64::EPSILON,
-        ">" => left > right,
-        "<" => left < right,
-        _ => false,
-    }
-}
-
 fn rate_value(
+    evaluator: &ExpressionEvaluator,
     source: &SimulationRateSource,
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
 ) -> Result<f64, CoreSimulationError> {
     match source {
-        SimulationRateSource::Constant(value) => Ok(*value),
-        SimulationRateSource::Feature(feature) => Ok(values
-            .get(&(subject_id.to_string(), feature.clone()))
-            .and_then(Value::as_f64)
-            .unwrap_or_default()),
+        SimulationRateSource::Constant(value) if value.is_finite() => Ok(*value),
+        SimulationRateSource::Constant(_) => Err(CoreSimulationError::InvalidExpression(
+            "non-finite rate".into(),
+        )),
+        SimulationRateSource::Feature(feature) => resolve_feature_path(feature, subject_id, values)
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| {
+                CoreSimulationError::InvalidExpression(format!(
+                    "missing or nonnumeric rate {subject_id}.{feature}"
+                ))
+            }),
         SimulationRateSource::ExpressionIr(expression) => {
-            eval_number(expression, subject_id, values)
+            eval_number(evaluator, expression, subject_id, values)
         }
     }
 }
 
 fn guard_allows(
+    evaluator: &ExpressionEvaluator,
     guard: &Option<SimulationGuard>,
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
-) -> bool {
+) -> Result<bool, CoreSimulationError> {
     match guard {
-        None => true,
-        Some(SimulationGuard::RuntimeFeature(feature)) => values
-            .get(&(subject_id.to_string(), feature.clone()))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        None => Ok(true),
+        Some(SimulationGuard::RuntimeFeature(feature)) => {
+            resolve_feature_path(feature, subject_id, values)
+                .and_then(|value| value.as_bool())
+                .ok_or_else(|| {
+                    CoreSimulationError::InvalidExpression(format!(
+                        "missing or nonboolean guard {subject_id}.{feature}"
+                    ))
+                })
+        }
+        Some(SimulationGuard::ExpressionIr(Value::String(text))) => {
+            eval_bool(evaluator, &legacy_guard_ir(text)?, subject_id, values)
+        }
         Some(SimulationGuard::ExpressionIr(expression)) => {
-            eval_bool(expression, subject_id, values).unwrap_or(false)
+            eval_bool(evaluator, expression, subject_id, values)
         }
     }
 }
 
 fn eval_bool(
+    evaluator: &ExpressionEvaluator,
     expression: &Value,
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
 ) -> Result<bool, CoreSimulationError> {
-    match eval_value(expression, subject_id, values)? {
-        Value::Bool(value) => Ok(value),
-        Value::Number(value) => Ok(value.as_f64().unwrap_or_default() != 0.0),
-        Value::String(value) => Ok(bool_expression_string(&value, subject_id, values)),
-        other => Err(CoreSimulationError::InvalidExpression(format!(
-            "expected boolean, found {other}"
-        ))),
-    }
+    eval_value(evaluator, expression, subject_id, values)?
+        .as_bool()
+        .ok_or_else(|| CoreSimulationError::InvalidExpression("expected Boolean".into()))
 }
 
 fn eval_number(
+    evaluator: &ExpressionEvaluator,
     expression: &Value,
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
 ) -> Result<f64, CoreSimulationError> {
-    eval_value(expression, subject_id, values)?
+    eval_value(evaluator, expression, subject_id, values)?
         .as_f64()
-        .ok_or_else(|| CoreSimulationError::InvalidExpression("expected number".to_string()))
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| CoreSimulationError::InvalidExpression("expected finite number".into()))
 }
 
 fn eval_value(
+    evaluator: &ExpressionEvaluator,
     expression: &Value,
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
 ) -> Result<Value, CoreSimulationError> {
-    let Some(object) = expression.as_object() else {
-        return Ok(expression.clone());
-    };
-    match object.get("kind").and_then(Value::as_str) {
-        Some("literal") => Ok(object.get("value").cloned().unwrap_or(Value::Null)),
-        Some("path") => {
-            let feature = expression_path(expression).ok_or_else(|| {
-                CoreSimulationError::InvalidExpression(
-                    "path expression has no segments".to_string(),
-                )
-            })?;
-            Ok(resolve_feature_path(&feature, subject_id, values).unwrap_or(Value::Null))
-        }
-        Some("unary") => {
-            let op = object.get("op").and_then(Value::as_str).unwrap_or_default();
-            let operand = object
-                .get("operand")
-                .or_else(|| object.get("expr"))
-                .ok_or_else(|| {
-                    CoreSimulationError::InvalidExpression(
-                        "unary expression has no operand".to_string(),
-                    )
-                })?;
-            match op {
-                "not" | "!" => Ok(Value::Bool(!eval_bool(operand, subject_id, values)?)),
-                "-" => Ok(Value::from(-eval_number(operand, subject_id, values)?)),
-                _ => Err(CoreSimulationError::InvalidExpression(format!(
-                    "unsupported unary operator `{op}`"
-                ))),
-            }
-        }
-        Some("binary") => {
-            let op = object.get("op").and_then(Value::as_str).unwrap_or_default();
-            let left = object.get("left").ok_or_else(|| {
-                CoreSimulationError::InvalidExpression(
-                    "binary expression has no left operand".to_string(),
-                )
-            })?;
-            let right = object.get("right").ok_or_else(|| {
-                CoreSimulationError::InvalidExpression(
-                    "binary expression has no right operand".to_string(),
-                )
-            })?;
-            eval_binary(op, left, right, subject_id, values)
-        }
-        Some(other) => Err(CoreSimulationError::InvalidExpression(format!(
-            "unsupported expression kind `{other}`"
-        ))),
-        None => Ok(expression.clone()),
-    }
-}
-
-fn eval_binary(
-    op: &str,
-    left: &Value,
-    right: &Value,
-    subject_id: &str,
-    values: &BTreeMap<(String, String), Value>,
-) -> Result<Value, CoreSimulationError> {
-    match op {
-        "and" | "&&" => Ok(Value::Bool(
-            eval_bool(left, subject_id, values)? && eval_bool(right, subject_id, values)?,
-        )),
-        "or" | "||" => Ok(Value::Bool(
-            eval_bool(left, subject_id, values)? || eval_bool(right, subject_id, values)?,
-        )),
-        "equal" | "==" => Ok(Value::Bool(
-            eval_value(left, subject_id, values)? == eval_value(right, subject_id, values)?,
-        )),
-        "not_equal" | "!=" => Ok(Value::Bool(
-            eval_value(left, subject_id, values)? != eval_value(right, subject_id, values)?,
-        )),
-        "greater" | ">" => Ok(Value::Bool(
-            eval_number(left, subject_id, values)? > eval_number(right, subject_id, values)?,
-        )),
-        "greater_equal" | ">=" => Ok(Value::Bool(
-            eval_number(left, subject_id, values)? >= eval_number(right, subject_id, values)?,
-        )),
-        "less" | "<" => Ok(Value::Bool(
-            eval_number(left, subject_id, values)? < eval_number(right, subject_id, values)?,
-        )),
-        "less_equal" | "<=" => Ok(Value::Bool(
-            eval_number(left, subject_id, values)? <= eval_number(right, subject_id, values)?,
-        )),
-        "add" | "plus" | "+" => Ok(Value::from(
-            eval_number(left, subject_id, values)? + eval_number(right, subject_id, values)?,
-        )),
-        "sub" | "subtract" | "minus" | "-" => Ok(Value::from(
-            eval_number(left, subject_id, values)? - eval_number(right, subject_id, values)?,
-        )),
-        "mul" | "multiply" | "*" => Ok(Value::from(
-            eval_number(left, subject_id, values)? * eval_number(right, subject_id, values)?,
-        )),
-        "div" | "divide" | "/" => Ok(Value::from(
-            eval_number(left, subject_id, values)? / eval_number(right, subject_id, values)?,
-        )),
-        _ => Err(CoreSimulationError::InvalidExpression(format!(
-            "unsupported binary operator `{op}`"
-        ))),
-    }
+    evaluator.evaluate(expression, subject_id, values)
 }
 
 fn expression_path(expression: &Value) -> Option<String> {
@@ -1848,41 +2050,6 @@ fn resolve_feature_path(
         .map(|(_, value)| value)
 }
 
-fn bool_expression_string(
-    expression: &str,
-    subject_id: &str,
-    values: &BTreeMap<(String, String), Value>,
-) -> bool {
-    let trimmed = expression.trim();
-    if trimmed.eq_ignore_ascii_case("true") {
-        return true;
-    }
-    if trimmed.eq_ignore_ascii_case("false") {
-        return false;
-    }
-    for op in [">=", "<=", "==", "!=", ">", "<"] {
-        if let Some((left, right)) = trimmed.split_once(op) {
-            let left = numeric_operand(left.trim(), subject_id, values);
-            let right = numeric_operand(right.trim(), subject_id, values);
-            if let (Some(left), Some(right)) = (left, right) {
-                return match op {
-                    ">=" => left >= right,
-                    "<=" => left <= right,
-                    "==" => (left - right).abs() <= f64::EPSILON,
-                    "!=" => (left - right).abs() > f64::EPSILON,
-                    ">" => left > right,
-                    "<" => left < right,
-                    _ => false,
-                };
-            }
-        }
-    }
-    values
-        .get(&(subject_id.to_string(), trimmed.to_string()))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
 fn numeric_operand(
     operand: &str,
     subject_id: &str,
@@ -1911,45 +2078,50 @@ fn parse_duration_s(value: &str) -> Option<f64> {
 }
 
 fn apply_state_behavior(
+    evaluator: &ExpressionEvaluator,
     machine: &SimulationStateMachine,
     state_id: &str,
     subject_id: &str,
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
-) {
+) -> Result<(), CoreSimulationError> {
     let Some(state) = machine.states.iter().find(|state| state.id == state_id) else {
-        return;
+        return Ok(());
     };
     if let Some(behavior) = &state.entry_behavior {
-        apply_action_sequence(behavior, subject_id, values, pending_signals);
+        apply_action_sequence(evaluator, behavior, subject_id, values, pending_signals)?;
     }
+    Ok(())
 }
 
 fn apply_exit_behavior(
+    evaluator: &ExpressionEvaluator,
     machine: &SimulationStateMachine,
     state_id: &str,
     subject_id: &str,
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
-) {
+) -> Result<(), CoreSimulationError> {
     let Some(state) = machine.states.iter().find(|state| state.id == state_id) else {
-        return;
+        return Ok(());
     };
     if let Some(behavior) = &state.exit_behavior {
-        apply_action_sequence(behavior, subject_id, values, pending_signals);
+        apply_action_sequence(evaluator, behavior, subject_id, values, pending_signals)?;
     }
+    Ok(())
 }
 
 fn apply_action_sequence(
+    evaluator: &ExpressionEvaluator,
     sequence: &SimulationActionSequence,
     subject_id: &str,
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
-) {
+) -> Result<(), CoreSimulationError> {
     for action in &sequence.actions {
         match action {
             SimulationActionNode::Effect(effect) => {
-                apply_effect(effect, subject_id, values, pending_signals);
+                apply_effect(evaluator, effect, subject_id, values, pending_signals)?;
             }
             SimulationActionNode::Decision {
                 guard,
@@ -1957,39 +2129,67 @@ fn apply_action_sequence(
                 else_branch,
             } => {
                 let guard = Some(guard.clone());
-                if guard_allows(&guard, subject_id, values) {
-                    apply_action_sequence(then_branch, subject_id, values, pending_signals);
+                if guard_allows(evaluator, &guard, subject_id, values)? {
+                    apply_action_sequence(
+                        evaluator,
+                        then_branch,
+                        subject_id,
+                        values,
+                        pending_signals,
+                    )?;
                 } else if let Some(else_branch) = else_branch {
-                    apply_action_sequence(else_branch, subject_id, values, pending_signals);
+                    apply_action_sequence(
+                        evaluator,
+                        else_branch,
+                        subject_id,
+                        values,
+                        pending_signals,
+                    )?;
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn apply_effects(
+    evaluator: &ExpressionEvaluator,
     effects: &[SimulationEffect],
     subject_id: &str,
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
-) {
+) -> Result<(), CoreSimulationError> {
     for effect in effects {
-        apply_effect(effect, subject_id, values, pending_signals);
+        apply_effect(evaluator, effect, subject_id, values, pending_signals)?;
     }
+    Ok(())
 }
 
 fn apply_effect(
+    evaluator: &ExpressionEvaluator,
     effect: &SimulationEffect,
     subject_id: &str,
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
-) {
+) -> Result<(), CoreSimulationError> {
     match effect {
         SimulationEffect::Assign(effect) => {
             values.insert(
                 (subject_id.to_string(), effect.feature.clone()),
                 effect.value.clone(),
             );
+        }
+        SimulationEffect::AssignExpression {
+            feature,
+            expression,
+        } => {
+            if !values.contains_key(&(subject_id.to_string(), feature.clone())) {
+                return Err(CoreSimulationError::InvalidExpression(format!(
+                    "assignment target {subject_id}.{feature} is not initialized"
+                )));
+            }
+            let value = eval_value(evaluator, expression, subject_id, values)?;
+            values.insert((subject_id.to_string(), feature.clone()), value);
         }
         SimulationEffect::EmitSignal(effect) => {
             pending_signals.push_back(CorePendingSignal {
@@ -2000,6 +2200,7 @@ fn apply_effect(
         }
         SimulationEffect::Log(_) => {}
     }
+    Ok(())
 }
 
 fn initial_configuration(
@@ -2268,6 +2469,18 @@ fn validate_machine(
     }
 
     for state in &machine.states {
+        if state.is_final
+            && state.parent_state_id.as_ref().is_some_and(|parent_id| {
+                machine
+                    .states
+                    .iter()
+                    .any(|parent| parent.id == *parent_id && parent.parent_state_id.is_some())
+            })
+        {
+            findings.push(finding("state.nested_final_unsupported",
+                "Nested region completion is not supported; only machine-level final states terminate a subject.",
+                Some(&machine.id), Some(&state.id)));
+        }
         if let Some(parent_id) = &state.parent_state_id
             && !state_ids.contains(parent_id)
         {
@@ -2334,6 +2547,23 @@ fn validate_machine(
             findings.push(finding(
                 "transition.missing_trigger",
                 "Triggered transitions must declare a trigger value.",
+                Some(&machine.id),
+                Some(&transition.id),
+            ));
+        }
+        if matches!(
+            transition.trigger.kind,
+            SimulationTriggerKind::After | SimulationTriggerKind::Time
+        ) && transition
+            .trigger
+            .value
+            .as_deref()
+            .and_then(parse_duration_s)
+            .is_none()
+        {
+            findings.push(finding(
+                "transition.time_unsupported",
+                "Timed triggers require a finite nonnegative literal in seconds or milliseconds.",
                 Some(&machine.id),
                 Some(&transition.id),
             ));
@@ -2461,6 +2691,210 @@ mod tests {
     use super::*;
 
     #[test]
+    fn absolute_time_uses_mission_clock_instead_of_state_entry_time() {
+        for (absolute, expected) in [(3.0, 3.0), (1.0, 2.0), (0.0, 2.0)] {
+            let mut done = state("done", false);
+            done.is_final = true;
+            let mut after = transition("after", "a", "b", "2");
+            after.trigger.kind = SimulationTriggerKind::After;
+            let mut at = transition("at", "b", "done", &absolute.to_string());
+            at.trigger.kind = SimulationTriggerKind::Time;
+            let model = SimulationModel {
+                id: "clock".into(),
+                machines: vec![SimulationStateMachine {
+                    id: "machine".into(),
+                    label: "machine".into(),
+                    states: vec![state("a", true), state("b", false), done],
+                    transitions: vec![after, at],
+                }],
+                derived_rules: vec![],
+                binding_rules: vec![],
+            };
+            let scenario = ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
+                id: "clock".into(),
+                subjects: vec![ConcurrentSubjectScenario {
+                    subject_id: "subject".into(),
+                    machine_id: "machine".into(),
+                    initial_state_id: None,
+                    events: vec![],
+                }],
+                max_steps: 30,
+                step_duration_s: 1.0,
+                clock_config: None,
+                initial_values: BTreeMap::new(),
+                requirements: vec![],
+                objectives: vec![],
+            };
+            let trace =
+                run_concurrent_simulation_model(&model, scenario, SimulationClockConfig::default())
+                    .unwrap();
+            assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
+            assert_eq!(trace.timeline.last().unwrap().t, expected);
+        }
+    }
+
+    #[test]
+    fn final_state_waits_for_every_subject_and_wins_over_step_budget() {
+        let mut done = state("done", false);
+        done.is_final = true;
+        let model = SimulationModel {
+            id: "demo".into(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".into(),
+                label: "Machine".into(),
+                states: vec![state("running", true), done],
+                transitions: vec![SimulationTransition {
+                    id: "finish".into(),
+                    source: "running".into(),
+                    target: "done".into(),
+                    trigger: SimulationTrigger {
+                        kind: SimulationTriggerKind::After,
+                        value: Some("2".into()),
+                    },
+                    guard: None,
+                    effects: vec![],
+                }],
+            }],
+            derived_rules: vec![],
+            binding_rules: vec![],
+        };
+        let scenario = ConcurrentSimulationScenario {
+            termination_policy: Default::default(),
+            id: "run".into(),
+            subjects: vec![
+                ConcurrentSubjectScenario {
+                    subject_id: "already_done".into(),
+                    machine_id: "Machine".into(),
+                    initial_state_id: Some("done".into()),
+                    events: vec![SimulationEvent {
+                        id: "ignored".into(),
+                        trigger: "ignored".into(),
+                    }],
+                },
+                ConcurrentSubjectScenario {
+                    subject_id: "running".into(),
+                    machine_id: "Machine".into(),
+                    initial_state_id: None,
+                    events: vec![],
+                },
+            ],
+            max_steps: 3,
+            step_duration_s: 1.0,
+            clock_config: None,
+            initial_values: BTreeMap::new(),
+            requirements: vec![],
+            objectives: vec![],
+        };
+        let trace = run_concurrent_simulation_model(
+            &model,
+            scenario.clone(),
+            SimulationClockConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
+        assert_eq!(trace.timeline.last().unwrap().t, 2.0);
+        assert_eq!(trace.status, SimulationStatus::Completed);
+        assert!(
+            trace
+                .timeline
+                .iter()
+                .flat_map(|f| &f.events)
+                .all(|e| e.kind != "event.dropped")
+        );
+        let mut initial = scenario;
+        initial.subjects.pop();
+        let trace =
+            run_concurrent_simulation_model(&model, initial, SimulationClockConfig::default())
+                .unwrap();
+        assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
+        assert_eq!(trace.timeline.len(), 1);
+        assert_eq!(trace.timeline[0].t, 0.0);
+        let mut nested = model.machines[0].clone();
+        nested.states[1].parent_state_id = Some("running".into());
+        let mut root = state("root", true);
+        root.is_final = false;
+        nested.states[0].parent_state_id = Some("root".into());
+        nested.states.push(root);
+        assert!(!configuration_is_final(
+            &nested,
+            &["root".into(), "running".into(), "done".into()]
+        ));
+        let mut unsupported = model.clone();
+        unsupported.machines = vec![nested];
+        assert!(
+            validate_simulation_model(&unsupported)
+                .unwrap_err()
+                .findings
+                .iter()
+                .any(|f| f.code == "state.nested_final_unsupported")
+        );
+    }
+
+    #[test]
+    fn stop_reason_distinguishes_limits_from_quiescence() {
+        let model = SimulationModel {
+            id: "demo".into(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".into(),
+                label: "Machine".into(),
+                states: vec![state("idle", true)],
+                transitions: vec![],
+            }],
+            derived_rules: vec![],
+            binding_rules: vec![],
+        };
+        let scenario = ConcurrentSimulationScenario {
+            termination_policy: Default::default(),
+            id: "run".into(),
+            subjects: vec![ConcurrentSubjectScenario {
+                subject_id: "subject".into(),
+                machine_id: "Machine".into(),
+                initial_state_id: None,
+                events: vec![],
+            }],
+            max_steps: 2,
+            step_duration_s: 1.0,
+            clock_config: None,
+            initial_values: BTreeMap::new(),
+            requirements: vec![],
+            objectives: vec![],
+        };
+        for (step, limit, expected, last_time) in [
+            (1.0, 10.0, SimulationTermination::StepBudgetExhausted, 2.0),
+            (1.0, 1.5, SimulationTermination::TimeBudgetExhausted, 1.0),
+            (1.0, 0.0, SimulationTermination::TimeBudgetExhausted, 0.0),
+            (0.0, 10.0, SimulationTermination::Quiescent, 0.0),
+        ] {
+            let trace = run_concurrent_simulation_model(
+                &model,
+                scenario.clone(),
+                SimulationClockConfig {
+                    fixed_step_s: step,
+                    max_time_s: limit,
+                    ..SimulationClockConfig::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(trace.termination, Some(expected));
+            assert_eq!(trace.timeline.last().unwrap().t, last_time);
+            assert_eq!(trace.status, SimulationStatus::Completed);
+            let mut json = serde_json::to_value(&trace).unwrap();
+            assert_eq!(
+                serde_json::from_value::<SimulationTrace>(json.clone()).unwrap(),
+                trace
+            );
+            json.as_object_mut().unwrap().remove("termination");
+            assert_eq!(
+                serde_json::from_value::<SimulationTrace>(json)
+                    .unwrap()
+                    .termination,
+                None
+            );
+        }
+    }
+
+    #[test]
     fn validator_rejects_ambiguous_transitions() {
         let model = SimulationModel {
             id: "demo".to_string(),
@@ -2523,6 +2957,7 @@ mod tests {
         let error = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -2598,6 +3033,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![
                     ConcurrentSubjectScenario {
@@ -2679,6 +3115,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -2746,6 +3183,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -2863,6 +3301,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -2928,6 +3367,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3020,6 +3460,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3098,6 +3539,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3210,6 +3652,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![
                     ConcurrentSubjectScenario {
@@ -3292,6 +3735,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "bed".to_string(),
@@ -3342,6 +3786,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3402,6 +3847,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3479,6 +3925,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![ConcurrentSubjectScenario {
                     subject_id: "subject".to_string(),
@@ -3564,6 +4011,7 @@ mod tests {
         let trace = run_concurrent_simulation_model(
             &model,
             ConcurrentSimulationScenario {
+                termination_policy: Default::default(),
                 id: "scenario".to_string(),
                 subjects: vec![
                     ConcurrentSubjectScenario {
