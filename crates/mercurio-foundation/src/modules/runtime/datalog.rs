@@ -518,11 +518,10 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
     let mut requirement_kinds = BTreeSet::new();
     let mut relationship_kinds = BTreeMap::<String, BTreeSet<String>>::new();
 
-    for fact in rulepacks
-        .iter()
-        .flat_map(|pack| pack.facts.iter())
-        .chain(extract_graph_facts(graph).iter())
-    {
+    // Classification facts come from rulepacks. Graph extraction emits only
+    // element/kind/layer/source/edge facts, all ignored by this match; the
+    // built-in indexes traverse the graph directly below.
+    for fact in rulepacks.iter().flat_map(|pack| pack.facts.iter()) {
         match (fact.predicate.as_str(), fact.terms.as_slice()) {
             ("requirement_kind", [kind]) => {
                 requirement_kinds.insert(kind.to_string());
