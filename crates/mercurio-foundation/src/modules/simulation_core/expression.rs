@@ -155,7 +155,6 @@ mod tests {
         for expression in [
             json!({"kind":"binary","op":"divide","left":{"kind":"literal","value":1},"right":{"kind":"literal","value":0}}),
             json!({"kind":"binary","op":"multiply","left":{"kind":"literal","value":1e308},"right":{"kind":"literal","value":1e308}}),
-            json!({"kind":"binary","op":"or","left":{"kind":"literal","value":true},"right":{"kind":"path","segments":["missing"]}}),
             json!({"kind":"path","segments":[""]}),
             json!({"kind":"binary","op":"subtract","left":{"kind":"literal","value":"bad"},"right":{"kind":"literal","value":1}}),
             json!({"kind":"call","function":"unsupported","args":[]}),
@@ -165,6 +164,28 @@ mod tests {
                 "{expression}"
             );
         }
+    }
+
+    #[test]
+    fn conditional_operators_skip_unused_runtime_values_but_validate_structure() {
+        let evaluator = ExpressionEvaluator::default();
+        let values = BTreeMap::new();
+        let missing = json!({"kind":"path","segments":["missing"]});
+        for (op, left, expected) in [("or", true, true), ("and", false, false)] {
+            let expression = json!({"kind":"binary","op":op,
+                "left":{"kind":"literal","value":left},"right":missing});
+            assert_eq!(
+                evaluator.evaluate(&expression, "owner", &values).unwrap(),
+                json!(expected)
+            );
+        }
+        // Required values remain errors, never null sentinels that compare equal.
+        let required = json!({"kind":"binary","op":"equal","left":missing,"right":missing});
+        assert!(evaluator.evaluate(&required, "owner", &values).is_err());
+        // Capability validation covers the whole IR, including unselected branches.
+        let unsupported = json!({"kind":"binary","op":"or","left":{"kind":"literal","value":true},
+            "right":{"kind":"call","function":"unknown","args":[]}});
+        assert!(evaluator.evaluate(&unsupported, "owner", &values).is_err());
     }
 
     #[test]

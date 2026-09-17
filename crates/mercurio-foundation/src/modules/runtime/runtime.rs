@@ -998,7 +998,7 @@ mod tests {
             ),
             (
                 json!({"kind":"call","function":"sum","args":[{"kind":"path","segments":["items"]}]}),
-                json!(0.0),
+                json!(0),
             ),
         ] {
             assert_eq!(

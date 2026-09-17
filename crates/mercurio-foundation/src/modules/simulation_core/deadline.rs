@@ -307,7 +307,7 @@ mod tests {
         );
     }
     #[test]
-    fn unknown_operands_cannot_satisfy_by_null_equality_or_short_circuit() {
+    fn required_missing_values_and_unsupported_programs_remain_unevaluated() {
         let mut t = trace();
         let missing = json!({"kind":"path","segments":["missing"]});
         for expression in [

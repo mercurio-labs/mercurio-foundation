@@ -60,6 +60,7 @@ pub enum TokenKind {
     LessEqual,
     GreaterEqual,
     Slash,
+    Percent,
     Bang,
     Ampersand,
     Pipe,
@@ -201,11 +202,12 @@ impl<'a> Lexer<'a> {
                     TokenKind::Comma
                 }
                 '.' => {
-                    if self
-                        .peek_next_char()
-                        .is_some_and(|next| next.is_ascii_digit())
+                    if (self.index == 0 || self.bytes[self.index - 1] != b'.')
+                        && self
+                            .peek_next_char()
+                            .is_some_and(|next| next.is_ascii_digit())
                     {
-                        TokenKind::Number(self.lex_fractional_number())
+                        TokenKind::Number(self.lex_fractional_number()?)
                     } else {
                         self.advance_char();
                         TokenKind::Dot
@@ -238,6 +240,10 @@ impl<'a> Lexer<'a> {
                 }
                 '/' if self.peek_next_char() == Some('*') && self.comment_doc_candidate => {
                     TokenKind::BlockDoc(self.consume_doc_block()?)
+                }
+                '%' => {
+                    self.advance_char();
+                    TokenKind::Percent
                 }
                 '/' => {
                     self.advance_char();
@@ -278,7 +284,7 @@ impl<'a> Lexer<'a> {
                 }
                 '\'' => TokenKind::Identifier(self.lex_quoted_identifier()?),
                 '"' => TokenKind::String(self.lex_string_literal()?),
-                _ if ch.is_ascii_digit() => TokenKind::Number(self.lex_number()),
+                _ if ch.is_ascii_digit() => TokenKind::Number(self.lex_number()?),
                 _ if is_ident_start(ch) => self.lex_identifier_or_keyword()?,
                 _ => {
                     return Err(Diagnostic::new(
@@ -308,7 +314,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_number(&mut self) -> String {
+    fn lex_number(&mut self) -> Result<String, Diagnostic> {
         let start = self.index;
         let mut saw_decimal = false;
         while let Some(ch) = self.peek_char() {
@@ -326,10 +332,11 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        self.input[start..self.index].to_string()
+        self.lex_exponent()?;
+        Ok(self.input[start..self.index].to_string())
     }
 
-    fn lex_fractional_number(&mut self) -> String {
+    fn lex_fractional_number(&mut self) -> Result<String, Diagnostic> {
         let start = self.index;
         self.advance_char();
         while let Some(ch) = self.peek_char() {
@@ -339,7 +346,34 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        self.input[start..self.index].to_string()
+        self.lex_exponent()?;
+        Ok(self.input[start..self.index].to_string())
+    }
+
+    fn lex_exponent(&mut self) -> Result<(), Diagnostic> {
+        if !matches!(self.peek_char(), Some('e' | 'E')) {
+            return Ok(());
+        }
+        let span = SourceSpan {
+            start_line: self.line,
+            start_col: self.col,
+            end_line: self.line,
+            end_col: self.col,
+        };
+        self.advance_char();
+        if matches!(self.peek_char(), Some('+' | '-')) {
+            self.advance_char();
+        }
+        if !self.peek_char().is_some_and(|ch| ch.is_ascii_digit()) {
+            return Err(Diagnostic::new(
+                "expected digits in real literal exponent",
+                Some(span),
+            ));
+        }
+        while self.peek_char().is_some_and(|ch| ch.is_ascii_digit()) {
+            self.advance_char();
+        }
+        Ok(())
     }
 
     fn lex_quoted_identifier(&mut self) -> Result<String, Diagnostic> {
@@ -653,6 +687,34 @@ fn is_ident_continue(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{CommentKind, TokenKind, lex};
+
+    #[test]
+    fn exponent_numbers_preserve_range_and_fraction_boundaries() {
+        let kinds = lex("1e3 .25E+2 2.5e-2 1..3 5 % 2")
+            .unwrap()
+            .into_iter()
+            .map(|token| token.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Number("1e3".into()),
+                TokenKind::Number(".25E+2".into()),
+                TokenKind::Number("2.5e-2".into()),
+                TokenKind::Number("1".into()),
+                TokenKind::Dot,
+                TokenKind::Dot,
+                TokenKind::Number("3".into()),
+                TokenKind::Number("5".into()),
+                TokenKind::Percent,
+                TokenKind::Number("2".into()),
+                TokenKind::Eof
+            ]
+        );
+        for source in ["1e", "1E+", ".2e-"] {
+            assert!(lex(source).is_err(), "{source}");
+        }
+    }
 
     #[test]
     fn lexes_minimal_model_subset() {
