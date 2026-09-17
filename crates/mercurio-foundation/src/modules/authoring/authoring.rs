@@ -2877,7 +2877,7 @@ impl Usage {
             header.push_str(&reference_target.as_dot_string());
         }
         if let Some(expression) = &self.expression {
-            header.push_str(" = ");
+            header.push_str(if self.modifiers.iter().any(|m| m == "default") { " default = " } else { " = " });
             header.push_str(expression);
         }
         if self.members.is_empty() && self.raw_body.is_none() {
@@ -5133,6 +5133,7 @@ fn render_metadata_definition_body(
 fn render_modifier_prefix(modifiers: &[String]) -> String {
     let rendered = modifiers
         .iter()
+        .filter(|modifier| modifier.as_str() != "default")
         .filter(|modifier| !is_angle_adornment_modifier(modifier))
         .filter(|modifier| !is_internal_render_modifier(modifier))
         .map(|modifier| {
@@ -5298,7 +5299,7 @@ fn append_usage_relations(header: &mut String, usage: &Usage) {
         );
     }
     if let Some(expression) = &usage.expression {
-        header.push_str(" = ");
+        header.push_str(if usage.modifiers.iter().any(|m| m == "default") { " default = " } else { " = " });
         header.push_str(expression);
     }
 }
