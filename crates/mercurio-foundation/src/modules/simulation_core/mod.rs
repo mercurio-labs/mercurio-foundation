@@ -152,6 +152,7 @@ pub enum SimulationStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SimulationTermination {
+    FinalState,
     StepBudgetExhausted,
     TimeBudgetExhausted,
     Quiescent,
@@ -391,6 +392,45 @@ struct CorePendingSignal {
     target: Option<String>,
 }
 
+// Only completion of the machine itself ends a subject. A nested region's
+// final state does not imply completion of its enclosing machine.
+fn configuration_is_final(machine: &SimulationStateMachine, active: &[String]) -> bool {
+    let leaves = active
+        .iter()
+        .filter(|id| {
+            !active.iter().any(|other| {
+                machine
+                    .states
+                    .iter()
+                    .any(|state| state.id == *other && state.parent_state_id.as_ref() == Some(*id))
+            })
+        })
+        .collect::<Vec<_>>();
+    !leaves.is_empty()
+        && leaves.into_iter().all(|id| {
+            machine
+                .states
+                .iter()
+                .find(|state| state.id == *id)
+                .is_some_and(|state| {
+                    state.is_final
+                        && state.parent_state_id.as_ref().is_none_or(|parent| {
+                            machine
+                                .states
+                                .iter()
+                                .any(|root| root.id == *parent && root.parent_state_id.is_none())
+                        })
+                })
+        })
+}
+
+fn all_subjects_final(subjects: &[CoreSubjectRunState<'_>]) -> bool {
+    !subjects.is_empty()
+        && subjects
+            .iter()
+            .all(|subject| configuration_is_final(subject.machine, &subject.active))
+}
+
 pub fn run_concurrent_simulation_model(
     model: &SimulationModel,
     scenario: ConcurrentSimulationScenario,
@@ -452,6 +492,9 @@ pub fn run_concurrent_simulation_model(
     let max_steps = scenario.max_steps.max(1);
     let mut termination = SimulationTermination::TimeBudgetExhausted;
     while step < max_steps && t <= clock.max_time_s {
+        if all_subjects_final(&subjects) {
+            break;
+        }
         let mut fired = false;
         let mut events = Vec::<SimTraceEvent>::new();
 
@@ -472,7 +515,10 @@ pub fn run_concurrent_simulation_model(
 
         let mut scripted_event_fired = false;
         for subject in subjects.iter_mut() {
-            if step >= max_steps || subject.event_index >= subject.events.len() {
+            if configuration_is_final(subject.machine, &subject.active)
+                || step >= max_steps
+                || subject.event_index >= subject.events.len()
+            {
                 continue;
             }
             let event = subject.events[subject.event_index].clone();
@@ -545,7 +591,7 @@ pub fn run_concurrent_simulation_model(
             fired = true;
         }
 
-        if !fired && step < max_steps {
+        if !fired && step < max_steps && !all_subjects_final(&subjects) {
             let next_after = next_after_duration(&subjects, &elapsed, &values);
             let next_change = next_change_crossing_duration(&subjects, &values)?;
             let fixed_step = clock.fixed_step_s.max(0.0);
@@ -613,7 +659,9 @@ pub fn run_concurrent_simulation_model(
         }
     }
 
-    if step >= max_steps {
+    if all_subjects_final(&subjects) {
+        termination = SimulationTermination::FinalState;
+    } else if step >= max_steps {
         termination = SimulationTermination::StepBudgetExhausted;
     }
 
@@ -1086,6 +1134,9 @@ fn select_transition<'a>(
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
 ) -> Option<&'a SimulationTransition> {
+    if configuration_is_final(machine, active) {
+        return None;
+    }
     active.iter().rev().find_map(|state_id| {
         machine.transitions.iter().find(|transition| {
             transition.source == *state_id
@@ -1102,6 +1153,9 @@ fn select_completion_or_change_transition<'a>(
     subject_id: &str,
     values: &BTreeMap<(String, String), Value>,
 ) -> Option<&'a SimulationTransition> {
+    if configuration_is_final(machine, active) {
+        return None;
+    }
     active.iter().rev().find_map(|state_id| {
         machine.transitions.iter().find(|transition| {
             transition.source == *state_id
@@ -1185,6 +1239,7 @@ fn next_after_duration(
 ) -> Option<f64> {
     subjects
         .iter()
+        .filter(|subject| !configuration_is_final(subject.machine, &subject.active))
         .flat_map(|subject| {
             subject.active.iter().rev().flat_map(move |state_id| {
                 subject
@@ -1225,6 +1280,9 @@ fn fire_after_transitions(
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     for subject in subjects.iter_mut() {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         if *step >= max_steps {
             break;
         }
@@ -1379,6 +1437,9 @@ fn apply_active_lookup_tables(
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
     for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         for state_id in &subject.active {
             let active_for = elapsed
                 .get(&(subject.subject_id.clone(), state_id.clone()))
@@ -1482,6 +1543,9 @@ struct ActiveRate<'a> {
 fn active_rates<'model>(subjects: &[CoreSubjectRunState<'model>]) -> Vec<ActiveRate<'model>> {
     let mut active = Vec::new();
     for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         for state_id in &subject.active {
             let Some(state) = subject
                 .machine
@@ -1550,6 +1614,9 @@ fn next_change_crossing_duration(
 ) -> Result<Option<f64>, CoreSimulationError> {
     let mut earliest: Option<f64> = None;
     for subject in subjects {
+        if configuration_is_final(subject.machine, &subject.active) {
+            continue;
+        }
         for state_id in subject.active.iter().rev() {
             for transition in subject.machine.transitions.iter().filter(|transition| {
                 transition.source == *state_id
@@ -2295,6 +2362,18 @@ fn validate_machine(
     }
 
     for state in &machine.states {
+        if state.is_final
+            && state.parent_state_id.as_ref().is_some_and(|parent_id| {
+                machine
+                    .states
+                    .iter()
+                    .any(|parent| parent.id == *parent_id && parent.parent_state_id.is_some())
+            })
+        {
+            findings.push(finding("state.nested_final_unsupported",
+                "Nested region completion is not supported; only machine-level final states terminate a subject.",
+                Some(&machine.id), Some(&state.id)));
+        }
         if let Some(parent_id) = &state.parent_state_id
             && !state_ids.contains(parent_id)
         {
@@ -2486,6 +2565,102 @@ pub mod tuple_value_map {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_state_waits_for_every_subject_and_wins_over_step_budget() {
+        let mut done = state("done", false);
+        done.is_final = true;
+        let model = SimulationModel {
+            id: "demo".into(),
+            machines: vec![SimulationStateMachine {
+                id: "Machine".into(),
+                label: "Machine".into(),
+                states: vec![state("running", true), done],
+                transitions: vec![SimulationTransition {
+                    id: "finish".into(),
+                    source: "running".into(),
+                    target: "done".into(),
+                    trigger: SimulationTrigger {
+                        kind: SimulationTriggerKind::After,
+                        value: Some("2".into()),
+                    },
+                    guard: None,
+                    effects: vec![],
+                }],
+            }],
+            derived_rules: vec![],
+            binding_rules: vec![],
+        };
+        let scenario = ConcurrentSimulationScenario {
+            id: "run".into(),
+            subjects: vec![
+                ConcurrentSubjectScenario {
+                    subject_id: "already_done".into(),
+                    machine_id: "Machine".into(),
+                    initial_state_id: Some("done".into()),
+                    events: vec![SimulationEvent {
+                        id: "ignored".into(),
+                        trigger: "ignored".into(),
+                    }],
+                },
+                ConcurrentSubjectScenario {
+                    subject_id: "running".into(),
+                    machine_id: "Machine".into(),
+                    initial_state_id: None,
+                    events: vec![],
+                },
+            ],
+            max_steps: 3,
+            step_duration_s: 1.0,
+            clock_config: None,
+            initial_values: BTreeMap::new(),
+            requirements: vec![],
+            objectives: vec![],
+        };
+        let trace = run_concurrent_simulation_model(
+            &model,
+            scenario.clone(),
+            SimulationClockConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
+        assert_eq!(trace.timeline.last().unwrap().t, 2.0);
+        assert_eq!(trace.status, SimulationStatus::Completed);
+        assert!(
+            trace
+                .timeline
+                .iter()
+                .flat_map(|f| &f.events)
+                .all(|e| e.kind != "event.dropped")
+        );
+        let mut initial = scenario;
+        initial.subjects.pop();
+        let trace =
+            run_concurrent_simulation_model(&model, initial, SimulationClockConfig::default())
+                .unwrap();
+        assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
+        assert_eq!(trace.timeline.len(), 1);
+        assert_eq!(trace.timeline[0].t, 0.0);
+        let mut nested = model.machines[0].clone();
+        nested.states[1].parent_state_id = Some("running".into());
+        let mut root = state("root", true);
+        root.is_final = false;
+        nested.states[0].parent_state_id = Some("root".into());
+        nested.states.push(root);
+        assert!(!configuration_is_final(
+            &nested,
+            &["root".into(), "running".into(), "done".into()]
+        ));
+        let mut unsupported = model.clone();
+        unsupported.machines = vec![nested];
+        assert!(
+            validate_simulation_model(&unsupported)
+                .unwrap_err()
+                .findings
+                .iter()
+                .any(|f| f.code == "state.nested_final_unsupported")
+        );
+    }
 
     #[test]
     fn stop_reason_distinguishes_limits_from_quiescence() {
