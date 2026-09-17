@@ -337,7 +337,7 @@ impl Evaluation {
 impl DerivedIndexes {
     pub fn from_evaluation(evaluation: Evaluation) -> Self {
         let mut indexes = Self {
-            explanations: evaluation.explanations.clone(),
+            explanations: evaluation.explanations,
             ..Self::default()
         };
 
@@ -803,7 +803,7 @@ impl FactIndex {
 
     // Choose the narrowest bound column, retaining insertion order so the first
     // derivation and its explanation are unchanged. Unification checks the rest.
-    fn matching_candidates(&self, atom: &Atom, binding: &HashMap<String, String>) -> Vec<&Fact> {
+    fn matching_candidates(&self, atom: &Atom, binding: &HashMap<&String, &String>) -> Vec<&Fact> {
         let facts = self.candidates(&atom.predicate);
         let Some(columns) = self.by_term.get(&atom.predicate) else {
             return Vec::new();
@@ -812,7 +812,7 @@ impl FactIndex {
         for (position, term) in atom.terms.iter().enumerate() {
             let value = match term {
                 Term::Const(value) => Some(value),
-                Term::Var(name) => binding.get(name),
+                Term::Var(name) => binding.get(name).copied(),
             };
             if let Some(value) = value {
                 let Some(rows) = columns.get(position).and_then(|column| column.get(value)) else {
@@ -855,7 +855,7 @@ where
     while changed {
         changed = false;
         for rule in rules {
-            for (derived, source_facts) in derive_rule(rule, &index, &[])? {
+            for (derived, source_facts) in derive_rule_filtered(rule, &index, &[], Some(&known))? {
                 if known.insert(derived.clone()) {
                     index.insert(derived.clone());
                     explanations.insert(
@@ -971,7 +971,18 @@ fn derive_rule(
     index: &FactIndex,
     overlay: &[Fact],
 ) -> Result<Vec<(Fact, Vec<Fact>)>, DatalogError> {
-    let mut bindings = vec![(HashMap::<String, String>::new(), Vec::<Fact>::new())];
+    derive_rule_filtered(rule, index, overlay, None)
+}
+
+fn derive_rule_filtered(
+    rule: &Rule,
+    index: &FactIndex,
+    overlay: &[Fact],
+    known: Option<&BTreeSet<Fact>>,
+) -> Result<Vec<(Fact, Vec<Fact>)>, DatalogError> {
+    // Borrow rule terms and evidence throughout the join. Only successful new
+    // derivations need owned strings and evidence in the fixpoint evaluator.
+    let mut bindings = vec![(HashMap::<&String, &String>::new(), Vec::<&Fact>::new())];
 
     for atom in &rule.body {
         // Check every predicate fact before filtering: a bound value must not
@@ -997,10 +1008,10 @@ fn derive_rule(
         for (binding, source_facts) in bindings {
             let candidates = index.matching_candidates(atom, &binding);
             for fact in candidates.iter().chain(overlay_candidates.iter()) {
-                if let Some(next_binding) = unify(atom, fact, &binding) {
+                if let Some(next_binding) = unify_borrowed(atom, fact, &binding) {
                     let mut next_sources = source_facts.clone();
-                    if !next_sources.iter().any(|existing| existing == *fact) {
-                        next_sources.push((*fact).clone());
+                    if !next_sources.iter().any(|existing| existing == fact) {
+                        next_sources.push(*fact);
                     }
                     next.push((next_binding, next_sources));
                 }
@@ -1013,12 +1024,18 @@ fn derive_rule(
         }
     }
 
-    bindings
-        .into_iter()
-        .map(|(binding, source_facts)| {
-            instantiate(&rule.head, &binding).map(|fact| (fact, source_facts))
-        })
-        .collect()
+    let mut results = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for (binding, source_facts) in bindings {
+        let fact = instantiate_borrowed(&rule.head, &binding)?;
+        if let Some(known) = known {
+            if known.contains(&fact) || !emitted.insert(fact.clone()) {
+                continue;
+            }
+        }
+        results.push((fact, source_facts.into_iter().cloned().collect()));
+    }
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -1074,6 +1091,55 @@ fn derive_rule_reference(
         .collect()
 }
 
+fn unify_borrowed<'a>(
+    atom: &'a Atom,
+    fact: &'a Fact,
+    binding: &HashMap<&'a String, &'a String>,
+) -> Option<HashMap<&'a String, &'a String>> {
+    let mut next = binding.clone();
+    for (term, value) in atom.terms.iter().zip(&fact.terms) {
+        match term {
+            Term::Const(expected) if expected != value => return None,
+            Term::Const(_) => {}
+            Term::Var(name) => {
+                if let Some(existing) = next.get(name) {
+                    if *existing != value {
+                        return None;
+                    }
+                } else {
+                    next.insert(name, value);
+                }
+            }
+        }
+    }
+    Some(next)
+}
+
+fn instantiate_borrowed(
+    atom: &Atom,
+    binding: &HashMap<&String, &String>,
+) -> Result<Fact, DatalogError> {
+    let terms = atom
+        .terms
+        .iter()
+        .map(|term| match term {
+            Term::Const(value) => Ok(value.clone()),
+            Term::Var(name) => binding
+                .get(name)
+                .map(|value| (*value).clone())
+                .ok_or_else(|| DatalogError::UnsafeVariable {
+                    rule_id: atom.predicate.clone(),
+                    variable: name.clone(),
+                }),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Fact {
+        predicate: atom.predicate.clone(),
+        terms,
+    })
+}
+
+#[cfg(test)]
 fn unify(
     atom: &Atom,
     fact: &Fact,
@@ -1098,6 +1164,7 @@ fn unify(
     Some(next)
 }
 
+#[cfg(test)]
 fn instantiate(atom: &Atom, binding: &HashMap<String, String>) -> Result<Fact, DatalogError> {
     let terms = atom
         .terms
@@ -1190,6 +1257,22 @@ mod tests {
             for rule in &rules {
                 let actual = derive_rule(rule, &index, &[]).unwrap();
                 assert_eq!(actual, derive_rule_reference(rule, &index, &[]).unwrap());
+                let known = index
+                    .by_predicate
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let mut emitted = BTreeSet::new();
+                let expected_new = actual
+                    .iter()
+                    .filter(|(fact, _)| !known.contains(fact) && emitted.insert(fact.clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    derive_rule_filtered(rule, &index, &[], Some(&known)).unwrap(),
+                    expected_new
+                );
                 for (fact, _) in actual {
                     if !index.contains(&fact) {
                         index.insert(fact);
