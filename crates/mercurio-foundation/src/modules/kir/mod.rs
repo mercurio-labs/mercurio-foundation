@@ -534,6 +534,7 @@ pub const STRUCTURAL_FIELD_SPECS: &[(&str, KirFieldKind)] = &[
     ("items", KirFieldKind::ReferenceList),
     ("expression", KirFieldKind::Scalar),
     ("expression_ir", KirFieldKind::Expression),
+    ("effects", KirFieldKind::Expression),
     ("metadata", KirFieldKind::Metadata),
     ("source_span", KirFieldKind::Metadata),
     ("doc", KirFieldKind::Metadata),

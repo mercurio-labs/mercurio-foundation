@@ -9,57 +9,9 @@ pub struct RequirementOutcome {
     pub deadline_s: Option<f64>,
     pub witness_time_s: Option<f64>,
 }
-// Validate all operands before evaluation: unresolved paths and unsupported branches
-// must not disappear through Boolean short circuiting or null equality.
-fn supported(expr: &Value, subject: &str, values: &BTreeMap<(String, String), Value>) -> bool {
-    match expr.get("kind").and_then(Value::as_str) {
-        Some("literal") => expr
-            .get("value")
-            .is_some_and(|v| v.is_boolean() || v.as_f64().is_some_and(f64::is_finite)),
-        Some("path") => {
-            expr.get("segments")
-                .and_then(Value::as_array)
-                .is_some_and(|parts| {
-                    !parts.is_empty()
-                        && parts.iter().all(|p| {
-                            p.as_str()
-                                .or_else(|| p.get("name").and_then(Value::as_str))
-                                .is_some_and(|name| !name.is_empty())
-                        })
-                })
-                && expression_path(expr)
-                    .and_then(|p| resolve_feature_path(&p, subject, values))
-                    .is_some_and(|v| v.is_boolean() || v.as_f64().is_some_and(f64::is_finite))
-        }
-        Some("binary") => {
-            matches!(
-                expr["op"].as_str(),
-                Some(
-                    "and"
-                        | "or"
-                        | "&&"
-                        | "||"
-                        | "equal"
-                        | "=="
-                        | "not_equal"
-                        | "!="
-                        | "greater"
-                        | ">"
-                        | "greater_equal"
-                        | ">="
-                        | "less"
-                        | "<"
-                        | "less_equal"
-                        | "<="
-                )
-            ) && supported(&expr["left"], subject, values)
-                && supported(&expr["right"], subject, values)
-        }
-        _ => false,
-    }
-}
 pub fn evaluate_deadline_requirements(trace: &SimulationTrace) -> Vec<RequirementOutcome> {
     evaluate_samples(
+        &ExpressionEvaluator::default(),
         &trace.subject_id,
         trace.status,
         &trace.requirements,
@@ -67,6 +19,7 @@ pub fn evaluate_deadline_requirements(trace: &SimulationTrace) -> Vec<Requiremen
     )
 }
 pub(super) fn evaluate_samples(
+    evaluator: &ExpressionEvaluator,
     subject_id: &str,
     status: SimulationStatus,
     requirements: &[SimulationRequirement],
@@ -108,14 +61,17 @@ pub(super) fn evaluate_samples(
             let mut witness = None;
             let mut observed_deadline = false;
             for frame in timeline.iter().filter(|f| f.t <= deadline) {
-                if !supported(expression, subject_id, &frame.values) {
-                    out.reason_code = "unsupported_or_unresolved_expression".into();
-                    return out;
-                }
-                let Ok(Value::Bool(value)) = eval_value(expression, subject_id, &frame.values)
-                else {
-                    out.reason_code = "non_boolean_or_invalid_expression".into();
-                    return out;
+                let value = match eval_bool(evaluator, expression, subject_id, &frame.values) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        out.reason_code = if error.to_string().contains("expected Boolean") {
+                            "non_boolean_or_invalid_expression"
+                        } else {
+                            "unsupported_or_unresolved_expression"
+                        }
+                        .into();
+                        return out;
+                    }
                 };
                 if value && witness.is_none() {
                     witness = Some(frame.t);
@@ -176,6 +132,54 @@ mod tests {
         }
     }
     #[test]
+    fn shared_expression_arithmetic_requirement() {
+        let mut t = trace();
+        let difference = json!({"kind":"binary","op":"subtract",
+            "left":{"kind":"path","segments":["temperature"]},
+            "right":{"kind":"literal","value":20}});
+        t.requirements[0].expression = Some(json!({"kind":"binary","op":"greater_equal",
+            "left":difference,"right":{"kind":"literal","value":40}}));
+        let outcome = evaluate_deadline_requirements(&t);
+        assert_eq!(outcome[0].status, "satisfied");
+        assert_eq!(outcome[0].witness_time_s, Some(4.0));
+    }
+
+    #[test]
+    fn shared_expression_strict_guard_and_negation() {
+        let values = BTreeMap::new();
+        assert!(
+            eval_bool(
+                &ExpressionEvaluator::default(),
+                &json!({"kind":"literal","value":1}),
+                "chamber",
+                &values
+            )
+            .is_err()
+        );
+        assert_eq!(
+            eval_number(
+                &ExpressionEvaluator::default(),
+                &json!({"kind":"unary","op":"negate",
+            "expr":{"kind":"literal","value":3}}),
+                "chamber",
+                &values
+            )
+            .unwrap(),
+            -3.0
+        );
+        let missing = json!({"kind":"path","segments":["missing"]});
+        assert!(
+            eval_value(
+                &ExpressionEvaluator::default(),
+                &json!({"kind":"binary","op":"equal", "left":missing,"right":missing}),
+                "chamber",
+                &values
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn stopping_policy_requires_evaluated_evidence_and_respects_blocked_health() {
         let mut trace = trace();
         let mut scenario = ConcurrentSimulationScenario {
@@ -199,35 +203,70 @@ mod tests {
             objectives: vec![],
         };
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline[..5]),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Completed,
+                &trace.timeline[..5]
+            ),
             None
         );
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Completed,
+                &trace.timeline
+            ),
             Some(SimulationTermination::RequirementViolated)
         );
         scenario.requirements[0].deadline_s = Some(6.0);
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Completed,
+                &trace.timeline
+            ),
             Some(SimulationTermination::RequirementsSatisfied)
         );
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Blocked, &trace.timeline),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Blocked,
+                &trace.timeline
+            ),
             Some(SimulationTermination::Blocked)
         );
         scenario.termination_policy.on_blocked = false;
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Blocked, &trace.timeline),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Blocked,
+                &trace.timeline
+            ),
             None
         );
         trace.timeline[0].values.clear();
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Completed,
+                &trace.timeline
+            ),
             None
         );
         scenario.requirements.clear();
         assert_eq!(
-            policy_stop_reason(&scenario, SimulationStatus::Completed, &trace.timeline),
+            policy_stop_reason(
+                &ExpressionEvaluator::default(),
+                &scenario,
+                SimulationStatus::Completed,
+                &trace.timeline
+            ),
             None
         );
         let mut legacy = serde_json::to_value(&scenario).unwrap();

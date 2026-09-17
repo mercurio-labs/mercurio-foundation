@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value};
+use serde_json::Value;
 
 use crate::model::{
     DerivedFeatureCache, DerivedFeatureManifestError, DerivedFeatureRegistry, DerivedPropertyValue,
@@ -153,6 +153,11 @@ impl From<DerivedFeatureManifestError> for RuntimeError {
 impl From<ExpressionEvaluationError> for RuntimeError {
     fn from(value: ExpressionEvaluationError) -> Self {
         match value {
+            ExpressionEvaluationError::MissingBinding(_)
+            | ExpressionEvaluationError::DivisionByZero
+            | ExpressionEvaluationError::NonFiniteResult => {
+                Self::InvalidExpression(value.to_string())
+            }
             ExpressionEvaluationError::InvalidExpression(expression) => {
                 Self::InvalidExpression(expression)
             }
@@ -507,36 +512,30 @@ impl Runtime {
         owner_id: &str,
         context: &ExecutionContext,
     ) -> Result<Value, RuntimeError> {
-        if let Some(path) = parse_function(expression, "count") {
-            let values = self.resolve_path(owner_id, path, context)?;
-            return Ok(Value::Number(Number::from(values.len() as u64)));
-        }
-
-        if let Some(path) = parse_function(expression, "sum") {
-            let values = self.resolve_path(owner_id, path, context)?;
-            let mut total = 0.0_f64;
-
-            for value in values {
-                match value {
-                    Value::Number(number) => {
-                        total += number.as_f64().ok_or_else(|| {
-                            RuntimeError::UnsupportedAggregation(expression.to_string())
-                        })?;
-                    }
-                    _ => {
-                        return Err(RuntimeError::NonNumericValue {
-                            owner: owner_id.to_string(),
-                            feature: expression.to_string(),
-                        });
-                    }
-                }
+        for function in ["count", "sum"] {
+            if let Some(path) = parse_function(expression, function) {
+                let path = path
+                    .strip_prefix("self.")
+                    .ok_or_else(|| RuntimeError::InvalidExpression(expression.to_string()))?;
+                let expression = ExpressionIr::Call {
+                    function: function.to_string(),
+                    args: vec![ExpressionIr::Path {
+                        root: crate::kir::ExpressionPathRoot::SelfRef,
+                        segments: path
+                            .split('.')
+                            .map(|name| ExpressionPathSegment::Name(name.to_string()))
+                            .collect(),
+                    }],
+                };
+                return expression
+                    .evaluate(&mut RuntimeExpressionEvaluationContext {
+                        runtime: self,
+                        owner_id,
+                        context,
+                    })
+                    .map_err(RuntimeError::from);
             }
-
-            let number = Number::from_f64(total)
-                .ok_or_else(|| RuntimeError::UnsupportedAggregation(expression.to_string()))?;
-            return Ok(Value::Number(number));
         }
-
         Err(RuntimeError::InvalidExpression(expression.to_string()))
     }
 
@@ -558,20 +557,6 @@ impl Runtime {
             .map_err(RuntimeError::from)
     }
 
-    fn resolve_path(
-        &self,
-        owner_id: &str,
-        path: &str,
-        context: &ExecutionContext,
-    ) -> Result<Vec<Value>, RuntimeError> {
-        let segments: Vec<&str> = path.split('.').collect();
-        if segments.first() != Some(&"self") || segments.len() < 2 {
-            return Err(RuntimeError::InvalidExpression(path.to_string()));
-        }
-
-        self.resolve_path_segments(owner_id, &segments[1..], context)
-    }
-
     fn resolve_path_segments(
         &self,
         owner_id: &str,
@@ -589,12 +574,22 @@ impl Runtime {
 
             for current in &current_ids {
                 let related = self.graph.relation_targets(current, segment)?;
+                let features = self.named_feature_targets(current, segment)?;
+                let declared = self
+                    .graph
+                    .element_by_element_id(current)
+                    .is_some_and(|element| element.properties.contains_key(*segment));
+                if related.is_empty() && features.is_empty() && !declared {
+                    return Err(RuntimeError::InvalidExpression(format!(
+                        "unresolved path {current}.{segment}"
+                    )));
+                }
                 next_ids.extend(
                     related
                         .into_iter()
                         .map(|element| element.element_id.clone()),
                 );
-                for target in self.named_feature_targets(current, segment)? {
+                for target in features {
                     push_unique(&mut next_ids, target);
                 }
             }
@@ -610,13 +605,21 @@ impl Runtime {
         for current in &current_ids {
             let key = (current.clone(), (*final_segment).to_string());
             if let Some(value) = context.values.get(&key) {
-                values.push(value.clone());
+                if let Value::Array(items) = value {
+                    values.extend(items.clone());
+                } else {
+                    values.push(value.clone());
+                }
                 continue;
             }
 
             if let Some(element) = self.graph.element_by_element_id(current) {
                 if let Some(value) = element.properties.get(*final_segment) {
-                    values.push(value.clone());
+                    if let Value::Array(items) = value {
+                        values.extend(items.clone());
+                    } else {
+                        values.push(value.clone());
+                    }
                     continue;
                 }
             }
@@ -630,6 +633,12 @@ impl Runtime {
                 let mut feature_ids = Vec::new();
                 for feature_id in self.named_feature_targets(current, final_segment)? {
                     push_unique(&mut feature_ids, feature_id);
+                }
+                if feature_ids.is_empty() {
+                    return Err(RuntimeError::InvalidExpression(format!(
+                        "unresolved path {}.{}",
+                        current, final_segment
+                    )));
                 }
                 for feature_id in feature_ids {
                     values.push(self.feature_value(&feature_id, current, context)?);
@@ -931,9 +940,14 @@ impl ExpressionEvaluationContext for RuntimeExpressionEvaluationContext<'_> {
             .map(str::to_string)
             .collect::<Vec<_>>();
         let borrowed = owned.iter().map(String::as_str).collect::<Vec<_>>();
-        self.runtime
+        let values = self
+            .runtime
             .resolve_path_segments(self.owner_id, &borrowed, self.context)
-            .map_err(|err| ExpressionEvaluationError::InvalidExpression(err.to_string()))
+            .map_err(|err| ExpressionEvaluationError::InvalidExpression(err.to_string()))?;
+        if values.iter().any(Value::is_null) {
+            return Err(ExpressionEvaluationError::MissingBinding(owned.join(".")));
+        }
+        Ok(values)
     }
 }
 
@@ -955,6 +969,54 @@ mod tests {
         RuntimeOverlay,
     };
     use crate::model::{KIR_SCHEMA_VERSION, KirDocument, KirElement};
+
+    #[test]
+    fn shared_expression_runtime_bindings_and_collections() {
+        let runtime = sample_runtime();
+        let mut context = ExecutionContext::default();
+        context
+            .values
+            .insert(("owner".into(), "x".into()), json!(8.0));
+        context
+            .values
+            .insert(("owner".into(), "items".into()), json!([]));
+        context
+            .values
+            .insert(("owner".into(), "unset".into()), Value::Null);
+        for (expression, expected) in [
+            (
+                json!({"kind":"binary","op":"-","left":{"kind":"path","segments":["x"]},"right":{"kind":"literal","value":2}}),
+                json!(6.0),
+            ),
+            (
+                json!({"kind":"unary","op":"negate","operand":{"kind":"path","segments":["x"]}}),
+                json!(-8.0),
+            ),
+            (
+                json!({"kind":"call","function":"count","args":[{"kind":"path","segments":["items"]}]}),
+                json!(0),
+            ),
+            (
+                json!({"kind":"call","function":"sum","args":[{"kind":"path","segments":["items"]}]}),
+                json!(0.0),
+            ),
+        ] {
+            assert_eq!(
+                runtime
+                    .evaluate_expression_ir(&expression, "owner", &context)
+                    .unwrap(),
+                expected
+            );
+        }
+        for name in ["missing", "unset"] {
+            let expression = json!({"kind":"binary","op":"==","left":{"kind":"path","segments":[name]},"right":{"kind":"literal","value":null}});
+            assert!(
+                runtime
+                    .evaluate_expression_ir(&expression, "owner", &context)
+                    .is_err()
+            );
+        }
+    }
 
     fn sample_runtime() -> Runtime {
         Runtime::from_document(KirDocument {
