@@ -2990,7 +2990,7 @@ fn definition_from_ast_like(
             .iter()
             .map(Declaration::from_ast)
             .collect(),
-        raw_body: None,
+        raw_body: definition.expression.as_ref().map(render_expr),
         comments: definition.comments.clone(),
         docs: definition.docs.clone(),
         modifiers: definition.modifiers.clone(),
@@ -5414,10 +5414,16 @@ fn render_expr(expr: &Expr) -> String {
             render_expr(right)
         ),
         Expr::Path { root, segment, .. } => format!("{}.{}", render_expr(root), segment),
-        Expr::Call { function, args, .. } => format!(
-            "{function}({})",
-            args.iter().map(render_expr).collect::<Vec<_>>().join(", ")
-        ),
+        Expr::Call { function, args, .. } => {
+            let args = args.iter().map(render_expr).collect::<Vec<_>>();
+            match (function.as_str(), args.as_slice()) {
+                ("if", [condition, yes, no]) => format!("(if {condition} ? {yes} else {no})"),
+                ("#", [sequence, index]) => format!("({sequence})#({index})"),
+                ("+", [value]) => format!("+({value})"),
+                ("%" | ".." | "&" | "|" | "xor" | "implies" | "??", [left, right]) => format!("({left} {function} {right})"),
+                _ => format!("{}({})", function.replace('.', "::"), args.join(", ")),
+            }
+        },
     }
 }
 
@@ -7970,6 +7976,7 @@ mod tests {
             span: ast_span(5, 9, 5, 20),
         });
         let vehicle = ast::Declaration::GenericDefinition(ast::GenericDefinitionDecl {
+            expression: None,
             keyword: "part".to_string(),
             name: "Vehicle".to_string(),
             specializes: Vec::new(),
@@ -8249,6 +8256,7 @@ mod tests {
         use crate::authoring::frontend::ast;
 
         let vehicle = ast::Declaration::GenericDefinition(ast::GenericDefinitionDecl {
+            expression: None,
             keyword: "part".to_string(),
             name: "Vehicle".to_string(),
             specializes: Vec::new(),
