@@ -2465,6 +2465,10 @@ pub fn merge_view_overlay(
             ));
             continue;
         };
+        if let Some(symbol) = decorated.symbols.iter_mut().find(|symbol| symbol.id == edge.symbol) {
+            push_property_array_value(&mut symbol.properties, "overlay_marks",
+                serde_json::to_value(mark).unwrap_or(Value::Null));
+        }
         let label = mark.label.as_deref().unwrap_or(&mark.kind);
         if !edge.label.contains(label) {
             edge.label = format!("{} [{}]", edge.label, label);
@@ -4779,6 +4783,21 @@ fn default_layout_direction() -> String {
     "LR".to_string()
 }
 
+// Fixed vocabulary and colors: arbitrary overlay strings never become SVG styles.
+fn playback_mark(properties: &serde_json::Map<String, Value>) -> Option<(&'static str, &'static str)> {
+    let marks = properties.get("overlay_marks")?.as_array()?;
+    for (kinds, mark, color) in [
+        (&["violating", "violating_state"][..], "violating", "#b91c1c"),
+        (&["active", "active_state", "active_transition"][..], "active", "#15803d"),
+        (&["visited", "visited_state", "visited_transition"][..], "visited", "#2563eb"),
+    ] {
+        if marks.iter().any(|value| value.get("kind").and_then(Value::as_str).is_some_and(|kind| kinds.contains(&kind))) {
+            return Some((mark, color));
+        }
+    }
+    None
+}
+
 /// Render a diagram view DTO to a deterministic, lossless SVG artifact.
 ///
 /// This is intentionally a small built-in renderer for harnesses, exports, and
@@ -4846,14 +4865,19 @@ pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
             .unwrap_or_else(|| default_route(edge.relation.as_str()).to_string());
         let path = svg_routed_path(&route, x1, y1, x2, y2);
         rendered_edges.push((edge.relation.clone(), edge.symbol.clone(), x1, y1, x2, y2));
+        let mark = symbol.and_then(|symbol| playback_mark(&symbol.properties));
+        let color = mark.map(|(_, color)| color).unwrap_or("#334155");
+        let stroke_width = if mark.is_some() { "3" } else { "1.8" };
         svg.push_str(&format!(
-            r##"<path d="{}" fill="none" stroke="#334155" stroke-width="1.8"/>
+            r##"<path data-element-id="{element_id}" data-playback-mark="{mark_name}" d="{}" fill="none" stroke="{color}" stroke-width="{stroke_width}"/>
 <text x="{}" y="{}" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="600" fill="#334155">{}</text>
 "##,
             path,
             (x1 + x2) / 2 + 8,
             (y1 + y2) / 2 - 14 + ((edge_index % 4) as isize * 12),
-            svg_escape(&edge.label)
+            svg_escape(&edge.label),
+            element_id = svg_escape(&edge.id),
+            mark_name = mark.map(|(name, _)| name).unwrap_or("")
         ));
     }
 
@@ -4866,6 +4890,13 @@ pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
             .map(|symbol| symbol.role.as_str())
             .unwrap_or("element");
         let shape = svg_symbol_property(symbol, "shape").unwrap_or_else(|| "node".to_string());
+        let mark = playback_mark(&node.properties);
+        svg.push_str(&format!(r##"<g data-element-id="{}" data-playback-mark="{}">"##,
+            svg_escape(&node.id), mark.map(|(name, _)| name).unwrap_or("")));
+        if let Some((_, color)) = mark {
+            svg.push_str(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" rx="8" fill="none" stroke="{color}" stroke-width="3"/>"##,
+                x.saturating_sub(3), y.saturating_sub(3), node_width + 6, node_height + 6));
+        }
         svg.push_str(&svg_node_shape(
             role,
             &shape,
@@ -4889,6 +4920,7 @@ pub fn render_diagram_svg(view: &DiagramViewDto) -> String {
             y + 64,
             svg_escape(&node.badges.join(" "))
         ));
+        svg.push_str("</g>");
     }
 
     for (relation, symbol_id, x1, y1, x2, y2) in rendered_edges {
@@ -6106,7 +6138,12 @@ mod tests {
                 && edge.label.contains("visited")
         }));
         assert_eq!(render_diagram_svg(&base), base_svg);
-        assert_ne!(render_diagram_svg(&decorated), base_svg);
+        let svg = render_diagram_svg(&decorated);
+        assert!(svg.contains(r##"data-element-id="state.Example.Driving" data-playback-mark="active""##));
+        assert!(svg.contains(r##"data-element-id="transition.Example.DriveMode.ParkedToDriving" data-playback-mark="visited""##));
+        assert!(svg.contains(r##"stroke="#15803d""##));
+        assert!(svg.contains(r##"stroke="#2563eb""##));
+        assert_ne!(svg, base_svg);
     }
 
     #[test]
