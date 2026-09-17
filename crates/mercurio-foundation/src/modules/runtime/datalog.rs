@@ -1224,6 +1224,55 @@ mod tests {
     use crate::model::{KirDocument, KirElement};
 
     #[test]
+    fn fixpoint_preserves_reference_facts_and_explanations() {
+        use super::*;
+        fn reference(facts: Vec<Fact>, rules: &[Rule]) -> Result<Evaluation, DatalogError> {
+            validate_rules(rules)?;
+            let mut known = BTreeSet::new();
+            let mut index = FactIndex::default();
+            for fact in facts { if known.insert(fact.clone()) { index.insert(fact); } }
+            let mut explanations = BTreeMap::new();
+            loop {
+                let mut changed = false;
+                for rule in rules {
+                    for (fact, source_facts) in derive_rule_reference(rule, &index, &[])? {
+                        if known.insert(fact.clone()) {
+                            index.insert(fact.clone());
+                            explanations.insert(fact, Explanation { rule_id: rule.id.clone(), source_facts });
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed { return Ok(Evaluation { facts: known, explanations }); }
+            }
+        }
+        for size in 0..9 {
+            let mut facts = Vec::new();
+            for n in 0..size {
+                for parent in [(n + 1) % size, (n + 3) % size] {
+                    facts.push(Fact::new("edge", [format!("t{n}"), "specializes".into(), format!("t{parent}")]));
+                }
+                facts.push(Fact::new("edge", [format!("t{n}"), "features".into(), format!("f{n}")]));
+            }
+            let mut rules = RulePack::structural_core().rules;
+            rules.extend(rules.clone()); // Preserve duplicate-pack scheduling as well.
+            rules.push(rule("empty", atom("seed", [constant("t0")]), []));
+            rules.push(rule("late", atom("edge", [var("T"), constant("specializes"), constant("t9")]),
+                [atom("seed", [var("T")])]));
+            assert_eq!(evaluate(facts.clone(), &rules), reference(facts.clone(), &rules));
+            rules.reverse();
+            assert_eq!(evaluate(facts.clone(), &rules), reference(facts, &rules));
+        }
+        // A late malformed fact must still be detected after earlier empty passes.
+        let rules = vec![
+            rule("consumer", atom("q", [var("X")]), [atom("p", [var("X")])]),
+            rule("malformed", atom("p", [constant("a"), constant("b")]), []),
+        ];
+        assert_eq!(evaluate(Vec::new(), &rules), reference(Vec::new(), &rules));
+        assert!(evaluate(Vec::new(), &rules).is_err());
+    }
+
+    #[test]
     fn indexed_joins_preserve_reference_derivations_and_explanations() {
         use super::*;
         let mut facts = Vec::new();
