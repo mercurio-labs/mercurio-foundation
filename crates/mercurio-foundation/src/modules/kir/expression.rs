@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,264 @@ pub enum ExpressionIr {
         function: String,
         args: Vec<ExpressionIr>,
     },
+    /// A resolved, bounded call with bindings ordered by dependency.
+    Invoke {
+        function: String,
+        bindings: Vec<ExpressionBinding>,
+        body: Box<ExpressionIr>,
+    },
+    /// A declaration or invocation boundary checked by the shared evaluator.
+    Checked {
+        expression: Box<ExpressionIr>,
+        contract: ExpressionContract,
+    },
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExpressionBinding {
+    /// Resolved feature identity; names never participate in frame lookup.
+    pub feature: String,
+    pub expression: ExpressionIr,
+    /// Definition defaults and locals use lexical lookup. Caller actual arguments
+    /// use the caller context. Missing flags retain the earlier argument contract.
+    #[serde(default)]
+    pub lexical: bool,
+}
+
+/// An expression result sequence, distinct from JSON array data values.
+///
+/// An empty result is `values: []`; one array value is `values: [[...]]`.
+/// The legacy evaluator intentionally collapses this distinction on output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExpressionResult {
+    pub values: Vec<Value>,
+}
+
+impl ExpressionResult {
+    pub fn cardinality(&self) -> u64 {
+        self.values.len() as u64
+    }
+
+    pub fn into_legacy_value(self) -> Value {
+        result_value(self.values)
+    }
+}
+
+/// Supported scalar contract domains. `Any` also accepts opaque JSON data values;
+/// it does not imply an implementation of collection or object type semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpressionValueType {
+    Any,
+    Boolean,
+    String,
+    Integer,
+    Real,
+    Natural,
+    Positive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpressionValueKind {
+    Null,
+    Boolean,
+    String,
+    Integer,
+    Real,
+    Array,
+    Object,
+}
+
+impl ExpressionValueKind {
+    fn of(value: &Value) -> Self {
+        match value {
+            Value::Null => Self::Null,
+            Value::Bool(_) => Self::Boolean,
+            Value::String(_) => Self::String,
+            Value::Number(number) if number.is_i64() || number.is_u64() => Self::Integer,
+            Value::Number(_) => Self::Real,
+            Value::Array(_) => Self::Array,
+            Value::Object(_) => Self::Object,
+        }
+    }
+}
+
+impl ExpressionValueType {
+    fn accepts(self, value: &Value) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Boolean => value.is_boolean(),
+            Self::String => value.is_string(),
+            Self::Integer => value.is_i64() || value.is_u64(),
+            Self::Real => value.is_number(),
+            Self::Natural => value.as_u64().is_some(),
+            Self::Positive => value.as_u64().is_some_and(|number| number > 0),
+        }
+    }
+}
+
+/// Inclusive, literal cardinality bounds. `upper: None` is unlimited.
+/// General bound expressions must be resolved before constructing this contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpressionMultiplicity {
+    pub lower: u64,
+    pub upper: Option<u64>,
+}
+
+impl ExpressionMultiplicity {
+    /// Parse the bounded executable profile: nonnegative integer literals and
+    /// an upper `*`. Unsupported expressions produce an explicit diagnostic.
+    pub fn from_bounds(lower: &str, upper: &str) -> Result<Self, ExpressionContractError> {
+        fn bound(text: &str) -> Result<u64, ExpressionContractError> {
+            let text = text.trim();
+            if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(ExpressionContractError::UnsupportedMultiplicityBound {
+                    bound: text.to_string(),
+                });
+            }
+            text.parse()
+                .map_err(|_| ExpressionContractError::UnsupportedMultiplicityBound {
+                    bound: text.to_string(),
+                })
+        }
+        let multiplicity = Self {
+            lower: bound(lower)?,
+            upper: if upper.trim() == "*" {
+                None
+            } else {
+                Some(bound(upper)?)
+            },
+        };
+        multiplicity.validate()?;
+        Ok(multiplicity)
+    }
+
+    pub fn validate(&self) -> Result<(), ExpressionContractError> {
+        if let Some(upper) = self.upper {
+            if upper < self.lower {
+                return Err(ExpressionContractError::InvalidMultiplicityBounds {
+                    lower: self.lower,
+                    upper,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpressionContract {
+    pub value_type: ExpressionValueType,
+    /// None means unspecified, not an implicit singleton constraint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiplicity: Option<ExpressionMultiplicity>,
+}
+
+impl ExpressionContract {
+    pub fn validate(&self) -> Result<(), ExpressionContractError> {
+        if let Some(multiplicity) = self.multiplicity {
+            multiplicity.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn check(&self, result: &ExpressionResult) -> Result<(), ExpressionContractError> {
+        self.check_values(&result.values)
+    }
+
+    fn check_values(&self, values: &[Value]) -> Result<(), ExpressionContractError> {
+        self.validate()?;
+        let actual = values.len() as u64;
+        if let Some(multiplicity) = self.multiplicity {
+            if actual < multiplicity.lower || multiplicity.upper.is_some_and(|upper| actual > upper)
+            {
+                return Err(ExpressionContractError::MultiplicityMismatch {
+                    lower: multiplicity.lower,
+                    upper: multiplicity.upper,
+                    actual,
+                });
+            }
+        }
+        for (index, value) in values.iter().enumerate() {
+            if !self.value_type.accepts(value) {
+                return Err(ExpressionContractError::TypeMismatch {
+                    expected: self.value_type,
+                    actual: ExpressionValueKind::of(value),
+                    result_index: index as u64 + 1,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum ExpressionContractError {
+    UnsupportedMultiplicityBound {
+        bound: String,
+    },
+    InvalidMultiplicityBounds {
+        lower: u64,
+        upper: u64,
+    },
+    MultiplicityMismatch {
+        lower: u64,
+        upper: Option<u64>,
+        actual: u64,
+    },
+    TypeMismatch {
+        expected: ExpressionValueType,
+        actual: ExpressionValueKind,
+        /// One-based index in the expression result sequence.
+        result_index: u64,
+    },
+}
+
+impl fmt::Display for ExpressionContractError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedMultiplicityBound { bound } => {
+                write!(
+                    f,
+                    "unsupported multiplicity bound `{bound}`; expected a nonnegative integer literal or upper *"
+                )
+            }
+            Self::InvalidMultiplicityBounds { lower, upper } => {
+                write!(
+                    f,
+                    "invalid multiplicity bounds: lower {lower} exceeds upper {upper}"
+                )
+            }
+            Self::MultiplicityMismatch {
+                lower,
+                upper,
+                actual,
+            } => {
+                let upper = upper
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "*".to_string());
+                write!(
+                    f,
+                    "expression cardinality {actual} violates multiplicity {lower}..{upper}"
+                )
+            }
+            Self::TypeMismatch {
+                expected,
+                actual,
+                result_index,
+            } => {
+                write!(
+                    f,
+                    "expression result {result_index} has type {actual:?}, expected {expected:?}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ExpressionContractError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +390,8 @@ impl std::error::Error for ExpressionIrError {}
 
 #[derive(Debug)]
 pub enum ExpressionValidationError {
+    InvalidContract(ExpressionContractError),
+    DuplicateBinding { function: String, feature: String },
     UnsupportedPathRoot(String),
     EmptyPath,
     UnsupportedFunction(String),
@@ -142,6 +401,13 @@ pub enum ExpressionValidationError {
 impl fmt::Display for ExpressionValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidContract(error) => write!(f, "{error}"),
+            Self::DuplicateBinding { function, feature } => {
+                write!(
+                    f,
+                    "duplicate binding `{feature}` in invocation `{function}`"
+                )
+            }
             Self::UnsupportedPathRoot(root) => {
                 write!(f, "unsupported expression_ir path root `{root}`")
             }
@@ -172,7 +438,15 @@ impl ExpressionIr {
             .ok_or(ExpressionIrError::MissingKind)?;
         if !matches!(
             kind,
-            "literal" | "self" | "tuple" | "path" | "unary" | "binary" | "call"
+            "literal"
+                | "self"
+                | "tuple"
+                | "path"
+                | "unary"
+                | "binary"
+                | "call"
+                | "checked"
+                | "invoke"
         ) {
             return Err(ExpressionIrError::UnsupportedKind(kind.to_string()));
         }
@@ -188,6 +462,32 @@ impl ExpressionIr {
     pub fn validate_runtime_supported(&self) -> Result<(), ExpressionValidationError> {
         match self {
             Self::Literal { .. } | Self::SelfRef => Ok(()),
+            Self::Invoke {
+                function,
+                bindings,
+                body,
+            } => {
+                let mut features = BTreeSet::new();
+                for binding in bindings {
+                    if !features.insert(&binding.feature) {
+                        return Err(ExpressionValidationError::DuplicateBinding {
+                            function: function.clone(),
+                            feature: binding.feature.clone(),
+                        });
+                    }
+                    binding.expression.validate_runtime_supported()?;
+                }
+                body.validate_runtime_supported()
+            }
+            Self::Checked {
+                expression,
+                contract,
+            } => {
+                contract
+                    .validate()
+                    .map_err(ExpressionValidationError::InvalidContract)?;
+                expression.validate_runtime_supported()
+            }
             Self::Tuple { items } => {
                 for item in items {
                     item.validate_runtime_supported()?;
@@ -231,6 +531,18 @@ impl ExpressionIr {
     pub fn render_constraint_expression(&self) -> String {
         match self {
             Self::Literal { value } => render_literal_value(value),
+            Self::Checked { expression, .. } => expression.render_constraint_expression(),
+            Self::Invoke {
+                function, bindings, ..
+            } => format!(
+                "{}({})",
+                function,
+                bindings
+                    .iter()
+                    .map(|binding| binding.expression.render_constraint_expression())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::SelfRef => "self".to_string(),
             Self::Tuple { items } => format!(
                 "({})",
@@ -283,6 +595,13 @@ impl ExpressionIr {
                 }
             }
             Self::Unary { expr, .. } => expr.collect_path_variables(output),
+            Self::Checked { expression, .. } => expression.collect_path_variables(output),
+            Self::Invoke { bindings, body, .. } => {
+                for binding in bindings {
+                    binding.expression.collect_path_variables(output);
+                }
+                body.collect_path_variables(output);
+            }
             Self::Binary { left, right, .. } => {
                 left.collect_path_variables(output);
                 right.collect_path_variables(output);
@@ -300,26 +619,140 @@ impl ExpressionIr {
         &self,
         context: &mut impl ExpressionEvaluationContext,
     ) -> Result<Value, ExpressionEvaluationError> {
+        self.evaluate_result(context)
+            .map(ExpressionResult::into_legacy_value)
+    }
+
+    /// Evaluate without collapsing a result sequence into its legacy JSON shape.
+    pub fn evaluate_result(
+        &self,
+        context: &mut impl ExpressionEvaluationContext,
+    ) -> Result<ExpressionResult, ExpressionEvaluationError> {
+        self.check_evaluation_budget()?;
         // Validate every branch, but evaluate only the branches selected by control operators.
         self.validate_runtime_supported()
-            .map_err(|err| ExpressionEvaluationError::InvalidExpression(err.to_string()))?;
-        self.evaluate_values(context).map(result_value)
+            .map_err(|error| match error {
+                ExpressionValidationError::InvalidContract(error) => {
+                    ExpressionEvaluationError::ContractViolation(error)
+                }
+                ExpressionValidationError::DuplicateBinding { function, feature } => {
+                    ExpressionEvaluationError::DuplicateBinding { function, feature }
+                }
+                error => ExpressionEvaluationError::InvalidExpression(error.to_string()),
+            })?;
+        self.evaluate_values(context)
+            .map(|values| ExpressionResult { values })
+    }
+
+    // Preflight is iterative so malformed externally supplied trees cannot exhaust
+    // the call stack before deterministic evaluation limits are checked.
+    fn check_evaluation_budget(&self) -> Result<(), ExpressionEvaluationError> {
+        let mut pending = vec![(self, 1usize, 0usize)];
+        let mut nodes = 0usize;
+        while let Some((expression, depth, invocation_depth)) = pending.pop() {
+            nodes += 1;
+            let invocation_depth =
+                invocation_depth + usize::from(matches!(expression, Self::Invoke { .. }));
+            for (resource, actual, limit) in [
+                ("expression_nodes", nodes, 10_000),
+                ("expression_depth", depth, 256),
+                ("invocation_depth", invocation_depth, 64),
+            ] {
+                if actual > limit {
+                    return Err(ExpressionEvaluationError::ResourceLimitExceeded {
+                        resource: resource.to_string(),
+                        limit,
+                    });
+                }
+            }
+            let mut push = |child| pending.push((child, depth + 1, invocation_depth));
+            match expression {
+                Self::Literal { .. } | Self::SelfRef | Self::Path { .. } => {}
+                Self::Tuple { items } | Self::Call { args: items, .. } => {
+                    for item in items {
+                        push(item);
+                    }
+                }
+                Self::Unary { expr, .. }
+                | Self::Checked {
+                    expression: expr, ..
+                } => push(expr),
+                Self::Binary { left, right, .. } => {
+                    push(left);
+                    push(right);
+                }
+                Self::Invoke { bindings, body, .. } => {
+                    for binding in bindings {
+                        push(&binding.expression);
+                    }
+                    push(body);
+                }
+            }
+        }
+        Ok(())
     }
 
     // Result sequences are separate from JSON data values: a literal array is one value,
     // whereas Tuple concatenates the results of its operands. Null denotes no result.
     fn evaluate_values(
         &self,
-        context: &mut impl ExpressionEvaluationContext,
+        context: &mut dyn ExpressionEvaluationContext,
+    ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        let values = self.evaluate_values_unchecked(context)?;
+        check_result_capacity(0, values.len(), "result_values")?;
+        Ok(values)
+    }
+
+    fn evaluate_values_unchecked(
+        &self,
+        context: &mut dyn ExpressionEvaluationContext,
     ) -> Result<Vec<Value>, ExpressionEvaluationError> {
         match self {
+            Self::Invoke {
+                function,
+                bindings,
+                body,
+            } => {
+                let mut frame = InvocationEvaluationContext {
+                    outer: context,
+                    function,
+                    declared: bindings
+                        .iter()
+                        .map(|binding| binding.feature.clone())
+                        .collect(),
+                    bindings: BTreeMap::new(),
+                    lexical: false,
+                };
+                let mut frame_values = 0;
+                for binding in bindings {
+                    frame.lexical = binding.lexical;
+                    let values = binding.expression.evaluate_values(&mut frame)?;
+                    frame_values =
+                        check_result_capacity(frame_values, values.len(), "frame_values")?;
+                    frame.bindings.insert(binding.feature.clone(), values);
+                }
+                frame.lexical = true;
+                body.evaluate_values(&mut frame)
+            }
+            Self::Checked {
+                expression,
+                contract,
+            } => {
+                let values = expression.evaluate_values(context)?;
+                contract
+                    .check_values(&values)
+                    .map_err(ExpressionEvaluationError::ContractViolation)?;
+                Ok(values)
+            }
             Self::Literal { value: Value::Null } => Ok(Vec::new()),
             Self::Literal { value } => Ok(vec![value.clone()]),
             Self::SelfRef => Ok(vec![Value::String(context.owner_id().to_string())]),
             Self::Tuple { items } => {
                 let mut values = Vec::new();
                 for item in items {
-                    values.extend(item.evaluate_values(context)?);
+                    let item_values = item.evaluate_values(context)?;
+                    check_result_capacity(values.len(), item_values.len(), "result_values")?;
+                    values.extend(item_values);
                 }
                 Ok(values)
             }
@@ -362,7 +795,7 @@ impl ExpressionIr {
 
     fn evaluate_scalar(
         &self,
-        context: &mut impl ExpressionEvaluationContext,
+        context: &mut dyn ExpressionEvaluationContext,
     ) -> Result<Value, ExpressionEvaluationError> {
         let mut values = self.evaluate_values(context)?;
         if values.len() != 1 {
@@ -410,6 +843,17 @@ fn normalize_expression_ir_value(value: &Value) -> Value {
                 .or_insert_with(|| Value::String("self".to_string()));
         }
         Some("tuple") => normalize_array_field(&mut normalized, "items"),
+        Some("checked") => normalize_object_field(&mut normalized, "expression"),
+        Some("invoke") => {
+            normalize_object_field(&mut normalized, "body");
+            if let Some(bindings) = normalized.get_mut("bindings").and_then(Value::as_array_mut) {
+                for binding in bindings {
+                    if let Some(binding) = binding.as_object_mut() {
+                        normalize_object_field(binding, "expression");
+                    }
+                }
+            }
+        }
         Some("unary") => {
             normalize_object_field(&mut normalized, "expr");
             normalize_object_field(&mut normalized, "operand");
@@ -459,10 +903,95 @@ pub trait ExpressionEvaluationContext {
         &mut self,
         segments: &[ExpressionPathSegment],
     ) -> Result<Vec<Value>, ExpressionEvaluationError>;
+
+    /// Resolve a reference originating in a callable definition. Contexts without
+    /// a lexical model environment must reject unsupported nonlocal captures.
+    fn resolve_lexical_path(
+        &mut self,
+        segments: &[ExpressionPathSegment],
+    ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        self.resolve_path(segments)
+    }
+}
+
+struct InvocationEvaluationContext<'a> {
+    outer: &'a mut dyn ExpressionEvaluationContext,
+    function: &'a str,
+    declared: BTreeSet<String>,
+    bindings: BTreeMap<String, Vec<Value>>,
+    lexical: bool,
+}
+
+impl ExpressionEvaluationContext for InvocationEvaluationContext<'_> {
+    fn owner_id(&self) -> &str {
+        self.outer.owner_id()
+    }
+
+    fn resolve_path(
+        &mut self,
+        segments: &[ExpressionPathSegment],
+    ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        self.resolve_frame_path(segments, self.lexical)
+    }
+
+    fn resolve_lexical_path(
+        &mut self,
+        segments: &[ExpressionPathSegment],
+    ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        self.resolve_frame_path(segments, true)
+    }
+}
+
+impl InvocationEvaluationContext<'_> {
+    fn resolve_frame_path(
+        &mut self,
+        segments: &[ExpressionPathSegment],
+        lexical: bool,
+    ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        if let Some(ExpressionPathSegment::Resolved {
+            feature: Some(feature),
+            ..
+        }) = segments.first()
+        {
+            if let Some(values) = self.bindings.get(feature) {
+                if segments.len() != 1 {
+                    return Err(invalid(format!(
+                        "navigation through parameter `{feature}` in invocation `{}` is not supported",
+                        self.function
+                    )));
+                }
+                return Ok(values.clone());
+            }
+            if self.declared.contains(feature) {
+                return Err(ExpressionEvaluationError::UnboundParameter {
+                    function: self.function.to_string(),
+                    feature: feature.clone(),
+                });
+            }
+        }
+        if lexical {
+            self.outer.resolve_lexical_path(segments)
+        } else {
+            self.outer.resolve_path(segments)
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum ExpressionEvaluationError {
+    ContractViolation(ExpressionContractError),
+    DuplicateBinding {
+        function: String,
+        feature: String,
+    },
+    UnboundParameter {
+        function: String,
+        feature: String,
+    },
+    ResourceLimitExceeded {
+        resource: String,
+        limit: usize,
+    },
     InvalidExpression(String),
     MissingBinding(String),
     DivisionByZero,
@@ -483,6 +1012,19 @@ pub enum ExpressionEvaluationError {
 impl fmt::Display for ExpressionEvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ContractViolation(error) => write!(f, "{error}"),
+            Self::DuplicateBinding { function, feature } => write!(
+                f,
+                "duplicate binding `{feature}` in invocation `{function}`"
+            ),
+            Self::UnboundParameter { function, feature } => write!(
+                f,
+                "unbound or cyclic parameter `{feature}` in invocation `{function}`"
+            ),
+            Self::ResourceLimitExceeded { resource, limit } => write!(
+                f,
+                "expression resource limit `{resource}` exceeded ({limit})"
+            ),
             Self::InvalidExpression(expression) => write!(f, "invalid expression: {expression}"),
             Self::MissingBinding(path) => write!(f, "unresolved expression path: {path}"),
             Self::DivisionByZero => write!(f, "division by zero"),
@@ -610,7 +1152,7 @@ fn evaluate_call(
     function: &str,
     args: &[ExpressionIr],
     expression: &ExpressionIr,
-    context: &mut impl ExpressionEvaluationContext,
+    context: &mut dyn ExpressionEvaluationContext,
 ) -> Result<Vec<Value>, ExpressionEvaluationError> {
     let signature = builtin_signature(function).ok_or_else(|| {
         ExpressionEvaluationError::UnsupportedFunction {
@@ -758,6 +1300,21 @@ fn evaluate_call(
         Builtin::Xor => boolean_binary(&left, &right, expression, |a, b| a ^ b)?,
         _ => return Err(invalid("invalid intrinsic operation")),
     }])
+}
+
+fn check_result_capacity(
+    current: usize,
+    additional: usize,
+    resource: &str,
+) -> Result<usize, ExpressionEvaluationError> {
+    const LIMIT: usize = 100_000;
+    current
+        .checked_add(additional)
+        .filter(|total| *total <= LIMIT)
+        .ok_or_else(|| ExpressionEvaluationError::ResourceLimitExceeded {
+            resource: resource.to_string(),
+            limit: LIMIT,
+        })
 }
 
 fn result_value(values: Vec<Value>) -> Value {
@@ -1053,8 +1610,10 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
-        ExpressionPathRoot, ExpressionPathSegment, UnaryExpressionOp,
+        BinaryExpressionOp, ExpressionBinding, ExpressionContract, ExpressionContractError,
+        ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
+        ExpressionMultiplicity, ExpressionPathRoot, ExpressionPathSegment, ExpressionValueKind,
+        ExpressionValueType, UnaryExpressionOp,
     };
 
     #[derive(Default)]
@@ -1844,5 +2403,429 @@ mod tests {
         for (expression, expected) in cases {
             assert_eq!(expression.render_constraint_expression(), expected);
         }
+    }
+    fn checked(
+        expression: ExpressionIr,
+        value_type: ExpressionValueType,
+        lower: u64,
+        upper: Option<u64>,
+    ) -> ExpressionIr {
+        ExpressionIr::Checked {
+            expression: Box::new(expression),
+            contract: ExpressionContract {
+                value_type,
+                multiplicity: Some(ExpressionMultiplicity { lower, upper }),
+            },
+        }
+    }
+
+    fn parameter(feature: &str, name: &str) -> ExpressionIr {
+        ExpressionIr::Path {
+            root: ExpressionPathRoot::SelfRef,
+            segments: vec![ExpressionPathSegment::Resolved {
+                name: name.to_string(),
+                feature: Some(feature.to_string()),
+            }],
+        }
+    }
+
+    #[test]
+    fn explicit_results_preserve_array_data_and_empty_cardinality() {
+        let mut context = TestEvaluationContext::default();
+        let array = literal(json!([1, 2]))
+            .evaluate_result(&mut context)
+            .unwrap();
+        let sequence = ExpressionIr::Tuple {
+            items: vec![literal(json!(1)), literal(json!(2))],
+        }
+        .evaluate_result(&mut context)
+        .unwrap();
+        assert_eq!(array.cardinality(), 1);
+        assert_eq!(sequence.cardinality(), 2);
+        assert_eq!(
+            serde_json::to_value(&array).unwrap(),
+            json!({"values": [[1, 2]]})
+        );
+        assert_eq!(array.into_legacy_value(), sequence.into_legacy_value());
+        assert_eq!(
+            literal(Value::Null)
+                .evaluate_result(&mut context)
+                .unwrap()
+                .cardinality(),
+            0
+        );
+        assert_eq!(
+            literal(json!([]))
+                .evaluate_result(&mut context)
+                .unwrap()
+                .cardinality(),
+            1
+        );
+    }
+
+    #[test]
+    fn scalar_contracts_check_every_value_without_numeric_coercion() {
+        for (value_type, value, accepted) in [
+            (ExpressionValueType::Integer, json!(u64::MAX), true),
+            (ExpressionValueType::Integer, json!(i64::MIN), true),
+            (ExpressionValueType::Integer, json!(1.0), false),
+            (ExpressionValueType::Natural, json!(0), true),
+            (ExpressionValueType::Natural, json!(-1), false),
+            (ExpressionValueType::Natural, json!(1.0), false),
+            (ExpressionValueType::Positive, json!(1), true),
+            (ExpressionValueType::Positive, json!(0), false),
+            (ExpressionValueType::Real, json!(u64::MAX), true),
+            (ExpressionValueType::Real, json!(1.5), true),
+            (ExpressionValueType::Real, json!("1"), false),
+            (ExpressionValueType::Boolean, json!(false), true),
+            (ExpressionValueType::Boolean, json!(0), false),
+            (ExpressionValueType::String, json!("value"), true),
+            (ExpressionValueType::String, json!(["value"]), false),
+            (ExpressionValueType::Any, json!({"data": [1, 2]}), true),
+        ] {
+            let result = checked(literal(value.clone()), value_type, 1, Some(1))
+                .evaluate(&mut TestEvaluationContext::default());
+            assert_eq!(result.is_ok(), accepted, "{value_type:?}: {value}");
+            if accepted {
+                assert_eq!(result.unwrap(), value);
+            }
+        }
+        let result = checked(
+            ExpressionIr::Tuple {
+                items: vec![literal(json!(1)), literal(json!("bad"))],
+            },
+            ExpressionValueType::Integer,
+            2,
+            Some(2),
+        )
+        .evaluate(&mut TestEvaluationContext::default());
+        assert!(matches!(
+            result,
+            Err(ExpressionEvaluationError::ContractViolation(
+                ExpressionContractError::TypeMismatch {
+                    expected: ExpressionValueType::Integer,
+                    actual: ExpressionValueKind::String,
+                    result_index: 2
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn multiplicity_contracts_check_empty_fixed_bounded_and_unlimited_results() {
+        for (count, lower, upper, accepted) in [
+            (0, 0, Some(0), true),
+            (0, 1, Some(1), false),
+            (1, 1, Some(1), true),
+            (2, 1, Some(1), false),
+            (2, 2, Some(4), true),
+            (4, 2, Some(4), true),
+            (5, 2, Some(4), false),
+            (20, 0, None, true),
+        ] {
+            let expression = ExpressionIr::Tuple {
+                items: vec![literal(json!(5)); count],
+            };
+            let result = checked(expression, ExpressionValueType::Integer, lower, upper)
+                .evaluate(&mut TestEvaluationContext::default());
+            assert_eq!(
+                result.is_ok(),
+                accepted,
+                "count={count}, range={lower}..{upper:?}"
+            );
+            if !accepted {
+                assert!(
+                    matches!(result, Err(ExpressionEvaluationError::ContractViolation(
+                    ExpressionContractError::MultiplicityMismatch { actual, .. }
+                )) if actual == count as u64)
+                );
+            }
+        }
+        let unspecified = ExpressionIr::Checked {
+            expression: Box::new(ExpressionIr::Tuple {
+                items: vec![literal(json!(1)), literal(json!(2))],
+            }),
+            contract: ExpressionContract {
+                value_type: ExpressionValueType::Integer,
+                multiplicity: None,
+            },
+        };
+        assert_eq!(evaluate(unspecified), json!([1, 2]));
+        assert!(
+            checked(literal(json!([1, 2])), ExpressionValueType::Any, 2, Some(2))
+                .evaluate(&mut TestEvaluationContext::default())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn multiplicity_bound_errors_are_explicit_and_structured() {
+        assert_eq!(
+            ExpressionMultiplicity::from_bounds(" 2 ", " * ").unwrap(),
+            ExpressionMultiplicity {
+                lower: 2,
+                upper: None
+            }
+        );
+        assert!(matches!(
+            ExpressionMultiplicity::from_bounds("3", "2"),
+            Err(ExpressionContractError::InvalidMultiplicityBounds { lower: 3, upper: 2 })
+        ));
+        for (lower, upper) in [
+            ("n", "4"),
+            ("0", "n + 1"),
+            ("*", "*"),
+            ("-1", "2"),
+            ("0", "1.0"),
+            ("0", "18446744073709551616"),
+        ] {
+            let error = ExpressionMultiplicity::from_bounds(lower, upper).unwrap_err();
+            assert!(matches!(
+                error,
+                ExpressionContractError::UnsupportedMultiplicityBound { .. }
+            ));
+            assert_eq!(
+                serde_json::to_value(error).unwrap()["code"],
+                "unsupported_multiplicity_bound"
+            );
+        }
+        let invalid = checked(literal(json!(1)), ExpressionValueType::Integer, 2, Some(1));
+        assert!(matches!(
+            invalid.evaluate(&mut TestEvaluationContext::default()),
+            Err(ExpressionEvaluationError::ContractViolation(
+                ExpressionContractError::InvalidMultiplicityBounds { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn checked_boundaries_preserve_lazy_controls() {
+        let wrong_type = checked(
+            literal(json!("wrong")),
+            ExpressionValueType::Integer,
+            1,
+            Some(1),
+        );
+        assert_eq!(
+            evaluate(call(
+                "if",
+                vec![literal(json!(true)), literal(json!(5)), wrong_type.clone()]
+            )),
+            json!(5)
+        );
+        assert!(matches!(
+            call(
+                "if",
+                vec![literal(json!(false)), literal(json!(5)), wrong_type]
+            )
+            .evaluate(&mut TestEvaluationContext::default()),
+            Err(ExpressionEvaluationError::ContractViolation(_))
+        ));
+    }
+
+    #[test]
+    fn invocation_frames_use_feature_identity_and_preserve_result_sequences() {
+        let expression = ExpressionIr::Invoke {
+            function: "type.F".to_string(),
+            bindings: vec![
+                ExpressionBinding {
+                    lexical: false,
+                    feature: "feature.F.x".to_string(),
+                    expression: literal(json!(3)),
+                },
+                ExpressionBinding {
+                    lexical: false,
+                    feature: "feature.F.y".to_string(),
+                    expression: binary(
+                        BinaryExpressionOp::Add,
+                        parameter("feature.F.x", "x"),
+                        literal(json!(2)),
+                    ),
+                },
+            ],
+            body: Box::new(ExpressionIr::Invoke {
+                function: "type.G".to_string(),
+                bindings: vec![ExpressionBinding {
+                    lexical: false,
+                    feature: "feature.G.x".to_string(),
+                    expression: parameter("feature.F.y", "y"),
+                }],
+                body: Box::new(ExpressionIr::Tuple {
+                    items: vec![
+                        parameter("feature.F.x", "sameName"),
+                        parameter("feature.G.x", "sameName"),
+                    ],
+                }),
+            }),
+        };
+        assert_eq!(evaluate(expression), json!([3, 5]));
+    }
+
+    #[test]
+    fn invocation_arguments_evaluate_once_and_do_not_shadow_unrelated_ids() {
+        #[derive(Default)]
+        struct CountingContext {
+            reads: usize,
+        }
+        impl ExpressionEvaluationContext for CountingContext {
+            fn owner_id(&self) -> &str {
+                "owner"
+            }
+            fn resolve_path(
+                &mut self,
+                _segments: &[ExpressionPathSegment],
+            ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+                self.reads += 1;
+                Ok(vec![json!(7)])
+            }
+        }
+        let expression = ExpressionIr::Invoke {
+            function: "type.F".to_string(),
+            bindings: vec![ExpressionBinding {
+                lexical: false,
+                feature: "feature.F.x".to_string(),
+                expression: parameter("feature.Outer.x", "x"),
+            }],
+            body: Box::new(binary(
+                BinaryExpressionOp::Add,
+                parameter("feature.F.x", "x"),
+                parameter("feature.F.x", "x"),
+            )),
+        };
+        let mut context = CountingContext::default();
+        assert_eq!(expression.evaluate(&mut context).unwrap(), json!(14));
+        assert_eq!(context.reads, 1);
+    }
+
+    #[test]
+    fn invocation_rejects_duplicate_forward_and_cyclic_bindings() {
+        for (bindings, duplicate) in [
+            (
+                vec![
+                    ExpressionBinding {
+                        lexical: false,
+                        feature: "x".to_string(),
+                        expression: literal(json!(1)),
+                    },
+                    ExpressionBinding {
+                        lexical: false,
+                        feature: "x".to_string(),
+                        expression: literal(json!(2)),
+                    },
+                ],
+                true,
+            ),
+            (
+                vec![
+                    ExpressionBinding {
+                        lexical: false,
+                        feature: "x".to_string(),
+                        expression: parameter("y", "y"),
+                    },
+                    ExpressionBinding {
+                        lexical: false,
+                        feature: "y".to_string(),
+                        expression: literal(json!(2)),
+                    },
+                ],
+                false,
+            ),
+            (
+                vec![ExpressionBinding {
+                    lexical: false,
+                    feature: "x".to_string(),
+                    expression: parameter("x", "x"),
+                }],
+                false,
+            ),
+        ] {
+            let expression = ExpressionIr::Invoke {
+                function: "type.F".to_string(),
+                bindings,
+                body: Box::new(parameter("x", "x")),
+            };
+            let error = expression
+                .evaluate(&mut TestEvaluationContext::default())
+                .unwrap_err();
+            assert!(if duplicate {
+                matches!(error, ExpressionEvaluationError::DuplicateBinding { .. })
+            } else {
+                matches!(error, ExpressionEvaluationError::UnboundParameter { .. })
+            });
+        }
+    }
+
+    #[test]
+    fn invocation_and_expression_resource_limits_are_deterministic() {
+        let mut expression = literal(json!(1));
+        for _ in 0..65 {
+            expression = ExpressionIr::Invoke {
+                function: "type.F".to_string(),
+                bindings: vec![],
+                body: Box::new(expression),
+            };
+        }
+        assert!(
+            matches!(expression.evaluate(&mut TestEvaluationContext::default()), Err(ExpressionEvaluationError::ResourceLimitExceeded { resource, limit: 64 }) if resource == "invocation_depth")
+        );
+        let expression = ExpressionIr::Tuple {
+            items: vec![literal(json!(1)); 10_000],
+        };
+        assert!(
+            matches!(expression.evaluate(&mut TestEvaluationContext::default()), Err(ExpressionEvaluationError::ResourceLimitExceeded { resource, limit: 10_000 }) if resource == "expression_nodes")
+        );
+    }
+
+    #[test]
+    fn checked_invocation_ir_round_trips_and_normalizes_nested_paths() {
+        let expression = ExpressionIr::from_value(&json!({
+            "kind": "invoke", "function": "type.F",
+            "bindings": [{"feature": "feature.F.x", "expression": {"kind": "literal", "value": 8}}],
+            "body": {"kind": "checked", "contract": {"value_type": "integer", "multiplicity": {"lower": 1, "upper": 1}},
+                "expression": {"kind": "path", "segments": [{"name": "x", "feature": "feature.F.x"}]}}
+        })).unwrap();
+        assert_eq!(evaluate(expression.clone()), json!(8));
+        assert_eq!(
+            ExpressionIr::from_value(&expression.to_value().unwrap()).unwrap(),
+            expression
+        );
+    }
+    #[test]
+    fn result_and_frame_caps_prevent_unbounded_sequence_accumulation() {
+        let range = |count| call("..", vec![literal(json!(1)), literal(json!(count))]);
+        let expression = ExpressionIr::Tuple {
+            items: vec![range(50_000), range(50_001)],
+        };
+        assert!(
+            matches!(expression.evaluate(&mut TestEvaluationContext::default()),
+            Err(ExpressionEvaluationError::ResourceLimitExceeded { resource, limit: 100_000 }) if resource == "result_values")
+        );
+        let expression = ExpressionIr::Invoke {
+            function: "type.F".to_string(),
+            bindings: vec![
+                ExpressionBinding {
+                    lexical: false,
+                    feature: "x".to_string(),
+                    expression: range(50_000),
+                },
+                ExpressionBinding {
+                    lexical: false,
+                    feature: "y".to_string(),
+                    expression: range(50_001),
+                },
+            ],
+            body: Box::new(literal(json!(1))),
+        };
+        assert!(
+            matches!(expression.evaluate(&mut TestEvaluationContext::default()),
+            Err(ExpressionEvaluationError::ResourceLimitExceeded { resource, limit: 100_000 }) if resource == "frame_values")
+        );
+        assert_eq!(
+            range(100_000)
+                .evaluate_result(&mut TestEvaluationContext::default())
+                .unwrap()
+                .cardinality(),
+            100_000
+        );
     }
 }

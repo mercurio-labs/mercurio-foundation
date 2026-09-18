@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::kir::ExpressionResult;
 use crate::model::{
     DerivedFeatureCache, DerivedFeatureManifestError, DerivedFeatureRegistry, DerivedPropertyValue,
     ElementProperties, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
@@ -153,7 +154,11 @@ impl From<DerivedFeatureManifestError> for RuntimeError {
 impl From<ExpressionEvaluationError> for RuntimeError {
     fn from(value: ExpressionEvaluationError) -> Self {
         match value {
-            ExpressionEvaluationError::MissingBinding(_)
+            ExpressionEvaluationError::ContractViolation(_)
+            | ExpressionEvaluationError::DuplicateBinding { .. }
+            | ExpressionEvaluationError::UnboundParameter { .. }
+            | ExpressionEvaluationError::ResourceLimitExceeded { .. }
+            | ExpressionEvaluationError::MissingBinding(_)
             | ExpressionEvaluationError::DivisionByZero
             | ExpressionEvaluationError::NonFiniteResult => {
                 Self::InvalidExpression(value.to_string())
@@ -463,12 +468,31 @@ impl Runtime {
         owner_id: &str,
         context: &ExecutionContext,
     ) -> Result<QueryResult<Value>, RuntimeError> {
+        let result = self.evaluate_result(feature_id, owner_id, context)?;
+        Ok(QueryResult {
+            value: result.value.into_legacy_value(),
+            explanation: result.explanation,
+        })
+    }
+
+    /// Evaluate a feature while preserving the distinction between result
+    /// sequences and a single JSON array data value.
+    pub fn evaluate_result(
+        &self,
+        feature_id: &str,
+        owner_id: &str,
+        context: &ExecutionContext,
+    ) -> Result<QueryResult<ExpressionResult>, RuntimeError> {
+        let mut state = RuntimeFeatureEvaluationState::default();
+        state.enter(owner_id, feature_id)?;
         let feature = self
             .graph
             .element_by_element_id(feature_id)
             .ok_or_else(|| RuntimeError::MissingElement(feature_id.to_string()))?;
         if let Some(expression_ir) = feature.properties.get("expression_ir") {
-            let value = self.evaluate_expression_ir(expression_ir, owner_id, context)?;
+            let value = self.evaluate_expression_ir_result(
+                expression_ir, owner_id, context, &mut state,
+            )?;
             return Ok(QueryResult {
                 value,
                 explanation: vec![
@@ -489,7 +513,7 @@ impl Runtime {
                 RuntimeError::InvalidExpression(format!("{feature_id} has no expression"))
             })?;
 
-        let value = self.evaluate_expression(expression, owner_id, context)?;
+        let value = self.evaluate_expression_result(expression, owner_id, context, &mut state)?;
         Ok(QueryResult {
             value,
             explanation: vec![
@@ -506,12 +530,13 @@ impl Runtime {
         result.explanation.join(" -> ")
     }
 
-    fn evaluate_expression(
+    fn evaluate_expression_result(
         &self,
         expression: &str,
         owner_id: &str,
         context: &ExecutionContext,
-    ) -> Result<Value, RuntimeError> {
+        state: &mut RuntimeFeatureEvaluationState,
+    ) -> Result<ExpressionResult, RuntimeError> {
         for function in ["count", "sum"] {
             if let Some(path) = parse_function(expression, function) {
                 let path = path
@@ -528,10 +553,11 @@ impl Runtime {
                     }],
                 };
                 return expression
-                    .evaluate(&mut RuntimeExpressionEvaluationContext {
+                    .evaluate_result(&mut RuntimeExpressionEvaluationContext {
                         runtime: self,
                         owner_id,
                         context,
+                        state,
                     })
                     .map_err(RuntimeError::from);
             }
@@ -539,29 +565,56 @@ impl Runtime {
         Err(RuntimeError::InvalidExpression(expression.to_string()))
     }
 
+    #[cfg(test)]
     fn evaluate_expression_ir(
         &self,
         expression: &Value,
         owner_id: &str,
         context: &ExecutionContext,
     ) -> Result<Value, RuntimeError> {
+        self.evaluate_expression_ir_result(
+            expression, owner_id, context, &mut RuntimeFeatureEvaluationState::default(),
+        ).map(ExpressionResult::into_legacy_value)
+    }
+
+    fn evaluate_expression_ir_result(
+        &self,
+        expression: &Value,
+        owner_id: &str,
+        context: &ExecutionContext,
+        state: &mut RuntimeFeatureEvaluationState,
+    ) -> Result<ExpressionResult, RuntimeError> {
         let expression_ir = ExpressionIr::from_value(expression)
             .map_err(|err| RuntimeError::InvalidExpression(format!("{err}: {expression}")))?;
         let mut evaluation_context = RuntimeExpressionEvaluationContext {
             runtime: self,
             owner_id,
             context,
+            state,
         };
         expression_ir
-            .evaluate(&mut evaluation_context)
+            .evaluate_result(&mut evaluation_context)
             .map_err(RuntimeError::from)
     }
 
+    #[cfg(test)]
     fn resolve_path_segments(
         &self,
         owner_id: &str,
         segments: &[&str],
         context: &ExecutionContext,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        self.resolve_path_segments_with_state(
+            owner_id, segments, context, &mut RuntimeFeatureEvaluationState::default(),
+        )
+    }
+
+    fn resolve_path_segments_with_state(
+        &self,
+        owner_id: &str,
+        segments: &[&str],
+        context: &ExecutionContext,
+        state: &mut RuntimeFeatureEvaluationState,
     ) -> Result<Vec<Value>, RuntimeError> {
         if segments.is_empty() {
             return Err(RuntimeError::InvalidExpression("self".to_string()));
@@ -641,10 +694,9 @@ impl Runtime {
                     )));
                 }
                 for feature_id in feature_ids {
-                    match self.feature_value(&feature_id, current, context)? {
-                        Value::Array(items) => values.extend(items),
-                        value => values.push(value),
-                    }
+                    values.extend(
+                        self.feature_result(&feature_id, current, context, state)?.values,
+                    );
                 }
             } else {
                 values.append(&mut related_values);
@@ -702,12 +754,70 @@ impl Runtime {
         Ok(matches)
     }
 
-    fn feature_value(
+    fn resolved_feature_target(&self, identity: &str) -> Result<Option<String>, RuntimeError> {
+        if self.graph.element_by_element_id(identity).is_some() {
+            return Ok(Some(identity.to_string()));
+        }
+        // Cross-file compilation may retain the resolver's canonical feature
+        // identity until its owning module is loaded. Match its full qualified
+        // name exactly; never resolve a lexical capture by its short name here.
+        let Some(qualified_name) = identity.strip_prefix("feature.") else {
+            return Ok(None);
+        };
+        let mut matches = self.graph.elements().iter().filter(|element| {
+            element.properties.get("qualified_name")
+                .or_else(|| element.properties.get("qualifiedName"))
+                .and_then(Value::as_str) == Some(qualified_name)
+        });
+        let Some(target) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err(RuntimeError::InvalidExpression(format!(
+                "ambiguous resolved feature identity {identity}"
+            )));
+        }
+        Ok(Some(target.element_id.clone()))
+    }
+
+    fn resolved_feature_result(
+        &self,
+        feature_id: &str,
+        current_owner: &str,
+        context: &ExecutionContext,
+        state: &mut RuntimeFeatureEvaluationState,
+    ) -> Result<ExpressionResult, RuntimeError> {
+        let feature = self.graph.element_by_element_id(feature_id)
+            .ok_or_else(|| RuntimeError::MissingElement(feature_id.to_string()))?;
+        let lexical_owner = feature.properties.get("owner")
+            .or_else(|| feature.properties.get("owning_type"))
+            .and_then(Value::as_str);
+        let instance_of_owner = lexical_owner.is_some_and(|owner| {
+            self.graph.element_by_element_id(current_owner).is_some_and(|instance| {
+                ["type", "definition"].iter().any(|key| {
+                    instance.properties.get(*key).is_some_and(|value| {
+                        value.as_str() == Some(owner) || value.as_array().is_some_and(|values| {
+                            values.iter().any(|value| value.as_str() == Some(owner))
+                        })
+                    })
+                })
+            })
+        });
+        let owner_id = if instance_of_owner {
+            current_owner
+        } else {
+            lexical_owner.unwrap_or(current_owner)
+        };
+        self.feature_result(feature_id, owner_id, context, state)
+    }
+
+    fn feature_result(
         &self,
         feature_id: &str,
         owner_id: &str,
         context: &ExecutionContext,
-    ) -> Result<Value, RuntimeError> {
+        state: &mut RuntimeFeatureEvaluationState,
+    ) -> Result<ExpressionResult, RuntimeError> {
         let feature = self
             .graph
             .element_by_element_id(feature_id)
@@ -717,15 +827,27 @@ impl Runtime {
             && let Some(value) = context
                 .values
                 .get(&(owner_id.to_string(), name.to_string()))
+                .or_else(|| self.graph.element_by_element_id(owner_id)
+                    .and_then(|owner| owner.properties.get(name)))
         {
-            return Ok(value.clone());
+            // ExecutionContext retains its legacy convention: arrays supply
+            // multiple bindings. Compiled expressions use explicit results below.
+            return Ok(ExpressionResult {
+                values: match value {
+                    Value::Array(items) => items.clone(),
+                    value => vec![value.clone()],
+                },
+            });
         }
 
         if let Some(expression_ir) = feature.properties.get("expression_ir") {
-            return self.evaluate_expression_ir(expression_ir, owner_id, context);
+            state.enter(owner_id, feature_id)?;
+            let result = self.evaluate_expression_ir_result(expression_ir, owner_id, context, state);
+            state.leave(owner_id, feature_id);
+            return result;
         }
 
-        Ok(Value::String(feature_id.to_string()))
+        Ok(ExpressionResult { values: vec![Value::String(feature_id.to_string())] })
     }
 }
 
@@ -922,10 +1044,56 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
+// These are deterministic execution-profile limits, not language multiplicities.
+const MAX_RUNTIME_FEATURE_DEPTH: usize = 64;
+const MAX_RUNTIME_FEATURE_VISITS: usize = 10_000;
+
+struct RuntimeFeatureEvaluationState {
+    active: BTreeSet<(String, String)>,
+    remaining_visits: usize,
+}
+
+impl Default for RuntimeFeatureEvaluationState {
+    fn default() -> Self {
+        Self { active: BTreeSet::new(), remaining_visits: MAX_RUNTIME_FEATURE_VISITS }
+    }
+}
+
+impl RuntimeFeatureEvaluationState {
+    fn enter(&mut self, owner_id: &str, feature_id: &str) -> Result<(), RuntimeError> {
+        let key = (owner_id.to_string(), feature_id.to_string());
+        if self.active.contains(&key) {
+            return Err(RuntimeError::InvalidExpression(format!(
+                "feature dependency cycle at {owner_id}.{feature_id}"
+            )));
+        }
+        if self.active.len() >= MAX_RUNTIME_FEATURE_DEPTH {
+            return Err(ExpressionEvaluationError::ResourceLimitExceeded {
+                resource: "feature dependency depth".to_string(),
+                limit: MAX_RUNTIME_FEATURE_DEPTH,
+            }.into());
+        }
+        if self.remaining_visits == 0 {
+            return Err(ExpressionEvaluationError::ResourceLimitExceeded {
+                resource: "feature dependency visits".to_string(),
+                limit: MAX_RUNTIME_FEATURE_VISITS,
+            }.into());
+        }
+        self.remaining_visits -= 1;
+        self.active.insert(key);
+        Ok(())
+    }
+
+    fn leave(&mut self, owner_id: &str, feature_id: &str) {
+        self.active.remove(&(owner_id.to_string(), feature_id.to_string()));
+    }
+}
+
 struct RuntimeExpressionEvaluationContext<'a> {
     runtime: &'a Runtime,
     owner_id: &'a str,
     context: &'a ExecutionContext,
+    state: &'a mut RuntimeFeatureEvaluationState,
 }
 
 impl ExpressionEvaluationContext for RuntimeExpressionEvaluationContext<'_> {
@@ -937,6 +1105,18 @@ impl ExpressionEvaluationContext for RuntimeExpressionEvaluationContext<'_> {
         &mut self,
         segments: &[ExpressionPathSegment],
     ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        if let [ExpressionPathSegment::Resolved { feature: Some(identity), .. }] = segments {
+            let feature_id = self.runtime.resolved_feature_target(identity)
+                .map_err(|error| ExpressionEvaluationError::InvalidExpression(error.to_string()))?
+                .ok_or_else(|| ExpressionEvaluationError::MissingBinding(identity.clone()))?;
+            let result = self.runtime.resolved_feature_result(
+                &feature_id, self.owner_id, self.context, self.state,
+            ).map_err(|error| ExpressionEvaluationError::InvalidExpression(error.to_string()))?;
+            if result.values.iter().any(Value::is_null) {
+                return Err(ExpressionEvaluationError::MissingBinding(identity.clone()));
+            }
+            return Ok(result.values);
+        }
         let owned = segments
             .iter()
             .map(ExpressionPathSegment::name)
@@ -945,7 +1125,7 @@ impl ExpressionEvaluationContext for RuntimeExpressionEvaluationContext<'_> {
         let borrowed = owned.iter().map(String::as_str).collect::<Vec<_>>();
         let values = self
             .runtime
-            .resolve_path_segments(self.owner_id, &borrowed, self.context)
+            .resolve_path_segments_with_state(self.owner_id, &borrowed, self.context, self.state)
             .map_err(|err| ExpressionEvaluationError::InvalidExpression(err.to_string()))?;
         if values.iter().any(Value::is_null) {
             return Err(ExpressionEvaluationError::MissingBinding(owned.join(".")));
@@ -963,6 +1143,7 @@ fn parse_function<'a>(expression: &'a str, function: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use serde_json::{Value, json};
@@ -1031,7 +1212,9 @@ mod tests {
                 KirElement { id: "items".into(), kind: "AttributeUsage".into(), layer: 2,
                     properties: [
                         ("declared_name".into(), json!("items")),
-                        ("expression_ir".into(), json!({"kind":"literal","value":[1,2]})),
+                        ("expression_ir".into(), json!({"kind":"tuple","items":[
+                            {"kind":"literal","value":1}, {"kind":"literal","value":2}
+                        ]})),
                     ].into_iter().collect() },
             ],
         }).unwrap();
@@ -1039,6 +1222,175 @@ mod tests {
         assert_eq!(runtime.resolve_path_segments("owner", &["items"], &context).unwrap(), vec![json!(1), json!(2)]);
         let sum = json!({"kind":"call","function":"sum","args":[{"kind":"path","segments":["items"]}]});
         assert_eq!(runtime.evaluate_expression_ir(&sum, "owner", &context).unwrap(), json!(3));
+    }
+
+    fn expression_runtime(features: Vec<(&str, Value)>) -> Runtime {
+        let feature_ids = features.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+        let mut elements = vec![KirElement {
+            id: "owner".into(),
+            kind: "Package".into(),
+            layer: 2,
+            properties: [("features".into(), json!(feature_ids))].into_iter().collect(),
+        }];
+        elements.extend(features.into_iter().map(|(name, expression)| KirElement {
+            id: name.into(),
+            kind: "AttributeUsage".into(),
+            layer: 2,
+            properties: [
+                ("declared_name".into(), json!(name)),
+                ("expression_ir".into(), expression),
+            ].into_iter().collect(),
+        }));
+        Runtime::from_document(KirDocument {
+            metadata: [("kir_schema_version".into(), json!(KIR_SCHEMA_VERSION))].into_iter().collect(),
+            elements,
+        }).unwrap()
+    }
+
+    #[test]
+    fn compiled_array_data_remains_one_result_through_feature_references() {
+        let runtime = expression_runtime(vec![
+            ("array", json!({"kind":"literal","value":[1,2]})),
+            ("alias", json!({"kind":"path","segments":["array"]})),
+            ("count", json!({"kind":"call","function":"count","args":[
+                {"kind":"path","segments":["alias"]}
+            ]})),
+        ]);
+        let context = ExecutionContext::default();
+        for feature in ["array", "alias"] {
+            let result = runtime.evaluate_result(feature, "owner", &context).unwrap();
+            assert_eq!(result.value.values, vec![json!([1, 2])]);
+            assert_eq!(result.value.cardinality(), 1);
+            assert_eq!(runtime.evaluate(feature, "owner", &context).unwrap().value, json!([1, 2]));
+        }
+        assert_eq!(runtime.evaluate("count", "owner", &context).unwrap().value, json!(1));
+    }
+
+    #[test]
+    fn compiled_empty_and_sequence_results_survive_feature_references() {
+        let runtime = expression_runtime(vec![
+            ("empty", json!({"kind":"literal","value":null})),
+            ("items", json!({"kind":"tuple","items":[
+                {"kind":"literal","value":1}, {"kind":"literal","value":2}
+            ]})),
+            ("combined", json!({"kind":"tuple","items":[
+                {"kind":"path","segments":["empty"]}, {"kind":"path","segments":["items"]}
+            ]})),
+        ]);
+        let context = ExecutionContext::default();
+        assert!(runtime.evaluate_result("empty", "owner", &context).unwrap().value.values.is_empty());
+        assert_eq!(runtime.evaluate_result("combined", "owner", &context).unwrap().value.values,
+            vec![json!(1), json!(2)]);
+    }
+
+    #[test]
+    fn compiled_feature_cycles_report_without_poisoning_later_evaluations() {
+        let runtime = expression_runtime(vec![
+            ("a", json!({"kind":"path","segments":["b"]})),
+            ("b", json!({"kind":"path","segments":["a"]})),
+            ("self", json!({"kind":"path","segments":["self"]})),
+            ("leaf", json!({"kind":"literal","value":3})),
+            ("repeated", json!({"kind":"binary","op":"+",
+                "left":{"kind":"path","segments":["leaf"]},
+                "right":{"kind":"path","segments":["leaf"]}})),
+        ]);
+        let context = ExecutionContext::default();
+        for feature in ["a", "self", "a"] {
+            let error = runtime.evaluate(feature, "owner", &context).unwrap_err().to_string();
+            assert!(error.contains("feature dependency cycle"), "{error}");
+            assert!(error.contains(&format!("owner.{feature}")), "{error}");
+        }
+        assert_eq!(runtime.evaluate("repeated", "owner", &context).unwrap().value, json!(6));
+    }
+
+    #[test]
+    fn compiled_feature_dependency_depth_has_a_deterministic_limit() {
+        let names = (0..=super::MAX_RUNTIME_FEATURE_DEPTH).map(|i| format!("f{i}")).collect::<Vec<_>>();
+        let features = names.iter().enumerate().map(|(i, name)| {
+            let expression = match names.get(i + 1) {
+                Some(next) => json!({"kind":"path","segments":[next]}),
+                None => json!({"kind":"literal","value":1}),
+            };
+            (name.as_str(), expression)
+        }).collect();
+        let runtime = expression_runtime(features);
+        let context = ExecutionContext::default();
+        let error = runtime.evaluate(&names[0], "owner", &context).unwrap_err().to_string();
+        assert!(error.contains("feature dependency depth"), "{error}");
+        // Exactly the supported depth remains evaluable.
+        assert_eq!(runtime.evaluate(&names[1], "owner", &context).unwrap().value, json!(1));
+    }
+
+    #[test]
+    fn invocation_lexical_capture_uses_resolved_identity_despite_caller_shadow() {
+        for identity in ["attribute.Library.offset", "feature.Library.offset"] {
+            let runtime = Runtime::from_document(KirDocument {
+                metadata: [("kir_schema_version".into(), json!(KIR_SCHEMA_VERSION))].into_iter().collect(),
+                elements: vec![
+                    KirElement { id:"Library".into(), kind:"Package".into(), layer:2,
+                        properties:BTreeMap::new() },
+                    KirElement { id:"Caller".into(), kind:"Package".into(), layer:2,
+                        properties:[("offset".into(), json!(99))].into_iter().collect() },
+                    KirElement { id:"attribute.Library.offset".into(), kind:"AttributeUsage".into(), layer:2,
+                        properties:[
+                            ("owner".into(), json!("Library")),
+                            ("qualified_name".into(), json!("Library.offset")),
+                            ("declared_name".into(), json!("offset")),
+                            ("expression_ir".into(), json!({"kind":"literal","value":10})),
+                        ].into_iter().collect() },
+                    KirElement { id:"result".into(), kind:"AttributeUsage".into(), layer:2,
+                        properties:[("expression_ir".into(), json!({"kind":"invoke",
+                            "function":"type.Library.F", "bindings":[],
+                            "body":{"kind":"path","segments":[{"name":"offset","feature":identity}]}
+                        }))].into_iter().collect() },
+                ],
+            }).unwrap();
+            let mut context = ExecutionContext::default();
+            context.values.insert(("Caller".into(), "offset".into()), json!(123));
+            assert_eq!(runtime.evaluate("result", "Caller", &context).unwrap().value, json!(10));
+            context.values.insert(("Library".into(), "offset".into()), json!(15));
+            assert_eq!(runtime.evaluate("result", "Caller", &context).unwrap().value, json!(15));
+        }
+    }
+
+    #[test]
+    fn missing_resolved_capture_cannot_fall_back_to_caller_name() {
+        let runtime = expression_runtime(vec![
+            ("offset", json!({"kind":"literal","value":99})),
+            ("result", json!({"kind":"invoke","function":"type.Library.F","bindings":[],
+                "body":{"kind":"path","segments":[
+                    {"name":"offset","feature":"feature.Missing.offset"}
+                ]}})),
+        ]);
+        let context = ExecutionContext::default();
+        let error = runtime.evaluate("result", "owner", &context).unwrap_err().to_string();
+        assert!(error.contains("unresolved expression path: feature.Missing.offset"), "{error}");
+    }
+
+    #[test]
+    fn resolved_type_feature_keeps_current_instance_values() {
+        let runtime = Runtime::from_document(KirDocument {
+            metadata:[("kir_schema_version".into(), json!(KIR_SCHEMA_VERSION))].into_iter().collect(),
+            elements:vec![
+                KirElement { id:"Device".into(), kind:"PartDefinition".into(), layer:2,
+                    properties:BTreeMap::new() },
+                KirElement { id:"device".into(), kind:"PartUsage".into(), layer:2,
+                    properties:[("type".into(), json!("Device")), ("temperature".into(), json!(25))].into_iter().collect() },
+                KirElement { id:"attribute.Device.temperature".into(), kind:"AttributeUsage".into(), layer:2,
+                    properties:[
+                        ("owner".into(), json!("Device")), ("declared_name".into(), json!("temperature")),
+                        ("expression_ir".into(), json!({"kind":"literal","value":10})),
+                    ].into_iter().collect() },
+                KirElement { id:"result".into(), kind:"AttributeUsage".into(), layer:2,
+                    properties:[("expression_ir".into(), json!({"kind":"path","segments":[
+                        {"name":"temperature","feature":"attribute.Device.temperature"}
+                    ]}))].into_iter().collect() },
+            ],
+        }).unwrap();
+        let mut context = ExecutionContext::default();
+        assert_eq!(runtime.evaluate("result", "device", &context).unwrap().value, json!(25));
+        context.values.insert(("device".into(), "temperature".into()), json!(30));
+        assert_eq!(runtime.evaluate("result", "device", &context).unwrap().value, json!(30));
     }
 
     fn sample_runtime() -> Runtime {

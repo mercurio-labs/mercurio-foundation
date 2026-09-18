@@ -45,9 +45,10 @@ pub mod derived {
 #[doc(hidden)]
 pub mod expression {
     pub use crate::model::{
-        BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
-        ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
-        UnaryExpressionOp,
+        BinaryExpressionOp, ExpressionBinding, ExpressionContract, ExpressionContractError,
+        ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionIrError,
+        ExpressionMultiplicity, ExpressionPathRoot, ExpressionPathSegment, ExpressionResult,
+        ExpressionValidationError, ExpressionValueKind, ExpressionValueType, UnaryExpressionOp,
     };
 }
 #[doc(hidden)]
@@ -280,9 +281,10 @@ pub use dsl::{
     DslQueryReport, DslQueryRequest, DslQueryResult, DslSchema, RhaiEngine,
 };
 pub use expression::{
-    BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
-    ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
-    UnaryExpressionOp,
+    BinaryExpressionOp, ExpressionBinding, ExpressionContract, ExpressionContractError,
+    ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionIrError,
+    ExpressionMultiplicity, ExpressionPathRoot, ExpressionPathSegment, ExpressionResult,
+    ExpressionValidationError, ExpressionValueKind, ExpressionValueType, UnaryExpressionOp,
 };
 pub use feasibility::{
     CoreMutationFeasibilityService, FeasibilityIssue, FeasibilityIssueKind, FeasibilityRepairHint,

@@ -51,6 +51,26 @@ impl ExpressionEvaluationContext for SnapshotContext<'_> {
         self.subject
     }
 
+    fn resolve_lexical_path(
+        &mut self,
+        segments: &[ExpressionPathSegment],
+    ) -> Result<Vec<Value>, ExpressionEvaluationError> {
+        let path = segments
+            .iter()
+            .map(|segment| match segment {
+                ExpressionPathSegment::Resolved {
+                    feature: Some(feature),
+                    ..
+                } => feature.as_str(),
+                _ => segment.name(),
+            })
+            .collect::<Vec<_>>()
+            .join(".");
+        Err(ExpressionEvaluationError::InvalidExpression(format!(
+            "simulation snapshots do not support nonlocal lexical capture `{path}`"
+        )))
+    }
+
     fn resolve_path(
         &mut self,
         segments: &[ExpressionPathSegment],
@@ -273,5 +293,77 @@ mod tests {
         )
         .unwrap();
         assert_eq!(values[&("chamber".into(), "data".into())], literal);
+    }
+    fn resolved_test_path(feature: &str, name: &str) -> Value {
+        json!({"kind": "path", "segments": [{"name": name, "feature": feature}]})
+    }
+
+    #[test]
+    fn simulation_invocations_reject_definition_body_and_default_captures() {
+        let evaluator = ExpressionEvaluator::default();
+        let values = BTreeMap::from([(("caller".into(), "bias".into()), json!(99))]);
+        let lexical_bias = resolved_test_path("feature.Library.bias", "bias");
+        for expression in [
+            json!({"kind": "invoke", "function": "type.Library.F", "bindings": [], "body": lexical_bias}),
+            json!({"kind": "invoke", "function": "type.Library.F", "bindings": [
+                {"feature": "feature.Library.F.x", "lexical": true, "expression": lexical_bias}
+            ], "body": resolved_test_path("feature.Library.F.x", "x")}),
+        ] {
+            let error = evaluator
+                .evaluate(&expression, "caller", &values)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("nonlocal lexical capture"), "{error}");
+            assert!(error.contains("feature.Library.bias"), "{error}");
+        }
+    }
+
+    #[test]
+    fn simulation_invocation_caller_arguments_and_local_defaults_remain_executable() {
+        let evaluator = ExpressionEvaluator::default();
+        let values = BTreeMap::from([(("caller".into(), "bias".into()), json!(7))]);
+        let expression = json!({"kind": "invoke", "function": "type.Library.F", "bindings": [
+            {"feature": "feature.Library.F.x", "expression": resolved_test_path("feature.Caller.bias", "bias")},
+            {"feature": "feature.Library.F.y", "lexical": true, "expression": {
+                "kind": "binary", "op": "add", "left": resolved_test_path("feature.Library.F.x", "x"),
+                "right": {"kind": "literal", "value": 2}
+            }}
+        ], "body": resolved_test_path("feature.Library.F.y", "y")});
+        assert_eq!(
+            evaluator.evaluate(&expression, "caller", &values).unwrap(),
+            json!(9)
+        );
+    }
+
+    #[test]
+    fn nested_simulation_frames_preserve_lexical_capture_signal() {
+        let evaluator = ExpressionEvaluator::default();
+        let values = BTreeMap::from([(("caller".into(), "bias".into()), json!(99))]);
+        for nested in [
+            json!({"kind": "invoke", "function": "type.Inner", "bindings": [],
+                "body": resolved_test_path("feature.Library.bias", "bias")}),
+            json!({"kind": "invoke", "function": "type.Inner", "bindings": [
+                {"feature": "feature.Inner.x", "lexical": false,
+                    "expression": resolved_test_path("feature.Library.bias", "bias")}
+            ], "body": resolved_test_path("feature.Inner.x", "x")}),
+        ] {
+            let expression =
+                json!({"kind": "invoke", "function": "type.Outer", "bindings": [], "body": nested});
+            let error = evaluator
+                .evaluate(&expression, "caller", &values)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("nonlocal lexical capture"), "{error}");
+        }
+        // An inner argument may still refer by identity to a bound outer parameter.
+        let expression = json!({"kind": "invoke", "function": "type.Outer", "bindings": [
+            {"feature": "feature.Outer.x", "expression": resolved_test_path("feature.Caller.bias", "bias")}
+        ], "body": {"kind": "invoke", "function": "type.Inner", "bindings": [
+            {"feature": "feature.Inner.x", "expression": resolved_test_path("feature.Outer.x", "x")}
+        ], "body": resolved_test_path("feature.Inner.x", "x")}});
+        assert_eq!(
+            evaluator.evaluate(&expression, "caller", &values).unwrap(),
+            json!(99)
+        );
     }
 }

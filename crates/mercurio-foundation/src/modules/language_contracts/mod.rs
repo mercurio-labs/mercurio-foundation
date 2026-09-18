@@ -23,9 +23,10 @@ pub use ast::*;
 pub use diagnostics::Diagnostic;
 pub use editor::{ParseSessionError, ParseSessionStatus, ParseSnapshot, TextEdit, TextRange};
 pub use expression::{
-    BinaryExpressionOp, ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr,
-    ExpressionIrError, ExpressionPathRoot, ExpressionPathSegment, ExpressionValidationError,
-    UnaryExpressionOp,
+    BinaryExpressionOp, ExpressionBinding, ExpressionContract, ExpressionContractError,
+    ExpressionEvaluationContext, ExpressionEvaluationError, ExpressionIr, ExpressionIrError,
+    ExpressionMultiplicity, ExpressionPathRoot, ExpressionPathSegment, ExpressionResult,
+    ExpressionValidationError, ExpressionValueKind, ExpressionValueType, UnaryExpressionOp,
 };
 pub use lexer::{Token, TokenKind, lex};
 pub use project::{ProjectSourceSelectionError, select_project_source_paths};
