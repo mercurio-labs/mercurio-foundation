@@ -348,7 +348,7 @@ impl Evaluation {
 impl DerivedIndexes {
     pub fn from_evaluation(evaluation: Evaluation) -> Self {
         let mut indexes = Self {
-            explanations: evaluation.explanations.clone(),
+            explanations: evaluation.explanations,
             ..Self::default()
         };
 
@@ -529,11 +529,10 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
     let mut requirement_kinds = BTreeSet::new();
     let mut relationship_kinds = BTreeMap::<String, BTreeSet<String>>::new();
 
-    for fact in rulepacks
-        .iter()
-        .flat_map(|pack| pack.facts.iter())
-        .chain(extract_graph_facts(graph).iter())
-    {
+    // Classification facts come from rulepacks. Graph extraction emits only
+    // element/kind/layer/source/edge facts, all ignored by this match; the
+    // built-in indexes traverse the graph directly below.
+    for fact in rulepacks.iter().flat_map(|pack| pack.facts.iter()) {
         match (fact.predicate.as_str(), fact.terms.as_slice()) {
             ("requirement_kind", [kind]) => {
                 requirement_kinds.insert(kind.to_string());
@@ -767,6 +766,7 @@ fn materialize_builtin_indexes(graph: &Graph, rulepacks: &[RulePack]) -> Derived
 #[derive(Debug, Clone, Default)]
 pub struct FactIndex {
     by_predicate: HashMap<String, Vec<Fact>>,
+    by_term: HashMap<String, Vec<HashMap<String, Vec<usize>>>>,
 }
 
 impl FactIndex {
@@ -799,10 +799,44 @@ impl FactIndex {
     }
 
     fn insert(&mut self, fact: Fact) {
+        let position = self.candidates(&fact.predicate).len();
+        let columns = self.by_term.entry(fact.predicate.clone()).or_default();
+        columns.resize_with(columns.len().max(fact.terms.len()), HashMap::new);
+        for (column, value) in columns.iter_mut().zip(&fact.terms) {
+            column.entry(value.clone()).or_default().push(position);
+        }
         self.by_predicate
             .entry(fact.predicate.clone())
             .or_default()
             .push(fact);
+    }
+
+    // Choose the narrowest bound column, retaining insertion order so the first
+    // derivation and its explanation are unchanged. Unification checks the rest.
+    fn matching_candidates(&self, atom: &Atom, binding: &HashMap<&String, &String>) -> Vec<&Fact> {
+        let facts = self.candidates(&atom.predicate);
+        let Some(columns) = self.by_term.get(&atom.predicate) else {
+            return Vec::new();
+        };
+        let mut selected: Option<&Vec<usize>> = None;
+        for (position, term) in atom.terms.iter().enumerate() {
+            let value = match term {
+                Term::Const(value) => Some(value),
+                Term::Var(name) => binding.get(name).copied(),
+            };
+            if let Some(value) = value {
+                let Some(rows) = columns.get(position).and_then(|column| column.get(value)) else {
+                    return Vec::new();
+                };
+                if selected.is_none_or(|current| rows.len() < current.len()) {
+                    selected = Some(rows);
+                }
+            }
+        }
+        match selected {
+            Some(rows) => rows.iter().map(|&row| &facts[row]).collect(),
+            None => facts.iter().collect(),
+        }
     }
 
     fn candidates(&self, predicate: &str) -> &[Fact] {
@@ -831,7 +865,7 @@ where
     while changed {
         changed = false;
         for rule in rules {
-            for (derived, source_facts) in derive_rule(rule, &index, &[])? {
+            for (derived, source_facts) in derive_rule_filtered(rule, &index, &[], Some(&known))? {
                 if known.insert(derived.clone()) {
                     index.insert(derived.clone());
                     explanations.insert(
@@ -947,6 +981,79 @@ fn derive_rule(
     index: &FactIndex,
     overlay: &[Fact],
 ) -> Result<Vec<(Fact, Vec<Fact>)>, DatalogError> {
+    derive_rule_filtered(rule, index, overlay, None)
+}
+
+fn derive_rule_filtered(
+    rule: &Rule,
+    index: &FactIndex,
+    overlay: &[Fact],
+    known: Option<&BTreeSet<Fact>>,
+) -> Result<Vec<(Fact, Vec<Fact>)>, DatalogError> {
+    // Borrow rule terms and evidence throughout the join. Only successful new
+    // derivations need owned strings and evidence in the fixpoint evaluator.
+    let mut bindings = vec![(HashMap::<&String, &String>::new(), Vec::<&Fact>::new())];
+
+    for atom in &rule.body {
+        // Check every predicate fact before filtering: a bound value must not
+        // hide malformed facts that the original evaluator would reject.
+        let overlay_candidates = overlay
+            .iter()
+            .filter(|fact| fact.predicate == atom.predicate)
+            .collect::<Vec<_>>();
+        for fact in index
+            .candidates(&atom.predicate)
+            .iter()
+            .chain(overlay_candidates.iter().copied())
+        {
+            if fact.terms.len() != atom.terms.len() {
+                return Err(DatalogError::ArityMismatch {
+                    predicate: atom.predicate.clone(),
+                    expected: atom.terms.len(),
+                    actual: fact.terms.len(),
+                });
+            }
+        }
+        let mut next = Vec::new();
+        for (binding, source_facts) in bindings {
+            let candidates = index.matching_candidates(atom, &binding);
+            for fact in candidates.iter().chain(overlay_candidates.iter()) {
+                if let Some(next_binding) = unify_borrowed(atom, fact, &binding) {
+                    let mut next_sources = source_facts.clone();
+                    if !next_sources.iter().any(|existing| existing == fact) {
+                        next_sources.push(*fact);
+                    }
+                    next.push((next_binding, next_sources));
+                }
+            }
+        }
+
+        bindings = next;
+        if bindings.is_empty() {
+            break;
+        }
+    }
+
+    let mut results = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for (binding, source_facts) in bindings {
+        let fact = instantiate_borrowed(&rule.head, &binding)?;
+        if let Some(known) = known {
+            if known.contains(&fact) || !emitted.insert(fact.clone()) {
+                continue;
+            }
+        }
+        results.push((fact, source_facts.into_iter().cloned().collect()));
+    }
+    Ok(results)
+}
+
+#[cfg(test)]
+fn derive_rule_reference(
+    rule: &Rule,
+    index: &FactIndex,
+    overlay: &[Fact],
+) -> Result<Vec<(Fact, Vec<Fact>)>, DatalogError> {
     let mut bindings = vec![(HashMap::<String, String>::new(), Vec::<Fact>::new())];
 
     for atom in &rule.body {
@@ -994,6 +1101,55 @@ fn derive_rule(
         .collect()
 }
 
+fn unify_borrowed<'a>(
+    atom: &'a Atom,
+    fact: &'a Fact,
+    binding: &HashMap<&'a String, &'a String>,
+) -> Option<HashMap<&'a String, &'a String>> {
+    let mut next = binding.clone();
+    for (term, value) in atom.terms.iter().zip(&fact.terms) {
+        match term {
+            Term::Const(expected) if expected != value => return None,
+            Term::Const(_) => {}
+            Term::Var(name) => {
+                if let Some(existing) = next.get(name) {
+                    if *existing != value {
+                        return None;
+                    }
+                } else {
+                    next.insert(name, value);
+                }
+            }
+        }
+    }
+    Some(next)
+}
+
+fn instantiate_borrowed(
+    atom: &Atom,
+    binding: &HashMap<&String, &String>,
+) -> Result<Fact, DatalogError> {
+    let terms = atom
+        .terms
+        .iter()
+        .map(|term| match term {
+            Term::Const(value) => Ok(value.clone()),
+            Term::Var(name) => binding
+                .get(name)
+                .map(|value| (*value).clone())
+                .ok_or_else(|| DatalogError::UnsafeVariable {
+                    rule_id: atom.predicate.clone(),
+                    variable: name.clone(),
+                }),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Fact {
+        predicate: atom.predicate.clone(),
+        terms,
+    })
+}
+
+#[cfg(test)]
 fn unify(
     atom: &Atom,
     fact: &Fact,
@@ -1018,6 +1174,7 @@ fn unify(
     Some(next)
 }
 
+#[cfg(test)]
 fn instantiate(atom: &Atom, binding: &HashMap<String, String>) -> Result<Fact, DatalogError> {
     let terms = atom
         .terms
@@ -1075,6 +1232,133 @@ mod tests {
     };
     use crate::model::Graph;
     use crate::model::{KirDocument, KirElement};
+
+    #[test]
+    fn fixpoint_preserves_reference_facts_and_explanations() {
+        use super::*;
+        fn reference(facts: Vec<Fact>, rules: &[Rule]) -> Result<Evaluation, DatalogError> {
+            validate_rules(rules)?;
+            let mut known = BTreeSet::new();
+            let mut index = FactIndex::default();
+            for fact in facts { if known.insert(fact.clone()) { index.insert(fact); } }
+            let mut explanations = BTreeMap::new();
+            loop {
+                let mut changed = false;
+                for rule in rules {
+                    for (fact, source_facts) in derive_rule_reference(rule, &index, &[])? {
+                        if known.insert(fact.clone()) {
+                            index.insert(fact.clone());
+                            explanations.insert(fact, Explanation { rule_id: rule.id.clone(), source_facts });
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed { return Ok(Evaluation { facts: known, explanations }); }
+            }
+        }
+        for size in 0..9 {
+            let mut facts = Vec::new();
+            for n in 0..size {
+                for parent in [(n + 1) % size, (n + 3) % size] {
+                    facts.push(Fact::new("edge", [format!("t{n}"), "specializes".into(), format!("t{parent}")]));
+                }
+                facts.push(Fact::new("edge", [format!("t{n}"), "features".into(), format!("f{n}")]));
+            }
+            let mut rules = RulePack::structural_core().rules;
+            rules.extend(rules.clone()); // Preserve duplicate-pack scheduling as well.
+            rules.push(rule("empty", atom("seed", [constant("t0")]), []));
+            rules.push(rule("late", atom("edge", [var("T"), constant("specializes"), constant("t9")]),
+                [atom("seed", [var("T")])]));
+            assert_eq!(evaluate(facts.clone(), &rules), reference(facts.clone(), &rules));
+            rules.reverse();
+            assert_eq!(evaluate(facts.clone(), &rules), reference(facts, &rules));
+        }
+        // A late malformed fact must still be detected after earlier empty passes.
+        let rules = vec![
+            rule("consumer", atom("q", [var("X")]), [atom("p", [var("X")])]),
+            rule("malformed", atom("p", [constant("a"), constant("b")]), []),
+        ];
+        assert_eq!(evaluate(Vec::new(), &rules), reference(Vec::new(), &rules));
+        assert!(evaluate(Vec::new(), &rules).is_err());
+    }
+
+    #[test]
+    fn indexed_joins_preserve_reference_derivations_and_explanations() {
+        use super::*;
+        let mut facts = Vec::new();
+        // Branches, diamonds, and cycles exercise closure and multiple proofs.
+        for n in 0..12 {
+            for parent in [(n + 1) % 12, (n + 3) % 12] {
+                facts.push(Fact::new(
+                    "edge",
+                    [format!("t{n}"), "specializes".into(), format!("t{parent}")],
+                ));
+            }
+            facts.push(Fact::new(
+                "edge",
+                [format!("t{n}"), "features".into(), format!("f{n}")],
+            ));
+        }
+        let mut rules = RulePack::structural_core().rules;
+        rules.push(rule(
+            "self",
+            atom("self", [var("A")]),
+            [atom("subtype", [var("A"), var("A")])],
+        ));
+        rules.push(rule(
+            "constant",
+            atom("selected", [var("A")]),
+            [atom("subtype", [var("A"), constant("t3")])],
+        ));
+        let mut index = FactIndex::from_facts(facts);
+        loop {
+            let mut changed = false;
+            for rule in &rules {
+                let actual = derive_rule(rule, &index, &[]).unwrap();
+                assert_eq!(actual, derive_rule_reference(rule, &index, &[]).unwrap());
+                let known = index
+                    .by_predicate
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let mut emitted = BTreeSet::new();
+                let expected_new = actual
+                    .iter()
+                    .filter(|(fact, _)| !known.contains(fact) && emitted.insert(fact.clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    derive_rule_filtered(rule, &index, &[], Some(&known)).unwrap(),
+                    expected_new
+                );
+                for (fact, _) in actual {
+                    if !index.contains(&fact) {
+                        index.insert(fact);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let overlay = [Fact::new("subtype", ["extra".into(), "t3".into()])];
+        for rule in &rules {
+            assert_eq!(
+                derive_rule(rule, &index, &overlay),
+                derive_rule_reference(rule, &index, &overlay)
+            );
+        }
+        // A nonmatching malformed fact must still raise the same arity error.
+        let malformed = [Fact::new("subtype", ["unmatched".into()])];
+        let rule = rules.last().unwrap();
+        assert_eq!(
+            derive_rule(rule, &index, &malformed),
+            derive_rule_reference(rule, &index, &malformed)
+        );
+        assert!(derive_rule(rule, &index, &malformed).is_err());
+    }
 
     #[test]
     fn extracts_base_graph_facts() {
