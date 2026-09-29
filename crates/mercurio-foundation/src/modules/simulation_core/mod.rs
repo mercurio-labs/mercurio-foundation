@@ -1,15 +1,25 @@
+mod numerical;
+pub use numerical::{AdaptiveIntegrationConfig, IntegrationEvidence};
+pub mod constraint_network;
 mod deadline;
 mod expression;
+mod session;
+mod dynamic_networks;
+pub use dynamic_networks::{SimulationConstraintNetwork, SimulationNetworkEvaluation};
 pub use deadline::{RequirementOutcome, evaluate_deadline_requirements};
 use expression::{ExpressionEvaluator, legacy_guard_ir};
+pub use session::{SimulationSession, SimulationSessionLifecycle, SimulationSessionSnapshot};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimulationClockConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<AdaptiveIntegrationConfig>,
     pub max_time_s: f64,
     pub fixed_step_s: f64,
     pub sample_interval_s: f64,
@@ -22,6 +32,7 @@ impl Default for SimulationClockConfig {
             max_time_s: 300.0,
             fixed_step_s: 1.0,
             sample_interval_s: 1.0,
+            adaptive: None,
             change_loop_limit: 20,
         }
     }
@@ -144,6 +155,10 @@ pub type TraceEvent = SimTraceEvent;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimTraceEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integration: Option<IntegrationEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_evaluations: Vec<SimulationNetworkEvaluation>,
     pub t: f64,
     pub states: BTreeMap<String, Vec<String>>,
     #[serde(with = "tuple_value_map")]
@@ -181,10 +196,13 @@ pub enum SimulationTermination {
     StepBudgetExhausted,
     TimeBudgetExhausted,
     Quiescent,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimulationModel {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraint_networks: Vec<SimulationConstraintNetwork>,
     pub id: String,
     pub machines: Vec<SimulationStateMachine>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -378,6 +396,7 @@ pub enum CoreSimulationError {
     MissingSubject(String),
     MissingInitialState(String),
     InvalidExpression(String),
+    InvalidSessionOperation(String),
 }
 
 impl fmt::Display for CoreSimulationError {
@@ -387,6 +406,9 @@ impl fmt::Display for CoreSimulationError {
             Self::MissingStateMachine(id) => write!(f, "missing state machine: {id}"),
             Self::MissingSubject(id) => write!(f, "missing simulation subject: {id}"),
             Self::MissingInitialState(id) => write!(f, "missing initial state: {id}"),
+            Self::InvalidSessionOperation(message) => {
+                write!(f, "invalid simulation session operation: {message}")
+            }
             Self::InvalidExpression(message) => {
                 write!(f, "invalid simulation expression: {message}")
             }
@@ -403,9 +425,9 @@ impl From<SimulationProfileError> for CoreSimulationError {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct CoreSubjectRunState<'m> {
+struct CoreSubjectRunState {
     subject_id: String,
-    machine: &'m SimulationStateMachine,
+    machine: Arc<SimulationStateMachine>,
     active: Vec<String>,
     event_index: usize,
     events: Vec<SimulationEvent>,
@@ -450,11 +472,11 @@ fn configuration_is_final(machine: &SimulationStateMachine, active: &[String]) -
         })
 }
 
-fn all_subjects_final(subjects: &[CoreSubjectRunState<'_>]) -> bool {
+fn all_subjects_final(subjects: &[CoreSubjectRunState]) -> bool {
     !subjects.is_empty()
         && subjects
             .iter()
-            .all(|subject| configuration_is_final(subject.machine, &subject.active))
+            .all(|subject| configuration_is_final(&subject.machine, &subject.active))
 }
 
 fn policy_stop_reason(
@@ -490,310 +512,19 @@ pub fn run_concurrent_simulation_model(
     scenario: ConcurrentSimulationScenario,
     clock: SimulationClockConfig,
 ) -> Result<SimulationTrace, CoreSimulationError> {
-    let evaluator = &ExpressionEvaluator::default();
-    validate_simulation_model(model)?;
-    let mut subjects = Vec::<CoreSubjectRunState<'_>>::new();
-    for subject in &scenario.subjects {
-        if subject.subject_id.is_empty() {
-            return Err(CoreSimulationError::MissingSubject(
-                subject.subject_id.clone(),
-            ));
-        }
-        let machine = model
-            .machines
-            .iter()
-            .find(|machine| machine.id == subject.machine_id || machine.label == subject.machine_id)
-            .ok_or_else(|| CoreSimulationError::MissingStateMachine(subject.machine_id.clone()))?;
-        let active = initial_configuration(machine, subject.initial_state_id.as_deref())
-            .ok_or_else(|| CoreSimulationError::MissingInitialState(subject.machine_id.clone()))?;
-        subjects.push(CoreSubjectRunState {
-            subject_id: subject.subject_id.clone(),
-            machine,
-            active,
-            event_index: 0,
-            events: subject.events.clone(),
-        });
-    }
-
-    let mut values = scenario.initial_values.clone();
-    let mut pending_signals = VecDeque::<CorePendingSignal>::new();
-    let mut history = BTreeMap::<(String, String), String>::new();
-    let mut elapsed = BTreeMap::<(String, String), f64>::new();
-    let mut t = 0.0;
-    let mut step = 0usize;
-    let mut status = SimulationStatus::Completed;
-    for subject in &subjects {
-        for state_id in &subject.active {
-            elapsed.insert((subject.subject_id.clone(), state_id.clone()), 0.0);
-            apply_state_behavior(
-                evaluator,
-                subject.machine,
-                state_id,
-                &subject.subject_id,
-                &mut values,
-                &mut pending_signals,
-            )?;
-            apply_state_lookup_tables(
-                subject.machine,
-                state_id,
-                &subject.subject_id,
-                &mut values,
-                0.0,
-            )?;
-        }
-    }
-    propagate_model_values(evaluator, model, &subjects, &mut values)?;
-
-    let mut timeline = vec![make_core_entry(t, &subjects, &values, Vec::new())];
-    let max_steps = scenario.max_steps.max(1);
-    let mut termination = SimulationTermination::TimeBudgetExhausted;
-    while step < max_steps && t <= clock.max_time_s {
-        if all_subjects_final(&subjects)
-            || policy_stop_reason(evaluator, &scenario, status, &timeline).is_some()
-        {
-            break;
-        }
-        let mut fired = false;
-        let mut events = Vec::<SimTraceEvent>::new();
-
-        if fire_immediate_transitions(
-            evaluator,
-            &mut subjects,
-            &mut values,
-            &mut pending_signals,
-            &mut history,
-            &mut elapsed,
-            &mut step,
-            max_steps,
-            clock.change_loop_limit,
-            &mut events,
-        )? {
-            propagate_model_values(evaluator, model, &subjects, &mut values)?;
-            fired = true;
-        }
-
-        let mut scripted_event_fired = false;
-        for subject in subjects.iter_mut() {
-            if configuration_is_final(subject.machine, &subject.active)
-                || step >= max_steps
-                || subject.event_index >= subject.events.len()
-            {
-                continue;
-            }
-            let event = subject.events[subject.event_index].clone();
-            subject.event_index += 1;
-            let Some(transition) = select_transition(
-                evaluator,
-                subject.machine,
-                &subject.active,
-                SimulationTriggerKind::Event,
-                &event.trigger,
-                &subject.subject_id,
-                &values,
-            )?
-            .cloned() else {
-                events.push(SimTraceEvent {
-                    kind: "event.dropped".to_string(),
-                    subject_id: Some(subject.subject_id.clone()),
-                    transition_id: None,
-                    trigger: Some(event.trigger),
-                    reason: Some("no enabled transition matched event trigger".to_string()),
-                });
-                status = SimulationStatus::Blocked;
-                fired = true;
-                continue;
-            };
-            step += 1;
-            let before = subject.active.clone();
-            apply_effects(
-                evaluator,
-                &transition.effects,
-                &subject.subject_id,
-                &mut values,
-                &mut pending_signals,
-            )?;
-            subject.active = apply_state_change(
-                evaluator,
-                subject.machine,
-                &subject.subject_id,
-                &before,
-                &transition.source,
-                &transition.target,
-                &mut values,
-                &mut pending_signals,
-                &mut history,
-                &mut elapsed,
-            )?;
-            events.push(SimTraceEvent {
-                kind: "transition".to_string(),
-                subject_id: Some(subject.subject_id.clone()),
-                transition_id: Some(transition.id),
-                trigger: Some(event.trigger),
-                reason: None,
-            });
-            scripted_event_fired = true;
-            fired = true;
-        }
-        if scripted_event_fired {
-            propagate_model_values(evaluator, model, &subjects, &mut values)?;
-        }
-
-        if fire_immediate_transitions(
-            evaluator,
-            &mut subjects,
-            &mut values,
-            &mut pending_signals,
-            &mut history,
-            &mut elapsed,
-            &mut step,
-            max_steps,
-            clock.change_loop_limit,
-            &mut events,
-        )? {
-            propagate_model_values(evaluator, model, &subjects, &mut values)?;
-            fired = true;
-        }
-
-        // Process already-due absolute times and zero-duration after triggers
-        // before advancing the clock; scripted events retain their priority.
-        if fire_after_transitions(
-            evaluator,
-            &mut subjects,
-            &mut values,
-            &mut pending_signals,
-            &mut history,
-            &mut elapsed,
-            &mut step,
-            max_steps,
-            &mut events,
-            t,
-        )? {
-            propagate_model_values(evaluator, model, &subjects, &mut values)?;
-            fired = true;
-        }
-
-        if !fired && step < max_steps && !all_subjects_final(&subjects) {
-            let next_after = next_after_duration(evaluator, &subjects, &elapsed, &values, t)?;
-            let next_change = next_change_crossing_duration(evaluator, &subjects, &values)?;
-            let fixed_step = clock.fixed_step_s.max(0.0);
-            let mut duration = [Some(fixed_step), next_after, next_change]
-                .into_iter()
-                .flatten()
-                .filter(|duration| duration.is_finite() && *duration >= 0.0)
-                .min_by(|left, right| left.total_cmp(right))
-                .unwrap_or(fixed_step);
-            if fixed_step > 0.0 {
-                duration = duration.min(fixed_step);
-            }
-            if duration <= 0.0 {
-                duration = fixed_step;
-            }
-            termination = if duration > 0.0 {
-                SimulationTermination::TimeBudgetExhausted
-            } else {
-                SimulationTermination::Quiescent
-            };
-            if duration > 0.0 && t + duration <= clock.max_time_s {
-                integrate_active_state_behaviors(
-                    evaluator,
-                    &subjects,
-                    &mut values,
-                    &mut elapsed,
-                    duration,
-                    clock.sample_interval_s,
-                    &mut timeline,
-                    t,
-                )?;
-                propagate_model_values(evaluator, model, &subjects, &mut values)?;
-                t += duration;
-                step += 1;
-                fired = true;
-                fire_after_transitions(
-                    evaluator,
-                    &mut subjects,
-                    &mut values,
-                    &mut pending_signals,
-                    &mut history,
-                    &mut elapsed,
-                    &mut step,
-                    max_steps,
-                    &mut events,
-                    t,
-                )?;
-                propagate_model_values(evaluator, model, &subjects, &mut values)?;
-                fire_immediate_transitions(
-                    evaluator,
-                    &mut subjects,
-                    &mut values,
-                    &mut pending_signals,
-                    &mut history,
-                    &mut elapsed,
-                    &mut step,
-                    max_steps,
-                    clock.change_loop_limit,
-                    &mut events,
-                )?;
-                propagate_model_values(evaluator, model, &subjects, &mut values)?;
-            }
-        }
-
-        if fired {
-            timeline.push(make_core_entry(t, &subjects, &values, events));
-        } else {
-            break;
-        }
-    }
-
-    if all_subjects_final(&subjects) {
-        termination = SimulationTermination::FinalState;
-    } else if let Some(reason) = policy_stop_reason(evaluator, &scenario, status, &timeline) {
-        termination = reason;
-    } else if step >= max_steps {
-        termination = SimulationTermination::StepBudgetExhausted;
-    }
-
-    let primary_subject_id = scenario
-        .subjects
-        .first()
-        .map(|subject| subject.subject_id.clone())
-        .unwrap_or_default();
-    let generated_channels = generated_continuous_channels(&subjects);
-    let channels = values
-        .keys()
-        .map(|(subject, feature)| SimTraceChannel {
-            id: format!("{subject}.{feature}"),
-            unit: None,
-            source: generated_channels
-                .get(&(subject.clone(), feature.clone()))
-                .cloned()
-                .unwrap_or(SimTraceChannelSource::AssignEffect),
-        })
-        .collect();
-    Ok(SimulationTrace {
-        configuration: Some(SimulationRunConfiguration {
-            schema_version: 1,
-            max_steps,
-            clock,
-            termination_policy: scenario.termination_policy.clone(),
-        }),
-        scenario_id: scenario.id,
-        subject_id: primary_subject_id,
-        channels,
-        timeline,
-        status,
-        termination: Some(termination),
-        requirements: scenario.requirements,
-        objectives: scenario.objectives,
-    })
+    SimulationSession::initialize(model.clone(), scenario, clock)?.run_to_completion()
 }
 
 fn make_core_entry(
+    model: &SimulationModel,
     t: f64,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &BTreeMap<(String, String), Value>,
     events: Vec<SimTraceEvent>,
-) -> SimTraceEntry {
-    SimTraceEntry {
+) -> Result<SimTraceEntry, CoreSimulationError> {
+    Ok(SimTraceEntry {
+        integration: None,
+        network_evaluations: dynamic_networks::evidence(model, values)?,
         t,
         states: subjects
             .iter()
@@ -801,15 +532,16 @@ fn make_core_entry(
             .collect(),
         values: values.clone(),
         events,
-    }
+    })
 }
 
 fn propagate_model_values(
     evaluator: &ExpressionEvaluator,
     model: &SimulationModel,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
+    dynamic_networks::solve(model, values)?;
     propagate_derived_values(evaluator, &model.derived_rules, subjects, values)?;
     propagate_binding_values(&model.binding_rules, subjects, values)
 }
@@ -817,7 +549,7 @@ fn propagate_model_values(
 fn propagate_derived_values(
     evaluator: &ExpressionEvaluator,
     rules: &[SimulationDerivedFeatureRule],
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
     if rules.is_empty() {
@@ -844,7 +576,7 @@ fn propagate_derived_values(
 
 fn propagate_binding_values(
     rules: &[SimulationBindingRule],
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
     if rules.is_empty() {
@@ -873,7 +605,7 @@ fn propagate_binding_values(
 
 fn binding_endpoint_keys(
     endpoint: &SimulationFeatureRef,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
 ) -> Vec<(String, String)> {
     if let Some(subject_id) = &endpoint.subject_id {
         return vec![(subject_id.clone(), endpoint.feature.clone())];
@@ -999,7 +731,7 @@ fn collect_expression_paths(expression: &Value, paths: &mut BTreeSet<String>) {
 }
 
 fn generated_continuous_channels(
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
 ) -> BTreeMap<(String, String), SimTraceChannelSource> {
     let mut channels = BTreeMap::new();
     for subject in subjects {
@@ -1028,8 +760,9 @@ fn generated_continuous_channels(
 }
 
 fn fire_immediate_transitions(
+    model: &SimulationModel,
     evaluator: &ExpressionEvaluator,
-    subjects: &mut [CoreSubjectRunState<'_>],
+    subjects: &mut [CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
     history: &mut BTreeMap<(String, String), String>,
@@ -1041,6 +774,7 @@ fn fire_immediate_transitions(
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
     if deliver_pending_signals(
+        model,
         evaluator,
         subjects,
         values,
@@ -1055,13 +789,15 @@ fn fire_immediate_transitions(
     }
     for iteration in 0..change_loop_limit {
         let mut loop_fired = false;
-        for subject in subjects.iter_mut() {
+        for subject_index in 0..subjects.len() {
+            if !model.constraint_networks.is_empty() { propagate_model_values(evaluator, model, subjects, values)?; }
+            let subject = &mut subjects[subject_index];
             if *step >= max_steps {
                 break;
             }
             let Some(transition) = select_completion_or_change_transition(
                 evaluator,
-                subject.machine,
+                &subject.machine,
                 &subject.active,
                 &subject.subject_id,
                 values,
@@ -1080,7 +816,7 @@ fn fire_immediate_transitions(
             )?;
             subject.active = apply_state_change(
                 evaluator,
-                subject.machine,
+                &subject.machine,
                 &subject.subject_id,
                 &before,
                 &transition.source,
@@ -1109,12 +845,13 @@ fn fire_immediate_transitions(
             loop_fired = true;
             fired = true;
         }
+        if !model.constraint_networks.is_empty() { propagate_model_values(evaluator, model, subjects, values)?; }
         let mut limit_reached_with_pending_transition = false;
         if loop_fired && iteration + 1 == change_loop_limit {
             for subject in subjects.iter() {
                 if select_completion_or_change_transition(
                     evaluator,
-                    subject.machine,
+                    &subject.machine,
                     &subject.active,
                     &subject.subject_id,
                     values,
@@ -1145,8 +882,9 @@ fn fire_immediate_transitions(
 }
 
 fn deliver_pending_signals(
+    model: &SimulationModel,
     evaluator: &ExpressionEvaluator,
-    subjects: &mut [CoreSubjectRunState<'_>],
+    subjects: &mut [CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
     history: &mut BTreeMap<(String, String), String>,
@@ -1165,13 +903,15 @@ fn deliver_pending_signals(
             break;
         };
         let mut consumed = false;
-        for subject in subjects.iter_mut() {
+        for subject_index in 0..subjects.len() {
+            if !model.constraint_networks.is_empty() { propagate_model_values(evaluator, model, subjects, values)?; }
+            let subject = &mut subjects[subject_index];
             if *step >= max_steps || !signal_targets_subject(&signal, &subject.subject_id) {
                 continue;
             }
             let Some(transition) = select_transition(
                 evaluator,
-                subject.machine,
+                &subject.machine,
                 &subject.active,
                 SimulationTriggerKind::Signal,
                 &signal.signal_type,
@@ -1192,7 +932,7 @@ fn deliver_pending_signals(
             )?;
             subject.active = apply_state_change(
                 evaluator,
-                subject.machine,
+                &subject.machine,
                 &subject.subject_id,
                 &before,
                 &transition.source,
@@ -1321,16 +1061,15 @@ fn apply_state_change(
         .zip(target_path.iter())
         .take_while(|(left, right)| left == right)
         .count();
-    let common_ancestor = common_prefix_len
-        .checked_sub(1)
-        .and_then(|index| source_path.get(index));
     let exit_states = before
         .iter()
         .filter(|state_id| {
             state_id.as_str() == source_state_id
                 || is_descendant_of(machine, state_id, source_state_id)
-                || (common_ancestor.is_none_or(|ancestor| state_id.as_str() != ancestor)
-                    && source_path.contains(state_id))
+                || source_path
+                    .iter()
+                    .skip(common_prefix_len)
+                    .any(|source| source == *state_id)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -1374,14 +1113,14 @@ fn apply_state_change(
 
 fn next_after_duration(
     evaluator: &ExpressionEvaluator,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     elapsed: &BTreeMap<(String, String), f64>,
     values: &BTreeMap<(String, String), Value>,
     current_time_s: f64,
 ) -> Result<Option<f64>, CoreSimulationError> {
     let mut earliest: Option<f64> = None;
     for subject in subjects {
-        if configuration_is_final(subject.machine, &subject.active) {
+        if configuration_is_final(&subject.machine, &subject.active) {
             continue;
         }
         for state in subject.active.iter().rev() {
@@ -1421,8 +1160,9 @@ fn next_after_duration(
 }
 
 fn fire_after_transitions(
+    model: &SimulationModel,
     evaluator: &ExpressionEvaluator,
-    subjects: &mut [CoreSubjectRunState<'_>],
+    subjects: &mut [CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
     pending_signals: &mut VecDeque<CorePendingSignal>,
     history: &mut BTreeMap<(String, String), String>,
@@ -1433,13 +1173,16 @@ fn fire_after_transitions(
     current_time_s: f64,
 ) -> Result<bool, CoreSimulationError> {
     let mut fired = false;
-    for subject in subjects.iter_mut() {
-        if configuration_is_final(subject.machine, &subject.active) {
+    for subject_index in 0..subjects.len() {
+            if !model.constraint_networks.is_empty() { propagate_model_values(evaluator, model, subjects, values)?; }
+            let subject = &mut subjects[subject_index];
+        if configuration_is_final(&subject.machine, &subject.active) {
             continue;
         }
         if *step >= max_steps {
             break;
         }
+        dynamic_networks::solve(model, values)?;
         let mut selected = None;
         'states: for state_id in subject.active.iter().rev() {
             for transition in &subject.machine.transitions {
@@ -1490,7 +1233,7 @@ fn fire_after_transitions(
         )?;
         subject.active = apply_state_change(
             evaluator,
-            subject.machine,
+            &subject.machine,
             &subject.subject_id,
             &before,
             &transition.source,
@@ -1520,8 +1263,9 @@ fn fire_after_transitions(
 }
 
 fn integrate_active_state_behaviors(
+    model: &SimulationModel,
     evaluator: &ExpressionEvaluator,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
     elapsed: &mut BTreeMap<(String, String), f64>,
     duration: f64,
@@ -1541,7 +1285,7 @@ fn integrate_active_state_behaviors(
         } else {
             remaining
         };
-        integrate_active_rates_once(evaluator, subjects, values, dt)?;
+        integrate_active_rates_once(model, evaluator, subjects, values, dt)?;
         for subject in subjects {
             for state_id in &subject.active {
                 *elapsed
@@ -1550,18 +1294,22 @@ fn integrate_active_state_behaviors(
             }
         }
         apply_active_lookup_tables(subjects, elapsed, values)?;
+        if !model.constraint_networks.is_empty() {
+            propagate_model_values(evaluator, model, subjects, values)?;
+        }
         cursor_t += dt;
         remaining -= dt;
         if sample_interval > 0.0 && remaining > f64::EPSILON {
-            timeline.push(make_core_entry(cursor_t, subjects, values, Vec::new()));
+            timeline.push(make_core_entry(model, cursor_t, subjects, values, Vec::new())?);
         }
     }
     Ok(())
 }
 
 fn integrate_active_rates_once(
+    model: &SimulationModel,
     evaluator: &ExpressionEvaluator,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &mut BTreeMap<(String, String), Value>,
     duration: f64,
 ) -> Result<(), CoreSimulationError> {
@@ -1571,21 +1319,27 @@ fn integrate_active_rates_once(
         return Ok(());
     }
 
-    let k1 = evaluate_rate_vector(evaluator, &active_rates, &snapshot, &BTreeMap::new())?;
+    let k1 = evaluate_rate_vector(model, subjects, evaluator, &active_rates, &snapshot, &BTreeMap::new())?;
     let half_dt = duration / 2.0;
     let k2 = evaluate_rate_vector(
+        model,
+        subjects,
         evaluator,
         &active_rates,
         &snapshot,
         &scaled_increments(&k1, half_dt),
     )?;
     let k3 = evaluate_rate_vector(
+        model,
+        subjects,
         evaluator,
         &active_rates,
         &snapshot,
         &scaled_increments(&k2, half_dt),
     )?;
     let k4 = evaluate_rate_vector(
+        model,
+        subjects,
         evaluator,
         &active_rates,
         &snapshot,
@@ -1616,12 +1370,12 @@ fn integrate_active_rates_once(
 }
 
 fn apply_active_lookup_tables(
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     elapsed: &BTreeMap<(String, String), f64>,
     values: &mut BTreeMap<(String, String), Value>,
 ) -> Result<(), CoreSimulationError> {
     for subject in subjects {
-        if configuration_is_final(subject.machine, &subject.active) {
+        if configuration_is_final(&subject.machine, &subject.active) {
             continue;
         }
         for state_id in &subject.active {
@@ -1630,7 +1384,7 @@ fn apply_active_lookup_tables(
                 .copied()
                 .unwrap_or_default();
             apply_state_lookup_tables(
-                subject.machine,
+                &subject.machine,
                 state_id,
                 &subject.subject_id,
                 values,
@@ -1724,10 +1478,10 @@ struct ActiveRate<'a> {
     source: &'a SimulationRateSource,
 }
 
-fn active_rates<'model>(subjects: &[CoreSubjectRunState<'model>]) -> Vec<ActiveRate<'model>> {
+fn active_rates<'model>(subjects: &'model [CoreSubjectRunState]) -> Vec<ActiveRate<'model>> {
     let mut active = Vec::new();
     for subject in subjects {
-        if configuration_is_final(subject.machine, &subject.active) {
+        if configuration_is_final(&subject.machine, &subject.active) {
             continue;
         }
         for state_id in &subject.active {
@@ -1755,12 +1509,15 @@ fn active_rates<'model>(subjects: &[CoreSubjectRunState<'model>]) -> Vec<ActiveR
 }
 
 fn evaluate_rate_vector(
+    model: &SimulationModel,
+    subjects: &[CoreSubjectRunState],
     evaluator: &ExpressionEvaluator,
     active_rates: &[ActiveRate<'_>],
     base_values: &BTreeMap<(String, String), Value>,
     increments: &BTreeMap<(String, String), f64>,
 ) -> Result<BTreeMap<(String, String), f64>, CoreSimulationError> {
-    let values = values_with_increments(base_values, increments);
+    let mut values = values_with_increments(base_values, increments);
+    if !model.constraint_networks.is_empty() { propagate_model_values(evaluator, model, subjects, &mut values)?; }
     let mut vector = BTreeMap::new();
     for active_rate in active_rates {
         vector.insert(
@@ -1800,12 +1557,12 @@ fn values_with_increments(
 
 fn next_change_crossing_duration(
     evaluator: &ExpressionEvaluator,
-    subjects: &[CoreSubjectRunState<'_>],
+    subjects: &[CoreSubjectRunState],
     values: &BTreeMap<(String, String), Value>,
 ) -> Result<Option<f64>, CoreSimulationError> {
     let mut earliest: Option<f64> = None;
     for subject in subjects {
-        if configuration_is_final(subject.machine, &subject.active) {
+        if configuration_is_final(&subject.machine, &subject.active) {
             continue;
         }
         for state_id in subject.active.iter().rev() {
@@ -1875,7 +1632,7 @@ fn next_change_crossing_duration(
 
 fn active_rate_for_feature(
     evaluator: &ExpressionEvaluator,
-    subject: &CoreSubjectRunState<'_>,
+    subject: &CoreSubjectRunState,
     state_id: &str,
     feature: &str,
     values: &BTreeMap<(String, String), Value>,
@@ -2690,6 +2447,39 @@ pub mod tuple_value_map {
 mod tests {
     use super::*;
 
+    fn run_and_assert_resumable_equivalence(
+        model: &SimulationModel,
+        scenario: ConcurrentSimulationScenario,
+        clock: SimulationClockConfig,
+    ) -> Result<SimulationTrace, CoreSimulationError> {
+        let batch = run_concurrent_simulation_model(model, scenario.clone(), clock.clone())?;
+        for chunk in [1, 3, 64] {
+            let mut session =
+                SimulationSession::initialize(model.clone(), scenario.clone(), clock.clone())?;
+            let initial = session.snapshot();
+            assert_eq!(
+                initial.trace.timeline.len(),
+                1,
+                "initialization emits one frame"
+            );
+            assert_eq!(initial, session.advance(0)?);
+            let mut previous = initial;
+            while previous.lifecycle == SimulationSessionLifecycle::Paused {
+                let next = session.advance(chunk)?;
+                assert!(next.advance_cycles - previous.advance_cycles <= chunk);
+                assert!(next.execution_steps >= previous.execution_steps);
+                assert_eq!(
+                    previous.trace.timeline,
+                    next.trace.timeline[..previous.trace.timeline.len()]
+                );
+                previous = next;
+            }
+            assert_eq!(previous.trace, batch, "incremental batch size {chunk}");
+            assert_eq!(previous, session.advance(4)?, "terminal advance is inert");
+        }
+        Ok(batch)
+    }
+
     #[test]
     fn absolute_time_uses_mission_clock_instead_of_state_entry_time() {
         for (absolute, expected) in [(3.0, 3.0), (1.0, 2.0), (0.0, 2.0)] {
@@ -2700,6 +2490,7 @@ mod tests {
             let mut at = transition("at", "b", "done", &absolute.to_string());
             at.trigger.kind = SimulationTriggerKind::Time;
             let model = SimulationModel {
+            constraint_networks: Vec::new(),
                 id: "clock".into(),
                 machines: vec![SimulationStateMachine {
                     id: "machine".into(),
@@ -2726,9 +2517,12 @@ mod tests {
                 requirements: vec![],
                 objectives: vec![],
             };
-            let trace =
-                run_concurrent_simulation_model(&model, scenario, SimulationClockConfig::default())
-                    .unwrap();
+            let trace = run_and_assert_resumable_equivalence(
+                &model,
+                scenario,
+                SimulationClockConfig::default(),
+            )
+            .unwrap();
             assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
             assert_eq!(trace.timeline.last().unwrap().t, expected);
         }
@@ -2739,6 +2533,7 @@ mod tests {
         let mut done = state("done", false);
         done.is_final = true;
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".into(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".into(),
@@ -2786,7 +2581,7 @@ mod tests {
             requirements: vec![],
             objectives: vec![],
         };
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             scenario.clone(),
             SimulationClockConfig::default(),
@@ -2805,7 +2600,7 @@ mod tests {
         let mut initial = scenario;
         initial.subjects.pop();
         let trace =
-            run_concurrent_simulation_model(&model, initial, SimulationClockConfig::default())
+            run_and_assert_resumable_equivalence(&model, initial, SimulationClockConfig::default())
                 .unwrap();
         assert_eq!(trace.termination, Some(SimulationTermination::FinalState));
         assert_eq!(trace.timeline.len(), 1);
@@ -2834,6 +2629,7 @@ mod tests {
     #[test]
     fn stop_reason_distinguishes_limits_from_quiescence() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".into(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".into(),
@@ -2866,7 +2662,7 @@ mod tests {
             (1.0, 0.0, SimulationTermination::TimeBudgetExhausted, 0.0),
             (0.0, 10.0, SimulationTermination::Quiescent, 0.0),
         ] {
-            let trace = run_concurrent_simulation_model(
+            let trace = run_and_assert_resumable_equivalence(
                 &model,
                 scenario.clone(),
                 SimulationClockConfig {
@@ -2897,6 +2693,7 @@ mod tests {
     #[test]
     fn validator_rejects_ambiguous_transitions() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -2923,6 +2720,7 @@ mod tests {
     #[test]
     fn validator_accepts_minimal_machine() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -2940,6 +2738,7 @@ mod tests {
     #[test]
     fn core_runner_rejects_invalid_model_before_execution() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -2954,7 +2753,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let error = run_concurrent_simulation_model(
+        let error = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -2985,6 +2784,7 @@ mod tests {
     #[test]
     fn core_runner_executes_event_signal_flow() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![
                 SimulationStateMachine {
@@ -3030,7 +2830,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3074,6 +2874,7 @@ mod tests {
     #[test]
     fn core_runner_executes_completion_and_after_transitions() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3112,7 +2913,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3159,6 +2960,7 @@ mod tests {
             ..state("heating", true)
         };
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3180,7 +2982,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3231,6 +3033,8 @@ mod tests {
     #[test]
     fn trace_values_serialize_as_typed_entries_and_read_legacy_maps() {
         let entry = SimTraceEntry {
+            integration: None,
+        network_evaluations: Vec::new(),
             t: 0.0,
             states: BTreeMap::new(),
             values: BTreeMap::from([(
@@ -3287,6 +3091,7 @@ mod tests {
             ..state("heating", true)
         };
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3298,7 +3103,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3353,6 +3158,7 @@ mod tests {
             ..state("heating", true)
         };
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3364,7 +3170,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3381,6 +3187,7 @@ mod tests {
                     max_time_s: 5.0,
                     fixed_step_s: 2.5,
                     sample_interval_s: 2.5,
+                    adaptive: None,
                     change_loop_limit: 20,
                 }),
                 initial_values: BTreeMap::new(),
@@ -3391,6 +3198,7 @@ mod tests {
                 max_time_s: 5.0,
                 fixed_step_s: 2.5,
                 sample_interval_s: 2.5,
+                adaptive: None,
                 change_loop_limit: 20,
             },
         )
@@ -3446,6 +3254,7 @@ mod tests {
             ..state("decaying", true)
         };
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3457,7 +3266,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3482,6 +3291,7 @@ mod tests {
                 max_time_s: 1.0,
                 fixed_step_s: 1.0,
                 sample_interval_s: 1.0,
+                adaptive: None,
                 change_loop_limit: 20,
             },
         )
@@ -3514,6 +3324,7 @@ mod tests {
             ..state("heating", true)
         };
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3536,7 +3347,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3564,6 +3375,7 @@ mod tests {
                 max_time_s: 1.0,
                 fixed_step_s: 1.0,
                 sample_interval_s: 1.0,
+                adaptive: None,
                 change_loop_limit: 20,
             },
         )
@@ -3583,6 +3395,7 @@ mod tests {
     #[test]
     fn validator_rejects_derived_rule_cycles() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3627,6 +3440,7 @@ mod tests {
     #[test]
     fn binding_rules_copy_known_values_across_subjects() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3649,7 +3463,7 @@ mod tests {
             }],
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3721,6 +3535,7 @@ mod tests {
             ..state("idle", true)
         };
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3732,7 +3547,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3772,6 +3587,7 @@ mod tests {
     #[test]
     fn core_runner_marks_unmatched_events_as_blocked_diagnostics() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3783,7 +3599,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3823,6 +3639,7 @@ mod tests {
     #[test]
     fn core_runner_honors_explicit_clock_max_time() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3844,7 +3661,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3861,6 +3678,7 @@ mod tests {
                     max_time_s: 2.0,
                     fixed_step_s: 1.0,
                     sample_interval_s: 1.0,
+                    adaptive: None,
                     change_loop_limit: 20,
                 }),
                 initial_values: BTreeMap::new(),
@@ -3871,6 +3689,7 @@ mod tests {
                 max_time_s: 2.0,
                 fixed_step_s: 1.0,
                 sample_interval_s: 1.0,
+                adaptive: None,
                 change_loop_limit: 20,
             },
         )
@@ -3888,6 +3707,7 @@ mod tests {
     #[test]
     fn core_runner_reports_change_loop_limit_when_immediate_transition_remains() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![SimulationStateMachine {
                 id: "Machine".to_string(),
@@ -3922,7 +3742,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -3944,6 +3764,7 @@ mod tests {
                 max_time_s: 10.0,
                 fixed_step_s: 1.0,
                 sample_interval_s: 1.0,
+                adaptive: None,
                 change_loop_limit: 1,
             },
         )
@@ -3963,6 +3784,7 @@ mod tests {
     #[test]
     fn core_runner_delivers_completion_emitted_signals_without_scripted_events() {
         let model = SimulationModel {
+            constraint_networks: Vec::new(),
             id: "demo".to_string(),
             machines: vec![
                 SimulationStateMachine {
@@ -4008,7 +3830,7 @@ mod tests {
             binding_rules: Vec::new(),
         };
 
-        let trace = run_concurrent_simulation_model(
+        let trace = run_and_assert_resumable_equivalence(
             &model,
             ConcurrentSimulationScenario {
                 termination_policy: Default::default(),
@@ -4050,6 +3872,345 @@ mod tests {
                     && event.trigger.as_deref() == Some("signal:bed:BedReady")
             })
         }));
+    }
+
+    fn session_fixture() -> (
+        SimulationModel,
+        ConcurrentSimulationScenario,
+        SimulationClockConfig,
+    ) {
+        let mut running = state("running", true);
+        running.do_behavior = Some(StateDoBehavior::RateIntegration {
+            rates: vec![SimulationRate {
+                feature: "distance".into(),
+                source: SimulationRateSource::Constant(2.0),
+            }],
+        });
+        let mut done = state("done", false);
+        done.is_final = true;
+        let model = SimulationModel {
+            constraint_networks: Vec::new(),
+            id: "session".into(),
+            machines: vec![SimulationStateMachine {
+                id: "machine".into(),
+                label: "machine".into(),
+                states: vec![running, done],
+                transitions: vec![transition("stop", "running", "done", "stop")],
+            }],
+            derived_rules: vec![],
+            binding_rules: vec![],
+        };
+        let scenario = ConcurrentSimulationScenario {
+            id: "session".into(),
+            termination_policy: Default::default(),
+            subjects: vec![ConcurrentSubjectScenario {
+                subject_id: "vehicle".into(),
+                machine_id: "machine".into(),
+                initial_state_id: None,
+                events: vec![],
+            }],
+            max_steps: 20,
+            step_duration_s: 1.0,
+            clock_config: None,
+            initial_values: BTreeMap::from([(
+                ("vehicle".into(), "distance".into()),
+                Value::from(0.0),
+            )]),
+            requirements: vec![],
+            objectives: vec![],
+        };
+        (
+            model,
+            scenario,
+            SimulationClockConfig {
+                max_time_s: 10.0,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn session_resumes_owned_state_and_injects_event_without_reinitializing() {
+        let (model, scenario, clock) = session_fixture();
+        let mut session = SimulationSession::initialize(model, scenario, clock).unwrap();
+        let initial = session.snapshot();
+        assert_eq!(initial.lifecycle, SimulationSessionLifecycle::Paused);
+        assert_eq!(initial.trace.termination, None);
+        assert_eq!(initial.trace.timeline.len(), 1);
+        let advanced = session.advance(2).unwrap();
+        assert_eq!(advanced.logical_time_s, 2.0);
+        assert_eq!(advanced.execution_steps, 2);
+        assert_eq!(
+            advanced.trace.timeline.last().unwrap().values[&("vehicle".into(), "distance".into())],
+            Value::from(4.0)
+        );
+        assert_eq!(advanced, session.snapshot());
+        session
+            .inject_event(
+                "vehicle",
+                SimulationEvent {
+                    id: "external-stop".into(),
+                    trigger: "stop".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            advanced,
+            session.snapshot(),
+            "enqueueing does not execute behavior"
+        );
+        let finished = session.advance(1).unwrap();
+        assert_eq!(finished.lifecycle, SimulationSessionLifecycle::Completed);
+        assert_eq!(finished.logical_time_s, 2.0);
+        assert_eq!(finished.execution_steps, 3);
+        assert_eq!(
+            finished.trace.termination,
+            Some(SimulationTermination::FinalState)
+        );
+        assert_eq!(
+            finished.trace.timeline.last().unwrap().values[&("vehicle".into(), "distance".into())],
+            Value::from(4.0)
+        );
+        assert_eq!(
+            finished
+                .trace
+                .timeline
+                .iter()
+                .filter(|frame| frame.t == 0.0)
+                .count(),
+            1
+        );
+        assert_eq!(finished, session.cancel());
+        assert!(
+            session
+                .inject_event(
+                    "vehicle",
+                    SimulationEvent {
+                        id: "late".into(),
+                        trigger: "stop".into()
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(finished, session.advance(10).unwrap());
+    }
+
+    #[test]
+    fn session_cancellation_freezes_clock_trace_and_queues() {
+        let (model, scenario, clock) = session_fixture();
+        let mut session = SimulationSession::initialize(model, scenario, clock).unwrap();
+        let before = session.advance(1).unwrap();
+        let cancelled = session.cancel();
+        assert_eq!(cancelled.lifecycle, SimulationSessionLifecycle::Cancelled);
+        assert_eq!(
+            cancelled.trace.termination,
+            Some(SimulationTermination::Cancelled)
+        );
+        assert_eq!(cancelled.trace.timeline, before.trace.timeline);
+        assert_eq!(cancelled.logical_time_s, 1.0);
+        assert_eq!(cancelled, session.cancel());
+        assert_eq!(cancelled, session.advance(100).unwrap());
+        assert!(
+            session
+                .inject_event(
+                    "vehicle",
+                    SimulationEvent {
+                        id: "late".into(),
+                        trigger: "stop".into()
+                    }
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn session_validates_event_identity_target_and_unknown_trigger_evidence() {
+        let (model, scenario, clock) = session_fixture();
+        let mut session = SimulationSession::initialize(model, scenario, clock).unwrap();
+        let event = SimulationEvent {
+            id: "event-1".into(),
+            trigger: "unhandled".into(),
+        };
+        assert!(matches!(
+            session.inject_event("absent", event.clone()),
+            Err(CoreSimulationError::MissingSubject(_))
+        ));
+        assert!(
+            session
+                .inject_event(
+                    "vehicle",
+                    SimulationEvent {
+                        id: "".into(),
+                        trigger: "stop".into()
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            session
+                .inject_event(
+                    "vehicle",
+                    SimulationEvent {
+                        id: "event-0".into(),
+                        trigger: " ".into()
+                    }
+                )
+                .is_err()
+        );
+        session.inject_event("vehicle", event.clone()).unwrap();
+        assert!(session.inject_event("vehicle", event.clone()).is_err());
+        let next = session.advance(1).unwrap();
+        assert_eq!(next.lifecycle, SimulationSessionLifecycle::Paused);
+        assert_eq!(next.trace.status, SimulationStatus::Blocked);
+        assert_eq!(
+            next.trace.timeline.last().unwrap().events[0].kind,
+            "event.dropped"
+        );
+        assert!(
+            session.inject_event("vehicle", event).is_err(),
+            "consumed identities remain reserved"
+        );
+    }
+
+    #[test]
+    fn session_failure_restores_last_committed_boundary_and_stays_failed() {
+        let (mut model, mut scenario, clock) = session_fixture();
+        model.machines[0].transitions[0].effects = vec![
+            SimulationEffect::Assign(AssignEffect {
+                feature: "distance".into(),
+                value: Value::from(999.0),
+            }),
+            SimulationEffect::AssignExpression {
+                feature: "missing".into(),
+                expression: serde_json::json!({"kind":"feature","path":["absent"]}),
+            },
+        ];
+        scenario.subjects[0].events = vec![SimulationEvent {
+            id: "stop".into(),
+            trigger: "stop".into(),
+        }];
+        let mut session = SimulationSession::initialize(model, scenario, clock).unwrap();
+        let initial = session.snapshot();
+        assert!(session.advance(1).is_err());
+        let failed = session.snapshot();
+        assert_eq!(failed.lifecycle, SimulationSessionLifecycle::Failed);
+        assert_eq!(failed.trace.status, SimulationStatus::Failed);
+        assert!(failed.error.is_some());
+        assert_eq!(failed.trace.timeline, initial.trace.timeline);
+        assert_eq!(failed.execution_steps, 0);
+        assert_eq!(failed, session.advance(1).unwrap());
+        assert_eq!(failed, session.cancel());
+    }
+
+    #[test]
+    fn session_history_survives_pause_and_injected_event_boundaries() {
+        let (mut model, mut scenario, clock) = session_fixture();
+        let parent = state("working", true);
+        let mut a = state("a", true);
+        a.parent_state_id = Some("working".into());
+        let mut b = state("b", false);
+        b.parent_state_id = Some("working".into());
+        let mut history = state("history", false);
+        history.parent_state_id = Some("working".into());
+        history.is_history = true;
+        model.machines[0].states = vec![parent, a, b, history, state("parked", false)];
+        model.machines[0].transitions = vec![
+            transition("next", "a", "b", "next"),
+            transition("park", "working", "parked", "park"),
+            transition("resume", "parked", "history", "resume"),
+        ];
+        scenario.max_steps = 3;
+        let events = ["next", "park", "resume"].map(|trigger| SimulationEvent {
+            id: trigger.into(),
+            trigger: trigger.into(),
+        });
+        let mut batch_scenario = scenario.clone();
+        batch_scenario.subjects[0].events = events.to_vec();
+        let batch =
+            run_and_assert_resumable_equivalence(&model, batch_scenario, clock.clone()).unwrap();
+        let mut session = SimulationSession::initialize(model, scenario, clock).unwrap();
+        for event in events {
+            session.inject_event("vehicle", event).unwrap();
+            session.advance(1).unwrap();
+        }
+        let resumed = session.snapshot();
+        assert_eq!(resumed.trace, batch);
+        assert_eq!(
+            resumed.trace.timeline.last().unwrap().states["vehicle"],
+            vec!["working", "b"]
+        );
+        assert_eq!(
+            resumed.trace.termination,
+            Some(SimulationTermination::StepBudgetExhausted)
+        );
+    }
+
+    #[test]
+    fn nested_sibling_transition_preserves_orthogonal_root_entry_and_other_region() {
+        let (mut model, mut scenario, clock) = session_fixture();
+        let mut root = state("root", true);
+        root.is_orthogonal = true;
+        root.entry_behavior = Some(SimulationActionSequence {
+            actions: vec![SimulationActionNode::Effect(
+                SimulationEffect::AssignExpression {
+                    feature: "entries".into(),
+                    expression: serde_json::json!({"kind":"binary", "op":"+", "left":{"kind":"path", "segments":["entries"]}, "right":{"kind":"literal", "value":1}}),
+                },
+            )],
+        });
+        let mut left = state("left", true);
+        left.parent_state_id = Some("root".into());
+        let mut right = state("right", true);
+        right.parent_state_id = Some("root".into());
+        let mut a = state("a", true);
+        a.parent_state_id = Some("left".into());
+        let mut b = state("b", false);
+        b.parent_state_id = Some("left".into());
+        let mut other = state("other", true);
+        other.parent_state_id = Some("right".into());
+        model.machines[0].states = vec![root, left, right, a, b, other];
+        model.machines[0].transitions = vec![transition("advance", "a", "b", "advance")];
+        scenario
+            .initial_values
+            .insert(("vehicle".into(), "entries".into()), Value::from(0));
+        scenario.subjects[0].events.push(SimulationEvent {
+            id: "advance".into(),
+            trigger: "advance".into(),
+        });
+        scenario.max_steps = 1;
+        let trace = run_and_assert_resumable_equivalence(&model, scenario, clock).unwrap();
+        let last = trace.timeline.last().unwrap();
+        assert_eq!(
+            last.values[&("vehicle".into(), "entries".into())],
+            Value::from(1)
+        );
+        assert_eq!(
+            last.states["vehicle"],
+            vec!["root", "left", "right", "other", "b"]
+        );
+    }
+
+    #[test]
+    fn session_rejects_ambiguous_subjects_and_invalid_clock() {
+        let (model, mut scenario, clock) = session_fixture();
+        scenario.subjects.push(scenario.subjects[0].clone());
+        assert!(
+            SimulationSession::initialize(model.clone(), scenario.clone(), clock.clone()).is_err()
+        );
+        scenario.subjects.pop();
+        for invalid in [f64::NAN, f64::INFINITY, -1.0] {
+            assert!(
+                SimulationSession::initialize(
+                    model.clone(),
+                    scenario.clone(),
+                    SimulationClockConfig {
+                        max_time_s: invalid,
+                        ..clock.clone()
+                    }
+                )
+                .is_err()
+            );
+        }
     }
 
     fn state(id: &str, initial: bool) -> SimulationState {

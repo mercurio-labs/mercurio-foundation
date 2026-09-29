@@ -120,6 +120,8 @@ mod tests {
             }],
             timeline: (0..=6)
                 .map(|t| SimTraceEntry {
+                    integration: None,
+                    network_evaluations: Vec::new(),
                     t: t as f64,
                     states: BTreeMap::new(),
                     events: vec![],
