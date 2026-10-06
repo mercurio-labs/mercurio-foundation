@@ -53,12 +53,15 @@ pub use goal::{
     evaluate_semantic_goal, explain_semantic_goal,
 };
 pub use semantic_compare::{
-    SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION, SemanticCompareError, SemanticCompareOptions,
+    SEMANTIC_MODEL_COMPARE_REPORT_SCHEMA_VERSION, SemanticCompareCoverage, SemanticCompareError,
+    SemanticCompareOptions, SemanticCompareProfile, SemanticCompareTolerance,
     SemanticComparisonReport, SemanticElementMismatch, SemanticModelChange,
     SemanticModelChangeKind, SemanticModelCompareReport, SemanticModelCompareSection,
     SemanticModelCompareSummary, SemanticModelPropertyChange, SemanticModelRelationshipChange,
     SemanticModelRelationshipChangeKind, SemanticSnapshot, SemanticSnapshotAttribute,
     SemanticSnapshotElement, SemanticSourceSpan, SemanticValueMismatch, SnapshotMode,
-    build_semantic_snapshot, build_semantic_snapshot_with_registry, compare_snapshots,
-    compare_snapshots_with_options, semantic_model_compare_report_from_diff,
+    build_semantic_snapshot, build_semantic_snapshot_with_profile,
+    build_semantic_snapshot_with_registry, build_semantic_snapshot_with_registry_and_profile,
+    compare_snapshots, compare_snapshots_with_options, compare_snapshots_with_profile,
+    semantic_model_compare_report_from_diff,
 };

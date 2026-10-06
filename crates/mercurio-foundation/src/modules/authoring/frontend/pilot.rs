@@ -370,7 +370,11 @@ fn relation_targets(properties: &BTreeMap<String, Value>, keys: &[&str]) -> Vec<
 fn synthesize_metamodel_features(elements: &mut BTreeMap<String, KirElement>) {
     let owner_feature_pairs = elements
         .iter()
-        .filter(|(_, element)| element.layer < 2)
+        .filter(|(owner_id, element)| {
+            element.layer < 2
+                && !owner_id.starts_with("LibraryAnonymous::")
+                && !owner_id.starts_with("LibraryMembership::")
+        })
         .flat_map(|(owner_id, element)| {
             relation_targets(&element.properties, &["features"])
                 .into_iter()
@@ -613,6 +617,17 @@ fn compare_layer_for_group(group: &str) -> Result<u8, PilotImportError> {
 }
 
 fn push_relation(properties: &mut BTreeMap<String, Value>, relation: &str, target: String) {
+    if matches!(relation, "owning_membership" | "member_element" | "membership_owning_namespace") {
+        match properties.get_mut(relation) {
+            None => { properties.insert(relation.to_string(), Value::String(target)); }
+            Some(Value::String(existing)) if existing == &target => {}
+            Some(existing) => {
+                let previous = existing.take();
+                *existing = Value::Array(vec![previous, Value::String(target)]);
+            }
+        }
+        return;
+    }
     match properties.get_mut(relation) {
         Some(Value::Array(values)) => values.push(Value::String(target)),
         Some(existing) => {
@@ -632,7 +647,53 @@ fn push_relation(properties: &mut BTreeMap<String, Value>, relation: &str, targe
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::kir::KirDocument;
     use serde_json::json;
+
+    #[test]
+    fn singular_membership_relationships_keep_reference_shape_and_conflicts() {
+        let mut properties = BTreeMap::new();
+        super::push_relation(&mut properties, "owning_membership", "membership.1".into());
+        super::push_relation(&mut properties, "owning_membership", "membership.1".into());
+        assert_eq!(properties["owning_membership"], json!("membership.1"));
+        super::push_relation(&mut properties, "member_element", "element.1".into());
+        assert_eq!(properties["member_element"], json!("element.1"));
+        super::push_relation(&mut properties, "owning_membership", "membership.2".into());
+        assert_eq!(properties["owning_membership"], json!(["membership.1", "membership.2"]));
+    }
+
+    #[test]
+    fn pilot_collection_order_and_duplicates_survive_kir_persistence() {
+        let element = |id: &str| PilotExportElement {
+            qualified_name: id.to_string(), kind: "Feature".to_string(),
+            library_group: "Kernel Libraries".to_string(), source: None,
+            documentation: vec![], properties: BTreeMap::new(),
+        };
+        let relation = |name: &str, target: &str| PilotExportRelationship {
+            source: "Kernel::chain".to_string(), relation: name.to_string(),
+            target: target.to_string(),
+        };
+        let export = PilotExportDocument {
+            metadata: None,
+            elements: vec![element("Kernel::chain"), element("Kernel::first"), element("Kernel::second")],
+            relationships: vec![
+                relation("members", "Kernel::second"),
+                relation("members", "Kernel::first"),
+                relation("chaining_feature", "Kernel::second"),
+                relation("chaining_feature", "Kernel::first"),
+                relation("chaining_feature", "Kernel::second"),
+            ],
+        };
+        let document = normalize_pilot_export(export).unwrap().normalized_for_persistence();
+        let owner = document.elements.iter().find(|element| element.id == "Kernel::chain").unwrap();
+        assert_eq!(owner.properties["members"], json!(["Kernel::second", "Kernel::first"]));
+        assert_eq!(owner.properties["chaining_feature"],
+            json!(["Kernel::second", "Kernel::first", "Kernel::second"]));
+        let reloaded = KirDocument::from_str(&serde_json::to_string(&document).unwrap()).unwrap();
+        let owner = reloaded.elements.iter().find(|element| element.id == "Kernel::chain").unwrap();
+        assert_eq!(owner.properties["chaining_feature"],
+            json!(["Kernel::second", "Kernel::first", "Kernel::second"]));
+    }
 
     use super::{
         PilotDocumentationBlock, PilotExportDocument, PilotExportElement, PilotExportRelationship,
@@ -766,6 +827,31 @@ mod tests {
         assert_eq!(feature.properties["type_label"], "String");
         assert_eq!(feature.properties["lower"], 0);
         assert_eq!(feature.properties["upper"], 1);
+    }
+
+    #[test]
+    fn anonymous_library_owners_do_not_create_metamodel_fields() {
+        let owner = "LibraryAnonymous::sample::owner";
+        let feature = "LibraryAnonymous::sample::feature";
+        let export = PilotExportDocument {
+            metadata: None,
+            elements: vec![owner, feature].into_iter().map(|id| PilotExportElement {
+                qualified_name: id.to_string(),
+                kind: "Feature".to_string(),
+                library_group: "Kernel Libraries".to_string(),
+                source: None,
+                documentation: vec![],
+                properties: BTreeMap::from([("declared_name".to_string(), json!("result"))]),
+            }).collect(),
+            relationships: vec![PilotExportRelationship {
+                source: owner.to_string(), relation: "features".to_string(),
+                target: feature.to_string(),
+            }],
+        };
+        let normalized = normalize_pilot_export(export).unwrap();
+        assert_eq!(normalized.elements.len(), 2);
+        assert_eq!(normalized.elements.iter().find(|element| element.id == owner)
+            .unwrap().properties["features"], json!([feature]));
     }
 
     #[test]

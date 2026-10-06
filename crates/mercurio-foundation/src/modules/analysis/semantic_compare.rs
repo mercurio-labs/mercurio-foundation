@@ -1,3 +1,6 @@
+mod profile;
+pub use profile::*;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -74,6 +77,7 @@ pub struct SemanticComparisonReport {
     pub mercurio_only: Vec<SemanticSnapshotElement>,
     pub pilot_only: Vec<SemanticSnapshotElement>,
     pub mismatches: Vec<SemanticElementMismatch>,
+    pub coverage: SemanticCompareCoverage,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -191,12 +195,16 @@ pub struct SemanticCompareOptions {
 pub enum SemanticCompareError {
     Graph(GraphError),
     DuplicateMatchKey(String),
+    InvalidProfile(String),
 }
 
 impl fmt::Display for SemanticCompareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Graph(err) => write!(f, "{err}"),
+            Self::InvalidProfile(message) => {
+                write!(f, "invalid semantic comparison profile: {message}")
+            }
             Self::DuplicateMatchKey(key) => {
                 write!(f, "duplicate semantic snapshot match key: {key}")
             }
@@ -308,6 +316,10 @@ pub fn compare_snapshots_with_options(
         exact_match_count,
         mercurio_only,
         pilot_only,
+        coverage: SemanticCompareCoverage::from_counts(
+            mercurio.elements.len() + pilot.elements.len(),
+            2 * (exact_match_count + mismatches.len()),
+        ),
         mismatches,
     })
 }

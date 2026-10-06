@@ -83,8 +83,8 @@ pub struct Package {
     pub members: Vec<Declaration>,
     /// Leading own-line `//` and non-doc `/* */` comments. Rendered by the
     /// declaration's *container* (never by `render(..)` itself) so a
-    /// localized splice — whose span starts at the declaration keyword,
-    /// below any leading comments kept in the original text — cannot
+    /// localized splice â€” whose span starts at the declaration keyword,
+    /// below any leading comments kept in the original text â€” cannot
     /// duplicate them.
     pub comments: Vec<CommentNote>,
     pub docs: Vec<String>,
@@ -93,6 +93,9 @@ pub struct Package {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
+    pub members: Vec<Declaration>,
+    pub is_expose: bool,
+    pub filter: Option<String>,
     pub path: QualifiedName,
     pub comments: Vec<CommentNote>,
     pub docs: Vec<String>,
@@ -113,6 +116,7 @@ pub struct Definition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Usage {
+    pub annotation_targets: Vec<QualifiedName>,
     pub keyword: String,
     pub name: String,
     pub is_implicit_name: bool,
@@ -134,6 +138,7 @@ pub struct Usage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
+    pub members: Vec<Declaration>,
     pub name: String,
     pub target: QualifiedName,
     pub comments: Vec<CommentNote>,
@@ -583,17 +588,17 @@ impl AuthoringProject {
     /// accepts in source, so resolution mirrors SysML name resolution as
     /// closely as the authoring model allows. Candidates are tried in order:
     ///
-    /// 1. **Absolute** — `name` is already a full path from a file root
+    /// 1. **Absolute** â€” `name` is already a full path from a file root
     ///    (`RoverParts::Chassis`, or the equivalent `RoverParts.Chassis`).
-    /// 2. **Relative to `scope`** — `name` is looked up against `scope` and
+    /// 2. **Relative to `scope`** â€” `name` is looked up against `scope` and
     ///    each of its enclosing owners, innermost first, so a sibling inside
     ///    the same definition or package resolves by simple name.
-    /// 3. **Through imports visible from `scope`** — a wildcard
+    /// 3. **Through imports visible from `scope`** â€” a wildcard
     ///    `import RoverParts::*;` puts `Chassis` in scope as `RoverParts.Chassis`,
     ///    and an explicit `import RoverParts::Chassis;` binds the simple name.
     ///    Only imports on the file root and on packages that enclose `scope`
     ///    are considered.
-    /// 4. **Unique project-wide suffix match** — as a last resort a name that
+    /// 4. **Unique project-wide suffix match** â€” as a last resort a name that
     ///    matches exactly one declared element anywhere in the project
     ///    resolves to it. Ambiguous suffixes deliberately do not resolve.
     ///
@@ -1049,6 +1054,9 @@ impl AuthoringProject {
             } => {
                 let file = self.ensure_file_mut(&target_file);
                 let import = Declaration::Import(Import {
+                    members: Vec::new(),
+                    is_expose: false,
+                    filter: None,
                     path: path.clone(),
                     comments: Vec::new(),
                     docs: Vec::new(),
@@ -1147,6 +1155,7 @@ impl AuthoringProject {
                     Vec::new()
                 };
                 let usage = Declaration::Usage(Usage {
+        annotation_targets: Vec::new(),
                     keyword,
                     name: name.clone(),
                     is_implicit_name: false,
@@ -1198,6 +1207,7 @@ impl AuthoringProject {
                     ));
                 }
                 let usage = Declaration::Usage(Usage {
+        annotation_targets: Vec::new(),
                     keyword: "metadata".to_string(),
                     name: metadata_type.clone(),
                     is_implicit_name: false,
@@ -2232,6 +2242,7 @@ impl AuthoringProject {
             )));
         }
         usage.reference_target = targets.first().cloned();
+        if usage.keyword == "comment" { usage.annotation_targets = targets.clone(); }
         set_reference_targets(&mut usage.modifiers, &targets);
         let mut changed_files = BTreeSet::new();
         changed_files.insert(located.file.clone());
@@ -2417,6 +2428,9 @@ impl AuthoringProject {
             .into_iter()
             .map(|path| {
                 Declaration::Import(Import {
+                    members: Vec::new(),
+                    is_expose: false,
+                    filter: None,
                     path,
                     comments: Vec::new(),
                     docs: Vec::new(),
@@ -2459,11 +2473,15 @@ impl AuthoringProject {
         if matches!(located.kind, DeclarationKind::Package) {
             let package = locate_package_mut(&mut file.module, element)
                 .ok_or_else(|| AuthoringError::MissingPackage(element.as_dot_string()))?;
-            apply_doc_value_edit(&mut package.docs, edit);
+            apply_owned_doc_edit(&mut package.docs, &mut package.members, edit);
         } else {
             let declaration = locate_declaration_mut(&mut file.module, element)
                 .ok_or_else(|| AuthoringError::MissingDeclaration(element.as_dot_string()))?;
-            apply_doc_value_edit(declaration_docs_mut(declaration), edit);
+            match declaration {
+                Declaration::Definition(value) => apply_owned_doc_edit(&mut value.docs, &mut value.members, edit),
+                Declaration::Usage(value) => apply_owned_doc_edit(&mut value.docs, &mut value.members, edit),
+                _ => apply_doc_value_edit(declaration_docs_mut(declaration), edit),
+            }
         }
 
         self.finalize_change(
@@ -2643,6 +2661,12 @@ impl Package {
     }
 
     fn render(&self, indent: usize) -> String {
+        if !self.docs.is_empty() {
+            let mut normalized = self.clone();
+            let docs = std::mem::take(&mut normalized.docs);
+            normalized.members.splice(0..0, docs.into_iter().map(documentation_member));
+            return normalized.render(indent);
+        }
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = String::new();
@@ -2670,11 +2694,17 @@ impl Package {
 
 impl Definition {
     fn render(&self, indent: usize) -> String {
+        if !self.docs.is_empty() {
+            let mut normalized = self.clone();
+            let docs = std::mem::take(&mut normalized.docs);
+            normalized.members.splice(0..0, docs.into_iter().map(documentation_member));
+            return normalized.render(indent);
+        }
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
         header.push_str(&render_keyword(&self.keyword, &self.modifiers));
-        header.push_str(" def ");
+        header.push_str(if self.modifiers.iter().any(|m| m == "definition_keyword_complete") { " " } else { " def " });
         header.push_str(&render_angle_adornment_prefix(&self.modifiers));
         header.push_str(&render_name_segment(&self.name));
         if !self.specializes.is_empty() {
@@ -2717,9 +2747,55 @@ impl Definition {
 
 impl Usage {
     fn render(&self, indent: usize) -> String {
+        if !self.docs.is_empty() {
+            let mut normalized = self.clone();
+            let docs = std::mem::take(&mut normalized.docs);
+            normalized.members.splice(0..0, docs.into_iter().map(documentation_member));
+            return normalized.render(indent);
+        }
         let prefix = " ".repeat(indent);
         let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
+        if matches!(self.keyword.as_str(), "comment" | "doc") && self.metadata_properties.contains_key("body") {
+            let bare = self.metadata_properties.get("__bare_comment").is_some_and(|v| v == "true");
+            if !bare { header.push_str(&self.keyword); }
+            let short = render_angle_adornment_prefix(&self.modifiers);
+            if !short.is_empty() || !self.is_implicit_name { header.push(' '); }
+            header.push_str(&short);
+            if !self.is_implicit_name { header.push_str(&render_name_segment(&self.name)); }
+            let targets = if self.annotation_targets.is_empty() { self.reference_target.iter().collect::<Vec<_>>() } else { self.annotation_targets.iter().collect() };
+            if !targets.is_empty() {
+                header.push_str(" about ");
+                header.push_str(&targets.into_iter().map(render_qname).collect::<Vec<_>>().join(", "));
+            }
+            if let Some(locale) = self.metadata_properties.get("locale") {
+                // The lexer retains escaped source spelling inside strings.
+                header.push_str(" locale ");
+                header.push('"');
+                header.push_str(locale);
+                header.push('"');
+            }
+            header.push_str(if bare { "/*" } else { " /*" });
+            header.push_str(&self.metadata_properties["body"]);
+            header.push_str("*/");
+            lines.push(format!("{prefix}{header}"));
+            return lines.join("\n");
+        }
+        if self.keyword == "rep" {
+            header.push_str("rep ");
+            header.push_str(&render_angle_adornment_prefix(&self.modifiers));
+            if !self.is_implicit_name {
+                header.push_str(&render_name_segment(&self.name));
+                header.push(' ');
+            }
+            header.push_str("language \"");
+            header.push_str(self.metadata_properties.get("language").map(String::as_str).unwrap_or(""));
+            header.push_str("\" /*");
+            header.push_str(self.metadata_properties.get("body").map(String::as_str).unwrap_or(""));
+            header.push_str("*/");
+            lines.push(format!("{prefix}{header}"));
+            return lines.join("\n");
+        }
         if self.keyword == "metadata" && is_metadata_usage_modifier(&self.modifiers) {
             header.push_str("metadata ");
             header.push_str(&render_angle_adornment_prefix(&self.modifiers));
@@ -2781,14 +2857,35 @@ impl Usage {
             lines.push(format!("{prefix}}}"));
             return lines.join("\n");
         }
-        if self.keyword == "satisfy"
-            && let Some(reference_target) = &self.reference_target
-        {
-            header.push_str("satisfy requirement ");
-            header.push_str(reference_target.tail().unwrap_or("target"));
-            header.push(';');
-            lines.push(format!("{prefix}{header}"));
-            return lines.join("\n");
+        if self.keyword == "connect" {
+            let is_connector_end = |declaration: &Declaration| matches!(declaration,
+                Declaration::Usage(end) if end.modifiers.iter().any(|m| m == "end")
+                    && end.reference_target.is_some() && end.ty.is_none()
+                    && end.expression.is_none() && end.members.is_empty());
+            let ends = self.members.iter().filter(|member| is_connector_end(member))
+                .filter_map(|member| match member {
+                    Declaration::Usage(end) => end.reference_target.as_ref().map(|target| {
+                        if end.is_implicit_name { render_qname(target) }
+                        else { format!("{} ::> {}", render_name_segment(&end.name), render_qname(target)) }
+                    }),
+                    _ => None,
+                }).collect::<Vec<_>>();
+            if ends.len() >= 2 {
+                header.push_str(&format!("connect ({})", ends.join(", ")));
+                let body_members = self.members.iter().filter(|member| !is_connector_end(member))
+                    .cloned().collect::<Vec<_>>();
+                if body_members.is_empty() && self.raw_body.is_none() {
+                    header.push(';');
+                    lines.push(format!("{prefix}{header}"));
+                } else {
+                    header.push_str(" {");
+                    lines.push(format!("{prefix}{header}"));
+                    let body = render_member_and_raw_body(&body_members, self.raw_body.as_deref(), indent + 2);
+                    if !body.is_empty() { lines.push(body); }
+                    lines.push(format!("{prefix}}}"));
+                }
+                return lines.join("\n");
+            }
         }
         if let Some(rendered) = render_relationship_shorthand(self) {
             header.push_str(&rendered);
@@ -2800,7 +2897,7 @@ impl Usage {
             lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
         }
-        if self.keyword == "perform" && self.members.is_empty() && self.ty.is_none() {
+        if self.keyword == "perform" && self.reference_target.is_none() && self.members.is_empty() && self.ty.is_none() {
             header.push_str("perform action ");
             if !self.is_implicit_name {
                 header.push_str(&render_name_segment(&self.name));
@@ -2809,10 +2906,22 @@ impl Usage {
             lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
         }
-        header.push_str(&render_keyword(&self.keyword, &self.modifiers));
-        header.push(' ');
+        let inclusion = matches!(self.keyword.as_str(), "include" | "include-use-case");
+        let direct_reference = self.reference_target.is_some()
+            && matches!(self.keyword.as_str(), "perform" | "exhibit" | "assert" | "satisfy");
+        if direct_reference {
+            header.push_str(&render_keyword(&self.keyword, &self.modifiers));
+            header.push(' ');
+            if let Some(target) = &self.reference_target { header.push_str(&render_qname(target)); }
+        } else if inclusion {
+            header.push_str(if self.reference_target.is_some() { "include " } else { "include use case " });
+            if let Some(target) = &self.reference_target { header.push_str(&render_qname(target)); }
+        } else {
+            header.push_str(&render_keyword(&self.keyword, &self.modifiers));
+            header.push(' ');
+        }
         header.push_str(&render_angle_adornment_prefix(&self.modifiers));
-        if !self.is_implicit_name {
+        if !self.is_implicit_name && !direct_reference && !(inclusion && self.reference_target.is_some()) {
             header.push_str(&render_name_segment(&self.name));
         }
         if let Some(ty) = &self.ty {
@@ -2829,7 +2938,7 @@ impl Usage {
             header.push(']');
         }
         if !self.additional_types.is_empty() {
-            header.push_str(" :> ");
+            header.push_str(if self.ty.is_some() { ", " } else { ": " });
             header.push_str(
                 &self
                     .additional_types
@@ -2838,6 +2947,12 @@ impl Usage {
                     .collect::<Vec<_>>()
                     .join(", "),
             );
+        }
+        for modifier in ["ordered", "nonunique"] {
+            if self.modifiers.iter().any(|value| value == modifier) {
+                header.push(' ');
+                header.push_str(modifier);
+            }
         }
         if !self.specializes.is_empty() {
             header.push_str(" specializes ");
@@ -2872,15 +2987,17 @@ impl Usage {
                     .join(", "),
             );
         }
-        if let Some(reference_target) = &self.reference_target {
+        if let Some(reference_target) = &self.reference_target
+            && !inclusion && !direct_reference
+        {
             header.push_str(" references ");
             header.push_str(&reference_target.as_dot_string());
         }
-        if let Some(expression) = &self.expression {
-            header.push_str(" = ");
-            header.push_str(expression);
+        let result_body = self.modifiers.iter().any(|m| m == "expression_is_result");
+        if let Some(expression) = &self.expression && !result_body {
+            append_feature_value(&mut header, expression, &self.modifiers);
         }
-        if self.members.is_empty() && self.raw_body.is_none() {
+        if self.members.is_empty() && self.raw_body.is_none() && !result_body {
             header.push(';');
             lines.push(format!("{prefix}{header}"));
             return lines.join("\n");
@@ -2892,6 +3009,9 @@ impl Usage {
         if !body.is_empty() {
             lines.push(body);
         }
+        if result_body && let Some(expression) = &self.expression {
+            lines.push(format!("{prefix}  {expression}"));
+        }
         lines.push(format!("{prefix}}}"));
         lines.join("\n")
     }
@@ -2899,18 +3019,26 @@ impl Usage {
 
 impl Alias {
     fn render(&self, indent: usize) -> String {
-        let prefix = " ".repeat(indent);
-        let mut lines = render_docs(&self.docs, indent);
         let mut header = render_modifier_prefix(&self.modifiers);
         header.push_str("alias ");
         header.push_str(&render_angle_adornment_prefix(&self.modifiers));
-        header.push_str(&render_name_segment(&self.name));
-        header.push_str(" = ");
+        if !self.name.is_empty() { header.push_str(&render_name_segment(&self.name)); }
+        if !header.ends_with(' ') { header.push(' '); }
+        header.push_str("for ");
         header.push_str(&render_qname(&self.target));
-        header.push(';');
-        lines.push(format!("{prefix}{header}"));
-        lines.join("\n")
+        render_relationship_body(header, &self.members, &self.docs, indent)
     }
+}
+
+fn render_relationship_body(mut header: String, members: &[Declaration], docs: &[String], indent: usize) -> String {
+    let prefix = " ".repeat(indent);
+    if members.is_empty() && docs.is_empty() { return format!("{prefix}{header};"); }
+    header.push_str(" {");
+    let mut lines = vec![format!("{prefix}{header}")];
+    lines.extend(docs.iter().cloned().map(documentation_member).map(|d| render_declaration_with_comments(&d, indent + 2)));
+    lines.extend(members.iter().map(|d| render_declaration_with_comments(d, indent + 2)));
+    lines.push(format!("{prefix}}}"));
+    lines.join("\n")
 }
 
 impl Declaration {
@@ -2925,12 +3053,16 @@ impl Declaration {
         match declaration {
             AstDeclaration::Package(package) => Self::Package(Package::from_ast(package)),
             AstDeclaration::Import(import) => Self::Import(Import {
+                members: import.body_members.iter().map(Self::from_ast).collect(),
+                is_expose: import.is_expose,
+                filter: import.filter.clone(),
                 path: QualifiedName(import.path.segments.clone()),
                 comments: import.comments.clone(),
                 docs: import.docs.clone(),
                 modifiers: import.modifiers.clone(),
             }),
             AstDeclaration::Alias(alias) => Self::Alias(Alias {
+                members: alias.body_members.iter().map(Self::from_ast).collect(),
                 name: alias.name.clone(),
                 target: QualifiedName(alias.target.segments.clone()),
                 comments: alias.comments.clone(),
@@ -2958,14 +3090,12 @@ impl Declaration {
         match self {
             Self::Package(package) => package.render(indent),
             Self::Import(import) => {
-                let prefix = " ".repeat(indent);
-                let mut lines = render_docs(&import.docs, indent);
                 let mut header = render_modifier_prefix(&import.modifiers);
-                header.push_str("import ");
+                header.push_str(if import.is_expose { "expose " } else { "import " });
+                if import.modifiers.iter().any(|m| m == "import_all") { header.push_str("all "); }
                 header.push_str(&render_qname(&import.path));
-                header.push(';');
-                lines.push(format!("{prefix}{header}"));
-                lines.join("\n")
+                if let Some(filter) = &import.filter { header.push('['); header.push_str(filter); header.push(']'); }
+                render_relationship_body(header, &import.members, &import.docs, indent)
             }
             Self::Definition(definition) => definition.render(indent),
             Self::Usage(usage) => usage.render(indent),
@@ -3014,6 +3144,7 @@ fn usage_from_ast_like(usage: &crate::authoring::frontend::ast::GenericUsageDecl
         modifiers.push("metadata_usage".to_string());
     }
     Usage {
+        annotation_targets: usage.annotation_targets.iter().map(|name| QualifiedName(name.segments.clone())).collect(),
         keyword: usage.keyword.clone(),
         name: usage.name.clone(),
         is_implicit_name: usage.is_implicit_name,
@@ -3206,7 +3337,7 @@ fn doc_block_start_above(lines: &[&str], below_line: usize) -> Option<usize> {
     }
 }
 
-/// True when `block` is exactly one `doc /* ... */` annotation — the `doc`
+/// True when `block` is exactly one `doc /* ... */` annotation â€” the `doc`
 /// keyword, one block comment, and nothing else.
 fn is_single_doc_annotation(block: &str) -> bool {
     let Some(rest) = block.trim_start().strip_prefix("doc") else {
@@ -3323,12 +3454,14 @@ fn locate_package_mut<'a>(
     {
         return module.package.as_mut();
     }
-    if let Some(package) = &mut module.package {
-        return locate_package_in_members_mut(
+    if let Some(package) = &mut module.package
+        && let Some(found) = locate_package_in_members_mut(
             &mut package.members,
             &package.name.as_dot_string(),
             qualified_name,
-        );
+        )
+    {
+        return Some(found);
     }
     locate_package_in_members_mut(&mut module.members, "", qualified_name)
 }
@@ -4230,6 +4363,37 @@ enum DocEdit {
     ClearText,
 }
 
+// Documentation is a member of the documented element, not a prefix on
+// the next declaration. Keep the legacy docs API editable without emitting
+// syntax that changes ownership when parsed by a conforming frontend.
+fn documentation_member(body: String) -> Declaration {
+    Declaration::Usage(Usage {
+        annotation_targets: Vec::new(),
+        keyword: "doc".into(), name: "comment".into(), is_implicit_name: true,
+        ty: None, reference_target: None,
+        metadata_properties: BTreeMap::from([("body".into(), format!(" {} ", body.trim()))]),
+        multiplicity: None, expression: None, additional_types: Vec::new(),
+        specializes: Vec::new(), subsets: Vec::new(), redefines: Vec::new(),
+        members: Vec::new(), raw_body: None, comments: Vec::new(),
+        docs: Vec::new(), modifiers: Vec::new(),
+    })
+}
+
+fn apply_owned_doc_edit(docs: &mut Vec<String>, members: &mut Vec<Declaration>, edit: DocEdit) {
+    members.retain(|member| {
+        if let Declaration::Usage(usage) = member
+            && usage.keyword == "doc" && usage.is_implicit_name
+            && usage.modifiers.is_empty()
+            && !usage.metadata_properties.contains_key("locale")
+            && let Some(body) = usage.metadata_properties.get("body")
+        {
+            docs.push(body.clone());
+            false
+        } else { true }
+    });
+    apply_doc_value_edit(docs, edit);
+}
+
 fn declaration_docs_mut(declaration: &mut Declaration) -> &mut Vec<String> {
     match declaration {
         Declaration::Package(package) => &mut package.docs,
@@ -4385,8 +4549,9 @@ fn set_short_name_modifier(modifiers: &mut Vec<String>, short_name: Option<&str>
     if current.as_deref() == short_name {
         return false;
     }
-    modifiers.retain(|modifier| !is_angle_adornment_modifier(modifier));
+    modifiers.retain(|modifier| !is_angle_adornment_modifier(modifier) && !modifier.starts_with("short_name="));
     if let Some(short_name) = short_name {
+        modifiers.push(format!("short_name={short_name}"));
         modifiers.push(short_name.to_string());
     }
     true
@@ -4427,6 +4592,7 @@ fn set_reference_targets(modifiers: &mut Vec<String>, values: &[QualifiedName]) 
 }
 
 fn usage_reference_targets(usage: &Usage) -> Vec<QualifiedName> {
+    if !usage.annotation_targets.is_empty() { return usage.annotation_targets.clone(); }
     let targets = reference_targets_from_modifiers(&usage.modifiers);
     if targets.is_empty() {
         usage.reference_target.iter().cloned().collect()
@@ -4875,6 +5041,7 @@ fn relationship_usage(
         ));
     }
     Ok(Usage {
+        annotation_targets: Vec::new(),
         keyword,
         name: target.tail().unwrap_or("target").to_string(),
         is_implicit_name: false,
@@ -5072,7 +5239,7 @@ fn render_with_leading_comments(
 
 /// Container-side render of a member declaration: leading comments first,
 /// then the declaration itself (which starts with its docs). Only containers
-/// render leading comments — a localized splice replaces the declaration
+/// render leading comments â€” a localized splice replaces the declaration
 /// span alone, leaving the original comment bytes above it untouched.
 fn render_declaration_with_comments(declaration: &Declaration, indent: usize) -> String {
     render_with_leading_comments(declaration.comments(), declaration.render(indent), indent)
@@ -5134,6 +5301,7 @@ fn render_modifier_prefix(modifiers: &[String]) -> String {
     let rendered = modifiers
         .iter()
         .filter(|modifier| !is_angle_adornment_modifier(modifier))
+        .filter(|modifier| !matches!(modifier.as_str(), "ordered" | "nonunique"))
         .filter(|modifier| !is_internal_render_modifier(modifier))
         .map(|modifier| {
             if let Some(extension) = modifier.strip_prefix("language_extension=") {
@@ -5154,7 +5322,13 @@ fn render_modifier_prefix(modifiers: &[String]) -> String {
 
 fn render_keyword(keyword: &str, modifiers: &[String]) -> String {
     let rendered_keyword = match keyword {
+        "extended" => "",
+        "assoc-struct" => "assoc struct",
         "use-case" => "use case",
+        "succession-flow" => "succession flow",
+        "inv" if modifiers.iter().any(|m| m == "is_negated") => "inv false",
+        "assert" if modifiers.iter().any(|m| m == "is_negated") => "assert not",
+        "satisfy" if modifiers.iter().any(|m| m == "is_negated") => "not satisfy",
         other => other,
     };
     if modifiers
@@ -5163,7 +5337,13 @@ fn render_keyword(keyword: &str, modifiers: &[String]) -> String {
     {
         format!("#{}", render_language_extension_keyword(rendered_keyword))
     } else {
-        rendered_keyword.to_string()
+        let mut rendered = rendered_keyword.to_string();
+        if matches!(keyword, "assert" | "assume" | "require")
+            && modifiers.iter().any(|m| m == "constraint")
+        {
+            rendered.push_str(" constraint");
+        }
+        rendered
     }
 }
 
@@ -5227,7 +5407,7 @@ fn render_transition_shorthand(usage: &Usage) -> Option<String> {
     }
     if let Some(trigger) = trigger {
         rendered.push_str(" accept ");
-        // Guarded triggers (`accept when …`, `accept after …`, `accept at …`)
+        // Guarded triggers (`accept when â€¦`, `accept after â€¦`, `accept at â€¦`)
         // store the guard keyword separately as `trigger_kind`; rendering it
         // back is required for the shorthand to re-parse. Event triggers
         // (`trigger_kind=event`) render as the bare trigger name.
@@ -5254,7 +5434,7 @@ fn append_usage_relations(header: &mut String, usage: &Usage) {
         header.push(']');
     }
     if !usage.additional_types.is_empty() {
-        header.push_str(" :> ");
+        header.push_str(if usage.ty.is_some() { ", " } else { ": " });
         header.push_str(
             &usage
                 .additional_types
@@ -5298,9 +5478,20 @@ fn append_usage_relations(header: &mut String, usage: &Usage) {
         );
     }
     if let Some(expression) = &usage.expression {
-        header.push_str(" = ");
-        header.push_str(expression);
+        append_feature_value(header, expression, &usage.modifiers);
     }
+}
+
+fn append_feature_value(header: &mut String, expression: &str, modifiers: &[String]) {
+    if modifiers.iter().any(|m| m == "feature_value_is_default") {
+        header.push_str(" default");
+    }
+    header.push_str(if modifiers.iter().any(|m| m == "feature_value_is_initial") {
+        " := "
+    } else {
+        " = "
+    });
+    header.push_str(expression);
 }
 
 fn relationship_source_from_modifiers(modifiers: &[String]) -> Option<&str> {
@@ -5316,24 +5507,35 @@ fn is_metadata_usage_modifier(modifiers: &[String]) -> bool {
 }
 
 fn is_internal_render_modifier(modifier: &str) -> bool {
-    modifier.starts_with("relationship_source=")
+    modifier.starts_with("short_name=")
+        || modifier.starts_with("feature_value_is_")
+        || modifier.starts_with("relationship_source=")
         || modifier.starts_with("annotated_element=")
         || modifier.starts_with("reference_target=")
         || modifier.starts_with("transition_source=")
         || modifier.starts_with("transition_target=")
         || modifier.starts_with("trigger=")
         || modifier.starts_with("trigger_kind=")
+        || modifier == "constraint"
+        || modifier == "definition_keyword_complete"
+        || modifier == "import_all"
+        || modifier == "expression_is_result"
+        || modifier == "is_negated"
         || modifier == "source_is_initial"
         || modifier == "hashed_keyword"
         || modifier == "metadata_usage"
 }
 
 fn render_angle_adornment_prefix(modifiers: &[String]) -> String {
-    let rendered = modifiers
+    let short = modifiers.iter().find_map(|m| m.strip_prefix("short_name="));
+    let mut rendered = modifiers
         .iter()
         .filter(|modifier| is_angle_adornment_modifier(modifier))
         .map(|modifier| format!("<{}>", render_angle_adornment(modifier)))
         .collect::<Vec<_>>();
+    if let Some(short) = short && !modifiers.iter().any(|m| m == short) {
+        rendered.insert(0, format!("<{}>", render_name_segment(short)));
+    }
     if rendered.is_empty() {
         String::new()
     } else {
@@ -5342,6 +5544,7 @@ fn render_angle_adornment_prefix(modifiers: &[String]) -> String {
 }
 
 fn declared_short_name_from_modifiers(modifiers: &[String]) -> Option<&str> {
+    if let Some(short) = modifiers.iter().find_map(|m| m.strip_prefix("short_name=")) { return Some(short); }
     modifiers
         .iter()
         .find(|modifier| is_angle_adornment_modifier(modifier))
@@ -5380,6 +5583,8 @@ fn is_keyword_modifier(modifier: &str) -> bool {
             | "ref"
             | "variation"
             | "variable"
+            | "var"
+            | "return"
     )
 }
 
@@ -5389,13 +5594,32 @@ fn render_angle_adornment(value: &str) -> String {
 
 fn render_expr(expr: &Expr) -> String {
     match expr {
+        Expr::Operation { operator, operands, .. } => crate::kir::expression::render_operation(operator, &operands.iter().map(render_expr).collect::<Vec<_>>()),
+        Expr::TypeReference(name) => render_qname(&QualifiedName(name.segments.clone())),
+        Expr::NamedArgument { parameter, value, .. } => format!("{} = {}", parameter.as_colon_string(), render_expr(value)),
+        Expr::Lambda { parameters, body, .. } => format!(
+            "{{ {} {} }}",
+            parameters.iter().map(|parameter| {
+                let mut usage = usage_from_ast_like(parameter);
+                usage.modifiers.retain(|modifier| modifier != &parameter.keyword);
+                let mut text = format!("{} {}{}", parameter.keyword, render_modifier_prefix(&usage.modifiers), render_name_segment(&parameter.name));
+                if let Some(ty) = &usage.ty {
+                    text.push_str(": ");
+                    text.push_str(&render_qname(ty));
+                }
+                append_usage_relations(&mut text, &usage);
+                text.push(';');
+                text
+            }).collect::<Vec<_>>().join(" "),
+            render_expr(body)
+        ),
         Expr::Literal(literal) => match literal {
             LiteralExpr::Integer(value) => value.to_string(),
             LiteralExpr::Real(value) => value.clone(),
             LiteralExpr::Boolean(value) => value.to_string(),
             LiteralExpr::String(value) => format!("{value:?}"),
         },
-        Expr::Name(name) => name.as_colon_string(),
+        Expr::Name(name) => render_qname(&QualifiedName(name.segments.clone())),
         Expr::SelfRef(_) => "self".to_string(),
         Expr::Tuple { items, .. } => format!(
             "({})",
@@ -5408,12 +5632,12 @@ fn render_expr(expr: &Expr) -> String {
         Expr::Binary {
             left, op, right, ..
         } => format!(
-            "{} {} {}",
+            "({} {} {})",
             render_expr(left),
             render_binary_op(op),
             render_expr(right)
         ),
-        Expr::Path { root, segment, .. } => format!("{}.{}", render_expr(root), segment),
+        Expr::Path { root, segment, .. } => format!("({}).{}", render_expr(root), render_name_segment(segment)),
         Expr::Call { function, args, .. } => format!(
             "{function}({})",
             args.iter().map(render_expr).collect::<Vec<_>>().join(", ")
@@ -5576,7 +5800,7 @@ fn group_rewrites_by_file(
 /// instruction's re-render, and drops instructions for declarations created
 /// after parse time (no source span) when an ancestor container instruction
 /// re-renders them anyway. Any instruction that survives without a source
-/// span — and any full-file rewrite — is not localizable, so the caller's
+/// span â€” and any full-file rewrite â€” is not localizable, so the caller's
 /// canonical fallback takes over via the returned error.
 fn normalize_rewrite_instructions(
     instructions: Vec<RewriteInstruction>,
@@ -5755,6 +5979,25 @@ fn normalized_element_ids_for_files(
     document: &KirDocument,
     files: &BTreeSet<String>,
 ) -> BTreeMap<String, usize> {
+    // A generated child can follow a positional owner id with a named suffix
+    // (for example, an owned reference relationship). Normalize the known
+    // owner's id first without treating arbitrary numeric name segments as
+    // positions. Shorter ids precede all of their descendants.
+    let mut ids = document.elements.iter().map(|element| element.id.as_str()).collect::<Vec<_>>();
+    ids.sort_by_key(|id| id.len());
+    let mut normalized_ids = BTreeMap::<&str, String>::new();
+    for id in ids {
+        let mut prefix = id;
+        let mut normalized = normalize_positional_id(id);
+        while let Some((parent, _)) = prefix.rsplit_once('.') {
+            if let Some(normalized_parent) = normalized_ids.get(parent) {
+                normalized = normalize_positional_id(&format!("{}{}", normalized_parent, &id[parent.len()..]));
+                break;
+            }
+            prefix = parent;
+        }
+        normalized_ids.insert(id, normalized);
+    }
     let mut counts = BTreeMap::new();
     for element in &document.elements {
         let source_file = element
@@ -5766,7 +6009,7 @@ fn normalized_element_ids_for_files(
             .map(|path| path.replace('\\', "/"));
         if source_file.is_some_and(|path| files.contains(&path)) {
             *counts
-                .entry(normalize_positional_id(&element.id))
+                .entry(normalized_ids.get(element.id.as_str()).cloned().unwrap_or_else(|| normalize_positional_id(&element.id)))
                 .or_default() += 1;
         }
     }
@@ -5774,7 +6017,22 @@ fn normalized_element_ids_for_files(
 }
 
 fn normalize_positional_id(id: &str) -> String {
-    let mut segments = id.split('.').collect::<Vec<_>>();
+    // Anonymous owners carry explicit @line_col segments. Their children
+    // retain these segments in the middle of an id, so normalize those too.
+    // Keep ordinary names (including non-positional @ names) unchanged.
+    let mut segments = id
+        .split('.')
+        .filter(|segment| {
+            !segment.strip_prefix('@').is_some_and(|position| {
+                position.split_once('_').is_some_and(|(line, column)| {
+                    !line.is_empty()
+                        && !column.is_empty()
+                        && line.bytes().all(|b| b.is_ascii_digit())
+                        && column.bytes().all(|b| b.is_ascii_digit())
+                })
+            })
+        })
+        .collect::<Vec<_>>();
     while segments.len() > 1 {
         let last = segments[segments.len() - 1];
         let positional = last
@@ -5891,7 +6149,14 @@ fn build_package_from_kir(
         members,
         comments: Vec::new(),
         docs: docs_from_properties(&element.properties),
-        modifiers: Vec::new(),
+        modifiers: if element.kind.ends_with("LibraryPackage") {
+            let mut modifiers = Vec::new();
+            if element.properties.get("is_standard").and_then(Value::as_bool) == Some(true) {
+                modifiers.push("standard".to_string());
+            }
+            modifiers.push("library".to_string());
+            modifiers
+        } else { Vec::new() },
     }))
 }
 
@@ -5922,6 +6187,9 @@ fn build_declaration_from_kir(
                 AuthoringError::Unsupported(format!("cannot reconstruct import `{id}` from KIR"))
             })?;
         return Ok(Some(Declaration::Import(Import {
+            members: Vec::new(),
+            is_expose: false,
+            filter: None,
             path,
             comments: Vec::new(),
             docs: docs_from_properties(&element.properties),
@@ -5960,7 +6228,7 @@ fn build_declaration_from_kir(
             raw_body: None,
             comments: Vec::new(),
             docs: docs_from_properties(&element.properties),
-            modifiers: Vec::new(),
+            modifiers: abstraction_modifiers_from_properties(&element.properties),
         })));
     }
 
@@ -5968,8 +6236,13 @@ fn build_declaration_from_kir(
         || id.starts_with("relationship.")
         || element.properties.contains_key("owner")
     {
-        let reference_target =
-            if id.starts_with("relationship.") || element.properties.contains_key("target") {
+        let referenced_id = element.properties.get("owned_reference_subsetting")
+            .and_then(Value::as_str).and_then(|id| by_id.get(id))
+            .and_then(|relationship| relationship.properties.get("referenced_feature"))
+            .and_then(Value::as_str);
+        let reference_target = if let Some(target) = referenced_id {
+            Some(qualified_name_for_kir_reference(target, by_id))
+        } else if id.starts_with("relationship.") || element.properties.contains_key("target") {
                 element
                     .properties
                     .get("target")
@@ -5991,12 +6264,11 @@ fn build_declaration_from_kir(
                     .map(str::to_string)
             })
             .unwrap_or_else(|| tail_from_id(id));
-        let ty = element
-            .properties
-            .get("type")
-            .and_then(Value::as_str)
-            .map(QualifiedName::parse);
+        let mut types = property_qnames(&element.properties, "type").into_iter();
+        let ty = types.next();
+        let additional_types = types.collect();
         return Ok(Some(Declaration::Usage(Usage {
+        annotation_targets: Vec::new(),
             keyword: keyword_from_kind(&element.kind, false),
             name,
             is_implicit_name: element.properties.get("declared_name").is_none(),
@@ -6011,11 +6283,13 @@ fn build_declaration_from_kir(
             expression: element
                 .properties
                 .get("expression_ir")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            additional_types: Vec::new(),
-            specializes: specializations_from_properties(&element.properties, ty.as_ref()),
-            subsets: property_qnames(&element.properties, "subsetted_features"),
+                .map(render_kir_expression)
+                .transpose()?,
+            additional_types,
+            specializes: specializations_from_properties(&element.properties, ty.as_ref()).into_iter()
+                .filter(|name| referenced_id.map(qualified_name_from_element_id).as_ref() != Some(name)).collect(),
+            subsets: property_qnames(&element.properties, "subsetted_features").into_iter()
+                .filter(|name| referenced_id.map(qualified_name_from_element_id).as_ref() != Some(name)).collect(),
             redefines: property_qnames(&element.properties, "redefined_features"),
             members: built_members,
             raw_body: None,
@@ -6053,28 +6327,72 @@ fn docs_from_properties(properties: &BTreeMap<String, Value>) -> Vec<String> {
 }
 
 fn property_qnames(properties: &BTreeMap<String, Value>, key: &str) -> Vec<QualifiedName> {
-    properties
-        .get(key)
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(QualifiedName::parse)
-        .collect()
+    match properties.get(key) {
+        Some(Value::String(id)) => vec![qualified_name_from_element_id(id)],
+        Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).map(qualified_name_from_element_id).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn specializations_from_properties(
     properties: &BTreeMap<String, Value>,
     ty: Option<&QualifiedName>,
 ) -> Vec<QualifiedName> {
+    let types = property_qnames(properties, "type");
     property_qnames(properties, "specializes")
         .into_iter()
-        .filter(|name| Some(name) != ty)
+        .filter(|name| Some(name) != ty && !types.contains(name))
         .collect()
 }
 
+fn render_kir_expression(value: &Value) -> Result<String, AuthoringError> {
+    if let Some(text) = value.as_str() {
+        return Ok(text.to_string());
+    }
+    fn source_names(value: &mut Value) {
+        match value {
+            Value::Array(items) => items.iter_mut().for_each(source_names),
+            Value::Object(object) => {
+                for name in ["type_ref", "target"] {
+                    let applies = name == "type_ref" || object.get("kind").and_then(Value::as_str) == Some("type_reference");
+                    if applies && let Some(Value::String(id)) = object.get_mut(name) {
+                        *id = render_qname(&qualified_name_from_element_id(id));
+                    }
+                }
+                object.values_mut().for_each(source_names);
+            }
+            _ => {}
+        }
+    }
+    let mut source = value.clone();
+    source_names(&mut source);
+    crate::kir::ExpressionIr::from_value(&source)
+        .map(|expression| expression.render_constraint_expression())
+        .map_err(|error| AuthoringError::Unsupported(format!("cannot render expression IR: {error}")))
+}
+
+fn abstraction_modifiers_from_properties(properties: &BTreeMap<String, Value>) -> Vec<String> {
+    if properties.get("is_variation").and_then(Value::as_bool) == Some(true) {
+        vec!["variation".into()]
+    } else if properties.get("is_abstract").and_then(Value::as_bool) == Some(true) {
+        vec!["abstract".into()]
+    } else {
+        Vec::new()
+    }
+}
+
 fn usage_modifiers_from_properties(properties: &BTreeMap<String, Value>) -> Vec<String> {
-    let mut modifiers = Vec::new();
+    let mut modifiers = abstraction_modifiers_from_properties(properties);
+    if properties.get("is_ordered").and_then(Value::as_bool) == Some(true) { modifiers.push("ordered".into()); }
+    if properties.get("is_unique").and_then(Value::as_bool) == Some(false) { modifiers.push("nonunique".into()); }
+    for (property, modifier) in [
+        ("expression_is_initial", "feature_value_is_initial"),
+        ("expression_is_default", "feature_value_is_default"),
+    ] {
+        if properties.get(property).and_then(Value::as_bool) == Some(true) {
+            modifiers.push(modifier.to_string());
+        }
+    }
     if properties
         .get("is_end")
         .and_then(Value::as_bool)
@@ -6107,6 +6425,27 @@ fn keyword_from_kind(kind: &str, is_definition: bool) -> String {
             acc.push(ch.to_ascii_lowercase());
             acc
         })
+}
+
+fn qualified_name_for_kir_reference(id: &str, by_id: &HashMap<String, KirElement>) -> QualifiedName {
+    let mut segments = Vec::new();
+    let mut cursor = Some(id);
+    let mut seen = BTreeSet::new();
+    while let Some(id) = cursor {
+        if !seen.insert(id) { return qualified_name_from_element_id(id); }
+        let Some(element) = by_id.get(id) else { return qualified_name_from_element_id(id); };
+        let Some(name) = element.properties.get("declared_name").or_else(|| element.properties.get("name")).and_then(Value::as_str) else {
+            // An unnamed resource Namespace contains the top-level declarations,
+            // but contributes no segment to their textual qualified names.
+            if element.kind.rsplit("::").next() == Some("Namespace")
+                && !element.properties.contains_key("owner") && !segments.is_empty() { break; }
+            return qualified_name_from_element_id(id);
+        };
+        segments.push(name.to_string());
+        cursor = element.properties.get("owner").and_then(Value::as_str);
+    }
+    segments.reverse();
+    QualifiedName(segments)
 }
 
 fn qualified_name_from_element_id(id: &str) -> QualifiedName {
@@ -6251,6 +6590,7 @@ fn fake_declaration_from_header(
         .unwrap_or((clean_fake_name(name_part), None));
 
     Ok(Declaration::Usage(Usage {
+        annotation_targets: Vec::new(),
         keyword,
         name,
         is_implicit_name: false,
@@ -6545,6 +6885,9 @@ mod tests {
         }
         fn import(path: &str) -> Declaration {
             Declaration::Import(Import {
+                members: Vec::new(),
+                is_expose: false,
+                filter: None,
                 path: qname(path),
                 comments: Vec::new(),
                 docs: Vec::new(),
@@ -6856,7 +7199,7 @@ mod tests {
         let text = write_back.edited_files.get("model.model").unwrap();
 
         assert!(text.contains(
-            "part vehicle: Vehicle :> BaseFeature subsets CrossFeature redefines RedefinedFeature;"
+            "part vehicle: Vehicle, BaseFeature subsets CrossFeature redefines RedefinedFeature;"
         ));
         assert!(write_back.validation.ok);
 
@@ -7026,7 +7369,7 @@ mod tests {
         }
 
         let text = project.render_new_file("model.model").unwrap();
-        assert!(text.contains("ordered nonunique derived variable attribute mass: Mass;"));
+        assert!(text.contains("derived variable attribute mass: Mass ordered nonunique;"), "{text}");
         let attributes = project.semantic_attributes(&qname("Demo.mass")).unwrap();
         assert!(attributes.iter().any(|row| {
             row.name == "is_unique" && row.effective_value == Some(Value::Bool(false))
@@ -7042,7 +7385,7 @@ mod tests {
             .unwrap();
         let write_back = project.write_back_mutation(&result).unwrap();
         let text = write_back.edited_files.get("model.model").unwrap();
-        assert!(text.contains("ordered derived variable attribute mass: Mass;"));
+        assert!(text.contains("derived variable attribute mass: Mass ordered;"), "{text}");
         assert!(!text.contains("nonunique"));
         assert!(write_back.validation.ok);
     }
@@ -7602,6 +7945,7 @@ mod tests {
         // in `trigger_kind`; the rendered shorthand must restore it or the
         // text does not re-parse (DA-11 Tier-T write-back idempotence).
         let mut guarded = super::Usage {
+        annotation_targets: Vec::new(),
             keyword: "transition".to_string(),
             name: "heating_ready".to_string(),
             is_implicit_name: false,
@@ -7949,6 +8293,7 @@ mod tests {
         use crate::authoring::frontend::ast;
 
         let engine = ast::Declaration::GenericUsage(ast::GenericUsageDecl {
+        annotation_targets: Vec::new(),
             keyword: "part".to_string(),
             name: "engine".to_string(),
             is_implicit_name: false,
@@ -8242,9 +8587,8 @@ mod tests {
 
     const DOC_SOURCE: &str = "// keep me\npackage Demo {\n    // vehicle def\n    doc /* Drives the demo. */\n    part def Vehicle;\n}\n";
 
-    /// Hand-built AST mirroring `DOC_SOURCE`: the declaration carries a doc
-    /// that the source spells in the doc-before form the canonical printer
-    /// emits, with the parse span starting at the declaration keyword.
+    /// Legacy hand-built AST with prefix documentation. A localized rewrite
+    /// must migrate the text into the owner without leaving the old prefix.
     fn doc_commented_project() -> super::AuthoringProject {
         use crate::authoring::frontend::ast;
 
@@ -8291,7 +8635,7 @@ mod tests {
     }
 
     #[test]
-    fn localized_replace_of_doc_bearing_declaration_covers_the_doc_line() {
+    fn localized_replace_migrates_legacy_doc_inside_owner() {
         let mut project = doc_commented_project();
         let mutation = manual_mutation(vec![replace_node("Demo.Vehicle")]);
 
@@ -8308,8 +8652,8 @@ mod tests {
             "{text}"
         );
         assert_eq!(
-            text, DOC_SOURCE,
-            "an identity re-render must be byte-stable"
+            text, "// keep me\npackage Demo {\n    // vehicle def\n    part def Vehicle {\n      doc /* Drives the demo. */\n    }\n}\n",
+            "legacy prefix documentation must move inside its owner"
         );
     }
 
@@ -8331,7 +8675,7 @@ mod tests {
         let text = &write_back.edited_files["demo.sysml"];
         assert_eq!(
             text,
-            "// keep me\npackage Demo {\n    // vehicle def\n    doc /* Updated. */\n    part def Vehicle;\n}\n",
+            "// keep me\npackage Demo {\n    // vehicle def\n    part def Vehicle {\n      doc /* Updated. */\n    }\n}\n",
             "the doc edit must swap the doc line without touching anything else"
         );
     }

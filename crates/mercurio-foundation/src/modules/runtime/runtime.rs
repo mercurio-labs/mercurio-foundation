@@ -998,7 +998,7 @@ mod tests {
             ),
             (
                 json!({"kind":"call","function":"sum","args":[{"kind":"path","segments":["items"]}]}),
-                json!(0.0),
+                json!(0),
             ),
         ] {
             assert_eq!(
@@ -1637,7 +1637,7 @@ mod tests {
                     layer: 2,
                     properties: [(
                         "expression_ir".to_string(),
-                        json!({"kind": "select", "source": {"kind": "self"}}),
+                        json!({"kind": "unknown_operator", "source": {"kind": "self"}}),
                     )]
                     .into_iter()
                     .collect(),
@@ -1656,7 +1656,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("unsupported expression_ir kind `select`")
+                .contains("unsupported expression_ir kind `unknown_operator`")
         );
     }
 

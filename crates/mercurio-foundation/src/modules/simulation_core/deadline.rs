@@ -61,18 +61,19 @@ pub(super) fn evaluate_samples(
             let mut witness = None;
             let mut observed_deadline = false;
             for frame in timeline.iter().filter(|f| f.t <= deadline) {
-                let value = match eval_bool(evaluator, expression, subject_id, &frame.values) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        out.reason_code = if error.to_string().contains("expected Boolean") {
-                            "non_boolean_or_invalid_expression"
-                        } else {
-                            "unsupported_or_unresolved_expression"
+                let value =
+                    match evaluator.evaluate_requirement(expression, subject_id, &frame.values) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            out.reason_code = if error.to_string().contains("expected Boolean") {
+                                "non_boolean_or_invalid_expression"
+                            } else {
+                                "unsupported_or_unresolved_expression"
+                            }
+                            .into();
+                            return out;
                         }
-                        .into();
-                        return out;
-                    }
-                };
+                    };
                 if value && witness.is_none() {
                     witness = Some(frame.t);
                 }
@@ -131,6 +132,30 @@ mod tests {
                 .collect(),
         }
     }
+    #[test]
+    fn lazy_expressions_cannot_hide_missing_requirement_observations() {
+        let mut t = trace();
+        let missing = json!({"kind":"path","segments":["missing"]});
+        let yes = json!({"kind":"literal","value":true});
+        let no = json!({"kind":"literal","value":false});
+        for expression in [
+            json!({"kind":"operation","operator":"if","operands":[yes,yes,missing]}),
+            json!({"kind":"operation","operator":"implies","operands":[no,missing]}),
+            json!({"kind":"operation","operator":"??","operands":[yes,missing]}),
+        ] {
+            t.requirements[0].expression = Some(expression);
+            let outcome = evaluate_deadline_requirements(&t);
+            assert_eq!(outcome[0].status, "unevaluated");
+            assert_eq!(
+                outcome[0].reason_code,
+                "unsupported_or_unresolved_expression"
+            );
+        }
+        t.requirements[0].expression =
+            Some(json!({"kind":"operation","operator":"implies","operands":[no,yes]}));
+        assert_eq!(evaluate_deadline_requirements(&t)[0].status, "satisfied");
+    }
+
     #[test]
     fn shared_expression_arithmetic_requirement() {
         let mut t = trace();

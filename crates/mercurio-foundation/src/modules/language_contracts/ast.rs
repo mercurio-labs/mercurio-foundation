@@ -44,6 +44,23 @@ impl QualifiedName {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expr {
+    /// Structured operators whose operand boundaries must survive lowering.
+    Operation {
+        operator: String,
+        operands: Vec<Expr>,
+        span: SourceSpan,
+    },
+    TypeReference(QualifiedName),
+    NamedArgument {
+        parameter: Box<QualifiedName>,
+        value: Box<Expr>,
+        span: SourceSpan,
+    },
+    Lambda {
+        parameters: Vec<GenericUsageDecl>,
+        body: Box<Expr>,
+        span: SourceSpan,
+    },
     Literal(LiteralExpr),
     Name(QualifiedName),
     SelfRef(SourceSpan),
@@ -113,6 +130,8 @@ pub enum BinaryOp {
 /// share one node here (save-as-view SV-1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportDecl {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_members: Vec<Declaration>,
     pub path: QualifiedName,
     /// `true` for `expose`, `false` for `import`. Both carry the same path
     /// syntax; only the metaclass and the visibility semantics differ.
@@ -159,6 +178,8 @@ pub struct GenericDefinitionDecl {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenericUsageDecl {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotation_targets: Vec<QualifiedName>,
     pub keyword: String,
     pub name: String,
     pub is_implicit_name: bool,
@@ -184,6 +205,8 @@ pub struct GenericUsageDecl {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasDecl {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_members: Vec<Declaration>,
     pub name: String,
     pub target: QualifiedName,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

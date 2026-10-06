@@ -376,6 +376,10 @@ fn expr_kind(expr: &Expr) -> &'static str {
         Expr::Binary { .. } => "binary",
         Expr::Path { .. } => "path",
         Expr::Call { .. } => "call",
+        Expr::Operation { .. } => "operation",
+        Expr::TypeReference(_) => "type_reference",
+        Expr::NamedArgument { .. } => "named_argument",
+        Expr::Lambda { .. } => "lambda",
     }
 }
 

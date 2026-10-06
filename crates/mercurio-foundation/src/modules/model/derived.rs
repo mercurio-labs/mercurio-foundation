@@ -908,10 +908,16 @@ fn derived_owner(graph: &Graph, element: &Element) -> Option<DerivedPropertyValu
         });
     }
 
-    for relation in ["members", "features", "ownedElement"] {
-        if let Some(edge) = graph.incoming(element.id, relation).next()
-            && let Some(owner_id) = graph.element_id(edge.source)
-        {
+    for relation in ["owned_element", "members", "features", "ownedElement"] {
+        for edge in graph.incoming(element.id, relation) {
+            if relation != "owned_element"
+                && graph.element(edge.source).is_some_and(|owner| owner.properties.get("owned_element").is_some())
+            {
+                continue;
+            }
+            let Some(owner_id) = graph.element_id(edge.source) else {
+                continue;
+            };
             return Some(DerivedPropertyValue {
                 value: Value::String(owner_id.to_string()),
                 source: DerivedPropertySource::InverseRelation,
@@ -923,6 +929,16 @@ fn derived_owner(graph: &Graph, element: &Element) -> Option<DerivedPropertyValu
 }
 
 fn derived_owned_element(graph: &Graph, element: &Element) -> Option<DerivedPropertyValue> {
+    // The imported Ecore opposite is an ordered collection. When present it is
+    // authoritative: legacy convenience relations can have a different order
+    // and can name elements that are not owned by this element.
+    if let Some(Value::Array(values)) = element.properties.get("owned_element") {
+        return Some(DerivedPropertyValue {
+            value: Value::Array(values.clone()),
+            source: DerivedPropertySource::ForwardRelation,
+        });
+    }
+
     let mut ids: Vec<Value> = Vec::new();
     for relation in ["members", "features", "ownedElement"] {
         for edge in graph.outgoing(element.id, relation) {
@@ -1605,6 +1621,55 @@ mod tests {
             child_derived.get("name").map(|value| &value.value),
             Some(&Value::String("engine".to_string()))
         );
+    }
+
+    #[test]
+    fn imported_ecore_owned_element_order_is_authoritative() {
+        let graph = Graph::from_document(KirDocument {
+            metadata: BTreeMap::new(),
+            elements: vec![
+                KirElement {
+                    id: "owner".to_string(),
+                    kind: "Core::Root::Element".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([
+                        ("owned_element".to_string(), json!(["second", "first"])),
+                        ("members".to_string(), json!(["first", "unowned"])),
+                    ]),
+                },
+                KirElement {
+                    id: "first".to_string(),
+                    kind: "Core::Root::Element".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+                KirElement {
+                    id: "second".to_string(),
+                    kind: "Core::Root::Element".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::from([("owner".to_string(), json!("owner"))]),
+                },
+                KirElement {
+                    id: "unowned".to_string(),
+                    kind: "Core::Root::Element".to_string(),
+                    layer: 1,
+                    properties: BTreeMap::new(),
+                },
+            ],
+        })
+        .unwrap();
+        let owner = graph.element_by_element_id("owner").unwrap();
+        let first = graph.element_by_element_id("first").unwrap();
+        let unowned = graph.element_by_element_id("unowned").unwrap();
+        assert_eq!(
+            derived_properties(&graph, owner).get("ownedElement").map(|property| &property.value),
+            Some(&json!(["second", "first"]))
+        );
+        assert_eq!(
+            derived_properties(&graph, first).get("owner").map(|property| &property.value),
+            Some(&json!("owner"))
+        );
+        assert!(derived_properties(&graph, unowned).get("owner").is_none());
     }
 
     #[test]

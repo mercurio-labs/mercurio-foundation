@@ -34,6 +34,22 @@ A KIR document has metadata plus elements:
 - Semantic layer is derived by readers from element kind and metadata hints; it is not persisted as a KIR element field.
 - `properties`: scalar values, structured values, metadata, and references.
 
+`MetamodelFeature` descriptors can declare a scalar attribute list with
+`feature_kind: "attribute"` and an explicit `upper` other than 1. Its values
+persist as arrays of scalar primitives. A descriptor may provide
+`kir_owner_kind` or `kir_owner_kinds` to bind its field shape to exact element
+kinds; other kinds continue using the document-wide field contract. Language
+layers supply inheritance expansion when needed.
+
+Language layers can also call `KirFieldRegistry::register_scoped_field` to
+provide exact-kind contracts directly. Pass the complete registry to both
+`normalized_for_persistence_with_registry` and
+`validate_persisted_with_registry`; global field registration alone cannot
+represent a field that is singular on one kind and a list on another.
+These methods preserve the existing structural validation and normalization
+rules. The language layer remains responsible for types, bounds, inverse
+consistency and other metamodel semantics.
+
 ## Required Invariants
 
 Foundation validation enforces:

@@ -47,6 +47,11 @@ use crate::model::{Graph, NodeId, metadata_annotations_named, metadata_string_pr
 
 /// KIR kind of an `expose` member.
 const EXPOSE_KIND: &str = "SysML::Expose";
+
+pub(super) fn matches_member_kind(actual: &str, expected: &str) -> bool {
+    actual == expected || (expected == EXPOSE_KIND && matches!(actual,
+        "SysML::MembershipExpose" | "SysML::NamespaceExpose"))
+}
 /// KIR kind of a `filter` member.
 const FILTER_KIND: &str = "SysML::ElementFilterMembership";
 /// Property naming the owner of a member; also the graph relation built from it.
@@ -143,7 +148,7 @@ fn owned_members(graph: &Graph, owner: NodeId, kind: &str) -> Vec<NodeId> {
         .filter(|node| {
             graph
                 .element(*node)
-                .is_some_and(|element| element.kind.as_ref() == kind)
+                .is_some_and(|element| matches_member_kind(element.kind.as_ref(), kind))
         })
         .collect();
     members.sort_by_key(|node| graph.element_id(*node).unwrap_or_default().to_string());
@@ -508,7 +513,11 @@ fn is_exposable(graph: &Graph, node: NodeId) -> bool {
         short_name(&metatype),
         "MetadataUsage"
             | "Expose"
+            | "MembershipExpose"
+            | "NamespaceExpose"
             | "Import"
+            | "MembershipImport"
+            | "NamespaceImport"
             | "ElementFilterMembership"
             | "ViewRenderingMembership"
             | "RenderUsage"

@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use crate::model::{Graph, NodeId};
 
 use super::expose::{
-    inherited_filter_conditions, qualified_name, scope_base, scope_is_wildcard,
+    inherited_filter_conditions, matches_member_kind, qualified_name, scope_base, scope_is_wildcard,
 };
 use super::{
     DiagramKindDto, DiagramScopeDto, DiagramSpecDto, ModelViewSpecDto, TableColumnSpecDto,
@@ -561,7 +561,7 @@ fn owned_members(graph: &Graph, owner: NodeId, kind: &str) -> Vec<NodeId> {
         .filter(|node| {
             graph
                 .element(*node)
-                .is_some_and(|element| element.kind.as_ref() == kind)
+                .is_some_and(|element| matches_member_kind(element.kind.as_ref(), kind))
         })
         .collect()
 }

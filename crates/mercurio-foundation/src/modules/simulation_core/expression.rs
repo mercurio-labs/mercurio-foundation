@@ -18,6 +18,31 @@ impl ExpressionEvaluator {
         subject: &str,
         values: &BTreeMap<(String, String), Value>,
     ) -> Result<Value, CoreSimulationError> {
+        self.evaluate_with_binding_check(expression, subject, values, false)
+    }
+
+    /// Requirement evidence is conservative: a lazy operator must not hide a
+    /// missing observation, even when ordinary expression evaluation can skip it.
+    pub(super) fn evaluate_requirement(
+        &self,
+        expression: &Value,
+        subject: &str,
+        values: &BTreeMap<(String, String), Value>,
+    ) -> Result<bool, CoreSimulationError> {
+        self.evaluate_with_binding_check(expression, subject, values, true)?
+            .as_bool()
+            .ok_or_else(|| {
+                CoreSimulationError::InvalidExpression("expected Boolean requirement".into())
+            })
+    }
+
+    fn evaluate_with_binding_check(
+        &self,
+        expression: &Value,
+        subject: &str,
+        values: &BTreeMap<(String, String), Value>,
+        require_all_bindings: bool,
+    ) -> Result<Value, CoreSimulationError> {
         let key = expression.to_string();
         let mut prepared = self.prepared.borrow_mut();
         let ir = prepared
@@ -36,9 +61,55 @@ impl ExpressionEvaluator {
             })
             .as_ref()
             .map_err(|error| CoreSimulationError::InvalidExpression(error.clone()))?;
+        if require_all_bindings {
+            validate_observed_bindings(ir, &mut SnapshotContext { subject, values }).map_err(
+                |error| CoreSimulationError::InvalidExpression(format!("{subject}: {error}")),
+            )?;
+        }
         ir.evaluate(&mut SnapshotContext { subject, values })
             .map_err(|error| CoreSimulationError::InvalidExpression(format!("{subject}: {error}")))
     }
+}
+
+// Walk typed operands, never literal JSON payloads. Computed member selections
+// are evaluated from their roots rather than interpreted as textual paths.
+fn validate_observed_bindings(
+    ir: &ExpressionIr,
+    context: &mut SnapshotContext<'_>,
+) -> Result<(), ExpressionEvaluationError> {
+    match ir {
+        ExpressionIr::Path { segments, .. } => {
+            context.resolve_path(segments)?;
+        }
+        ExpressionIr::Select { root, segments } => {
+            validate_observed_bindings(root, context)?;
+            let value = root.evaluate(context)?;
+            context.resolve_value_path(&value, segments)?;
+        }
+        ExpressionIr::Operation { operands, .. }
+        | ExpressionIr::Tuple { items: operands }
+        | ExpressionIr::Call { args: operands, .. } => {
+            for operand in operands {
+                validate_observed_bindings(operand, context)?;
+            }
+        }
+        ExpressionIr::Unary { expr, .. } | ExpressionIr::NamedArgument { value: expr, .. } => {
+            validate_observed_bindings(expr, context)?;
+        }
+        ExpressionIr::Binary { left, right, .. } => {
+            validate_observed_bindings(left, context)?;
+            validate_observed_bindings(right, context)?;
+        }
+        ExpressionIr::Lambda { .. }
+        | ExpressionIr::Variable { .. }
+        | ExpressionIr::TypeReference { .. } => {
+            return Err(ExpressionEvaluationError::InvalidExpression(
+                "unsupported requirement expression".into(),
+            ));
+        }
+        ExpressionIr::Literal { .. } | ExpressionIr::SelfRef => {}
+    }
+    Ok(())
 }
 
 pub(super) struct SnapshotContext<'a> {
@@ -155,7 +226,6 @@ mod tests {
         for expression in [
             json!({"kind":"binary","op":"divide","left":{"kind":"literal","value":1},"right":{"kind":"literal","value":0}}),
             json!({"kind":"binary","op":"multiply","left":{"kind":"literal","value":1e308},"right":{"kind":"literal","value":1e308}}),
-            json!({"kind":"binary","op":"or","left":{"kind":"literal","value":true},"right":{"kind":"path","segments":["missing"]}}),
             json!({"kind":"path","segments":[""]}),
             json!({"kind":"binary","op":"subtract","left":{"kind":"literal","value":"bad"},"right":{"kind":"literal","value":1}}),
             json!({"kind":"call","function":"unsupported","args":[]}),
@@ -165,6 +235,28 @@ mod tests {
                 "{expression}"
             );
         }
+    }
+
+    #[test]
+    fn conditional_operators_skip_unused_runtime_values_but_validate_structure() {
+        let evaluator = ExpressionEvaluator::default();
+        let values = BTreeMap::new();
+        let missing = json!({"kind":"path","segments":["missing"]});
+        for (op, left, expected) in [("or", true, true), ("and", false, false)] {
+            let expression = json!({"kind":"binary","op":op,
+                "left":{"kind":"literal","value":left},"right":missing});
+            assert_eq!(
+                evaluator.evaluate(&expression, "owner", &values).unwrap(),
+                json!(expected)
+            );
+        }
+        // Required values remain errors, never null sentinels that compare equal.
+        let required = json!({"kind":"binary","op":"equal","left":missing,"right":missing});
+        assert!(evaluator.evaluate(&required, "owner", &values).is_err());
+        // Capability validation covers the whole IR, including unselected branches.
+        let unsupported = json!({"kind":"binary","op":"or","left":{"kind":"literal","value":true},
+            "right":{"kind":"call","function":"unknown","args":[]}});
+        assert!(evaluator.evaluate(&unsupported, "owner", &values).is_err());
     }
 
     #[test]
